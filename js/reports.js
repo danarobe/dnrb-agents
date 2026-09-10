@@ -1,0 +1,109 @@
+/* ──────────────────────────────────────────
+   보고서 피드 — agent_reports (db 프록시, admin)
+   #reports        : 목록 + 최신 보고서
+   #reports/<id>   : 그 보고서
+────────────────────────────────────────── */
+let __reportsCache = null;
+async function reportsLoad(force) {
+  if (__reportsCache && !force) return __reportsCache;
+  __reportsCache = await dbProxy('agent_reports?select=id,agent,report_date,trigger,status,report,data,error,model,created_at&order=created_at.desc&limit=60') || [];
+  return __reportsCache;
+}
+
+async function renderReports(id) {
+  const main = $('main');
+  if (!isAdmin()) {
+    main.innerHTML = `<div class="page-head"><h1>보고서</h1></div><div class="notice">보고서에는 매출 금액이 들어 있어 관리자만 볼 수 있어요.</div>`;
+    return;
+  }
+  main.innerHTML = `<div class="page-head">
+      <div><h1>보고서</h1><p class="sub">담당자들이 쓴 보고서가 날짜순으로 쌓입니다.</p></div>
+      <div class="head-actions"><button class="btn primary" id="run-sales" onclick="agentRun('sales')"><i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행</button></div>
+    </div>
+    <div id="setup-notice"></div>
+    <div class="reports-layout">
+      <aside class="report-list" id="report-list"><div class="muted pad"><i class="fa-solid fa-spinner fa-spin"></i> 불러오는 중</div></aside>
+      <section class="report-view" id="report-view"></section>
+    </div>`;
+  renderSetupNotice();
+  let rows;
+  try { rows = await reportsLoad(); }
+  catch (e) { $('report-list').innerHTML = `<div class="muted pad">불러오기 실패: ${escHtml(e.message)}</div>`; return; }
+  const cur = rows.find(r => r.id === id) || rows[0];
+  $('report-list').innerHTML = rows.length ? rows.map(r => {
+    const a = agentOf(r.agent) || { name: r.agent, color: '#6b7280', icon: 'fa-robot' };
+    return `<a class="report-item ${cur && r.id === cur.id ? 'active' : ''} ${r.status === 'error' ? 'err' : ''}" href="#reports/${r.id}">
+      <span class="dot" style="background:${r.status === 'error' ? '#dc2626' : a.color};"></span>
+      <span class="ri-body">
+        <span class="ri-top"><b>${dateShort(r.report_date)}</b> <span class="muted">${r.trigger === 'cron' ? '자동' : '수동'}</span></span>
+        <span class="ri-line">${r.status === 'error' ? '보고서 실패' : escHtml(r.report?.headline || a.name)}</span>
+      </span></a>`;
+  }).join('') : `<div class="muted pad">아직 보고서가 없어요. 매일 아침 8시에 자동으로 도착하고, <b>지금 실행</b>으로 바로 만들 수도 있어요.</div>`;
+  $('report-view').innerHTML = cur ? reportHtml(cur) : '';
+  if (cur && window.innerWidth <= 800) $('report-view').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function reportHtml(r) {
+  const a = agentOf(r.agent) || { name: r.agent, color: '#6b7280', icon: 'fa-robot' };
+  const head = `<div class="rv-head">
+      <span class="agent-icon sm" style="background:${a.color}1a;color:${a.color};"><i class="fa-solid ${a.icon}"></i></span>
+      <div><b>${a.name}</b><div class="muted">기준일 ${dateLabel(r.report_date)} · ${timeLabel(r.created_at)} 작성 · ${r.trigger === 'cron' ? '자동 실행' : '수동 실행'}${r.model ? ' · ' + escHtml(r.model) : ''}</div></div>
+    </div>`;
+  if (r.status === 'error' || !r.report) {
+    return head + `<div class="notice err"><b><i class="fa-solid fa-triangle-exclamation"></i> 이번 보고서는 만들지 못했어요.</b><br>${escHtml(r.error || '원인 미상')}</div>` + dataErrors(r.data);
+  }
+  const rp = r.report, d = r.data || {}, rev = d.revenue || {}, ch = rev.change_pct || {}, ads = d.ads;
+  const tile = (label, value, sub) => `<div class="tile"><div class="t-label">${label}</div><div class="t-value">${value}</div><div class="t-sub">${sub}</div></div>`;
+  const tiles = [
+    tile('어제 매출', fmtMan(rev.yesterday?.revenue), `지난주 같은 요일 대비 ${fmtDelta(ch.vs_same_dow_last_week)} · 주문 ${rev.yesterday ? fmt(rev.yesterday.orders) + '건' : '—'}`),
+    tile('최근 7일 매출', fmtMan(rev.last7?.revenue), `직전 7일 대비 ${fmtDelta(ch.last7_vs_prev7)}`),
+    tile('이달 누적', fmtMan(rev.mtd?.revenue), `지난달 같은 기간 대비 ${fmtDelta(ch.mtd_vs_last_month_same)}`),
+    ads?.yesterday ? tile('어제 광고비', fmtMan(ads.yesterday.spend), `ROAS(카페24) ${ads.roas_cafe24?.yesterday ?? '—'} · 최근 7일 ${ads.roas_cafe24?.last7 ?? '—'}`)
+      : tile('어제 광고비', '—', 'Meta 데이터 없음'),
+  ].join('');
+  const list = (arr, cls) => (arr || []).length ? (arr || []).map(x => `<div class="li"><b class="${cls}">${escHtml(x.title)}</b><div>${escHtml(x.detail)}</div></div>`).join('') : '<div class="muted">없음</div>';
+  const actions = (rp.actions || []).map((x, i) => `<div class="act">
+      <span class="num">${i + 1}</span>
+      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span></div><div class="muted">${escHtml(x.why)}</div></div>
+    </div>`).join('');
+  return head + `
+    <div class="headline mood-${rp.mood || 'neutral'}">
+      <div class="h-text">${escHtml(rp.headline)}</div>
+      <ul>${(rp.summary || []).map(s => `<li>${escHtml(s)}</li>`).join('')}</ul>
+    </div>
+    <div class="tiles">${tiles}</div>
+    <div class="two">
+      <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 주목할 상품·신호</h3>${list(rp.highlights, 'up')}</div>
+      <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 주의 신호</h3>${list(rp.warnings, 'down')}</div>
+    </div>
+    <div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 오늘 할 일</h3>${actions}</div>
+    ${rp.note ? `<div class="muted small"><i class="fa-regular fa-circle-question"></i> ${escHtml(rp.note)}</div>` : ''}
+    ${dataErrors(r.data)}
+    <details class="raw"><summary>수집한 숫자 보기</summary>${rawTable(r.data)}</details>`;
+}
+
+function dataErrors(data) {
+  const errs = data?.errors || [];
+  return errs.length ? `<div class="muted small warn-text"><i class="fa-solid fa-plug-circle-xmark"></i> 일부 데이터 수집 실패: ${errs.map(escHtml).join(' / ')}</div>` : '';
+}
+
+/* 수집 숫자 표 — 보고서 근거 확인용 */
+function rawTable(d) {
+  if (!d) return '';
+  const rev = d.revenue || {}, pr = d.periods || {};
+  const row = (label, r, p) => r ? `<tr><td>${label}</td><td class="muted">${Array.isArray(p) ? p[0] + ' ~ ' + p[1] : (p || '')}</td><td class="r">${fmt(r.revenue)}원</td><td class="r">${fmt(r.orders)}건</td></tr>` : '';
+  const products = (arr, cols) => (arr || []).length
+    ? `<table><thead><tr>${cols.map(c => `<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${arr.map(x => `<tr>${cols.map(c => `<td class="${c[2] || ''}">${c[1](x)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+    : '<div class="muted">없음</div>';
+  const p = d.products || {};
+  return `<h4>매출 (카페24 결제완료 기준)</h4>
+    <table><thead><tr><th>구간</th><th>기간</th><th class="r">매출</th><th class="r">주문</th></tr></thead><tbody>
+      ${row('어제', rev.yesterday, pr.yesterday)}${row('그저께', rev.day_before, pr.day_before)}${row('지난주 같은 요일', rev.same_dow_last_week, pr.same_dow_last_week)}
+      ${row('최근 7일', rev.last7, pr.last7)}${row('직전 7일', rev.prev7, pr.prev7)}${row('이달 누적', rev.mtd, pr.mtd)}${row('지난달 같은 기간', rev.last_month_same, pr.last_month_same)}${row('지난달 전체', rev.last_month, pr.last_month)}
+    </tbody></table>
+    <h4>어제 많이 팔린 상품</h4>${products(p.top_yesterday, [['상품', x => escHtml(x.name)], ['수량', x => fmt(x.qty), 'r'], ['조회', x => fmt(x.views), 'r'], ['주문율', x => x.rate + '%', 'r']])}
+    <h4>급등 상품 (최근 7일 vs 직전 7일)</h4>${products(p.trending_7d, [['상품', x => escHtml(x.name)], ['직전', x => fmt(x.qty_prev7d), 'r'], ['최근', x => fmt(x.qty_7d), 'r'], ['주문율', x => x.rate_7d + '%', 'r']])}
+    <h4>주문율 하락 상품</h4>${products(p.rate_drops_7d, [['상품', x => escHtml(x.name)], ['조회', x => fmt(x.views_7d), 'r'], ['직전 주문율', x => x.rate_prev7d + '%', 'r'], ['최근 주문율', x => x.rate_7d + '%', 'r']])}
+    ${d.claims_last7 ? `<h4>최근 7일 취소·반품</h4><div class="muted">취소 ${fmt(d.claims_last7.cancel_count)}건 (${(d.claims_last7.cancel_reasons_top3 || []).join(', ')}) · 반품 ${fmt(d.claims_last7.return_count)}건 (${(d.claims_last7.return_reasons_top3 || []).join(', ')})</div>` : ''}
+    ${d.ads ? `<h4>Meta 광고</h4><div class="muted">어제 광고비 ${fmt(d.ads.yesterday?.spend)}원 · 최근 7일 ${fmt(d.ads.last7?.spend)}원 (직전 7일 ${fmt(d.ads.prev7?.spend)}원) · ROAS(카페24) 어제 ${d.ads.roas_cafe24?.yesterday ?? '—'} / 7일 ${d.ads.roas_cafe24?.last7 ?? '—'} / 직전 7일 ${d.ads.roas_cafe24?.prev7 ?? '—'}</div>` : ''}`;
+}

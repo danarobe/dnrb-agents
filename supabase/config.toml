@@ -1,0 +1,7 @@
+# DNRB 에이전트 — Edge Functions 설정
+# 같은 Supabase 프로젝트(eeffmbusaqaadeojjlnc, 워크스페이스와 공유)에 배포한다.
+# 배포: supabase functions deploy sales-agent --project-ref eeffmbusaqaadeojjlnc
+
+# 매출 분석 에이전트 — 관리자 로그인 또는 x-cron-secret(pg_cron 08:00 KST)
+[functions.sales-agent]
+verify_jwt = true

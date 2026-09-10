@@ -1,0 +1,122 @@
+/* ──────────────────────────────────────────
+   담당자(에이전트) 등록부
+   - key = agent_reports.agent 값. 새 담당자를 만들면 여기 한 줄 + Supabase 함수 하나.
+   - status: active(돌아가는 중) / planned(준비 중) — 준비 중은 카드만 보이고 실행 버튼이 없다.
+   - fn: 실행 함수 이름 (action=run/status 규약을 따른다)
+────────────────────────────────────────── */
+const AGENTS = [
+  {
+    key: 'sales', name: '매출 분석 담당', icon: 'fa-chart-line', color: '#4f46e5', status: 'active', fn: 'sales-agent',
+    schedule: '매일 아침 8시',
+    desc: '어제 매출·주문율·취소반품·광고 효율을 모아 아침 보고서를 씁니다. 오늘 할 일 3가지를 담당별로 제안합니다.',
+    sources: ['카페24 매출·상품', '카페24 취소반품', 'Meta 광고'],
+  },
+  {
+    key: 'returns', name: '취소·반품 감시 담당', icon: 'fa-rotate-left', color: '#b91c1c', status: 'planned',
+    schedule: '매일', desc: '반품 사유가 몰리는 상품을 찾아 상세페이지·옵션 수정 포인트를 제안합니다.', sources: ['카페24 취소반품', '반품 관리 목록'],
+  },
+  {
+    key: 'content', name: '상품 콘텐츠 담당', icon: 'fa-images', color: '#0891b2', status: 'planned',
+    schedule: '신상품 등록 시', desc: '신상품 사진 보정, 상세 문구 초안, 영·일·중 번역을 미리 준비합니다.', sources: ['포토 스튜디오', '상세 번역기'],
+  },
+  {
+    key: 'marketing', name: '마케팅 담당', icon: 'fa-bullhorn', color: '#b45309', status: 'planned',
+    schedule: '매주 월요일', desc: '광고 성과와 재고를 보고 이번 주 밀어줄 상품과 광고 문구를 제안합니다.', sources: ['Meta 광고', '안정재고'],
+  },
+  {
+    key: 'cs', name: '고객 응대 담당', icon: 'fa-headset', color: '#15803d', status: 'planned',
+    schedule: '수시', desc: '문의와 리뷰를 분류하고 답변 초안을 씁니다. 발송은 사람이 확인한 뒤에만.', sources: ['카페24 게시판'],
+  },
+];
+const agentOf = key => AGENTS.find(a => a.key === key);
+
+/* 홈: 담당자 카드 + 최신 보고서 요약 */
+async function renderHome() {
+  const main = $('main');
+  main.innerHTML = `
+    <div class="page-head">
+      <div><h1>담당자</h1><p class="sub">쇼핑몰 매출을 키우기 위한 AI 담당자들입니다. 각자 정해진 시간에 데이터를 보고 보고서를 씁니다.</p></div>
+    </div>
+    <div id="setup-notice"></div>
+    <div class="cards" id="agent-cards">${AGENTS.map(agentCardSkeleton).join('')}</div>`;
+  renderSetupNotice();
+  // 최신 보고서 1건씩 (현재는 sales만 데이터가 있음)
+  if (!isAdmin()) {
+    AGENTS.forEach(a => { const el = $('card-last-' + a.key); if (el) el.innerHTML = '<span class="muted">보고서는 관리자만 볼 수 있어요</span>'; });
+    return;
+  }
+  try {
+    const rows = await reportsLoad();
+    AGENTS.forEach(a => {
+      const el = $('card-last-' + a.key); if (!el) return;
+      const r = rows.find(x => x.agent === a.key);
+      if (!r) { el.innerHTML = `<span class="muted">${a.status === 'active' ? '아직 보고서가 없어요' : '준비 중'}</span>`; return; }
+      if (r.status === 'error') {
+        el.innerHTML = `<div class="last-err"><i class="fa-solid fa-triangle-exclamation"></i> ${dateShort(r.report_date)} 보고서 실패 · <a href="#reports/${r.id}">원인 보기</a></div>`;
+        return;
+      }
+      el.innerHTML = `<a class="last-report mood-${r.report?.mood || 'neutral'}" href="#reports/${r.id}">
+          <span class="when">${dateShort(r.report_date)} 기준 · ${relTime(r.created_at)}</span>
+          <b>${escHtml(r.report?.headline || '')}</b>
+        </a>`;
+    });
+  } catch (e) {
+    AGENTS.forEach(a => { const el = $('card-last-' + a.key); if (el) el.innerHTML = `<span class="muted">불러오기 실패: ${escHtml(e.message)}</span>`; });
+  }
+}
+
+function agentCardSkeleton(a) {
+  const active = a.status === 'active';
+  return `<div class="card agent ${active ? '' : 'planned'}" id="card-${a.key}">
+    <div class="agent-head">
+      <span class="agent-icon" style="background:${a.color}1a;color:${a.color};"><i class="fa-solid ${a.icon}"></i></span>
+      <div class="agent-title">
+        <b>${a.name}</b>
+        <span class="pill ${active ? 'on' : 'off'}">${active ? '활동 중' : '준비 중'}</span>
+      </div>
+    </div>
+    <p class="agent-desc">${a.desc}</p>
+    <div class="agent-meta"><i class="fa-regular fa-clock"></i> ${a.schedule} · <i class="fa-solid fa-database"></i> ${a.sources.join(', ')}</div>
+    <div class="agent-last" id="card-last-${a.key}"><span class="muted"><i class="fa-solid fa-spinner fa-spin"></i></span></div>
+    ${active && isAdmin() ? `<div class="agent-actions">
+      <a class="btn ghost" href="#reports">보고서 보기</a>
+      <button class="btn primary" id="run-${a.key}" onclick="agentRun('${a.key}')"><i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행</button>
+    </div>` : ''}
+  </div>`;
+}
+
+/* API 키 미설정 안내 — sales-agent status */
+let __statusCache = null;
+async function agentStatus(force) {
+  if (__statusCache && !force) return __statusCache;
+  try { __statusCache = await callFn('sales-agent', { action: 'status' }); } catch { __statusCache = null; }
+  return __statusCache;
+}
+async function renderSetupNotice() {
+  const el = $('setup-notice'); if (!el || !isAdmin()) return;
+  const st = await agentStatus();
+  if (!st || st.configured) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="notice warn">
+    <b><i class="fa-solid fa-key"></i> Claude API 키가 아직 없어요.</b> 데이터 수집은 되지만 보고서 본문을 쓰지 못합니다.
+    <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>에서 키를 만든 뒤 터미널에서 아래 두 줄을 실행하세요.
+    <pre>supabase secrets set ANTHROPIC_API_KEY=키값 --project-ref eeffmbusaqaadeojjlnc
+supabase functions deploy sales-agent --project-ref eeffmbusaqaadeojjlnc</pre>
+  </div>`;
+}
+
+/* 지금 실행 */
+async function agentRun(key) {
+  const a = agentOf(key); if (!a || !a.fn || !isAdmin()) return;
+  const btn = $('run-' + key);
+  btnBusy(btn, '분석 중');
+  try {
+    const d = await callFn(a.fn, { action: 'run' }, { method: 'POST', body: '{}' });
+    toast('보고서가 도착했어요');
+    __reportsCache = null;
+    location.hash = '#reports/' + d.id;
+  } catch (e) {
+    toast('실패: ' + e.message);
+    __reportsCache = null;
+    if (location.hash.startsWith('#reports')) renderReports(); else renderHome();
+  } finally { btnIdle(btn, '<i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행'); }
+}
