@@ -1,7 +1,7 @@
 /* ──────────────────────────────────────────
    공용: 세션·서버 호출·포맷 도우미
    - 세션 토큰은 워크스페이스 auth 함수가 서명한 것. 모든 함수 호출에 x-auth-token으로 붙이고 서버가 매번 검증한다.
-   - 워크스페이스에서 넘어올 때는 주소 해시 #sso=base64url(json)로 세션을 받는다 (받은 뒤 해시는 지움).
+   - 워크스페이스에서 넘어올 때는 주소 해시 #sso=<60초 일회용 코드>를 받아 auth sso_redeem으로 토큰과 바꾼다 (해시는 즉시 지움).
 ────────────────────────────────────────── */
 const CFG = window.DNRB_CONFIG;
 const SESSION_KEY = 'dnrb_agents_session';
@@ -11,17 +11,17 @@ const $ = id => document.getElementById(id);
 const isAdmin = () => SESSION?.role === 'admin';
 const ROLE_LABEL = { admin: '관리자', staff: 'MD', marketer: '마케터', cs: 'CS팀', logistics: '물류팀' };
 
-function loadSession() {
-  try {
-    const m = location.hash.match(/[#&]sso=([A-Za-z0-9_-]+)/);
-    if (m) {
-      const s = JSON.parse(decodeURIComponent(escape(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')))));
-      if (s && s.token && s.id && s.exp > Date.now()) {
-        localStorage.setItem(SESSION_KEY, JSON.stringify({ token: s.token, id: s.id, name: s.name, role: s.role, exp: s.exp }));
-      }
-      history.replaceState(null, '', location.pathname + location.search + '#home');
-    }
-  } catch { /* 잘못된 해시는 무시 */ }
+async function loadSession() {
+  // 워크스페이스에서 넘어온 60초 일회용 코드(#sso=코드) → auth sso_redeem으로 정식 토큰과 교환.
+  // 7일 토큰을 주소에 싣지 않는 이유: 공용 PC 브라우저 기록에 남아도 소진된 코드는 쓸모없다 (2026-09-10 보안 검토 반영).
+  const m = location.hash.match(/[#&]sso=([A-Za-z0-9_-]+)/);
+  if (m) {
+    history.replaceState(null, '', location.pathname + location.search + '#home');
+    try {
+      const d = await callFn('auth', null, { method: 'POST', body: JSON.stringify({ action: 'sso_redeem', code: m[1] }) });
+      if (d.token) saveSession({ token: d.token, id: d.id, name: d.name, role: d.role, exp: d.exp });
+    } catch (e) { console.warn('SSO 교환 실패:', e.message); }
+  }
   try {
     const s = JSON.parse(localStorage.getItem(SESSION_KEY));
     if (s && s.token && s.exp > Date.now()) SESSION = s;

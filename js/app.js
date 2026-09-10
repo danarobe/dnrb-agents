@@ -39,8 +39,8 @@ async function submitLogin(ev) {
 }
 
 window.addEventListener('hashchange', () => { if (SESSION) route(); });
-document.addEventListener('DOMContentLoaded', () => {
-  loadSession();
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadSession();   // #sso= 코드 교환이 있으면 서버 왕복 1회
   if (!location.hash) history.replaceState(null, '', '#home');
   renderShell();
 });
