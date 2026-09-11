@@ -118,7 +118,7 @@ async function collect(D: string) {
     claims_last7: c ? {
       cancel_count: num(c.cancel?.count), cancel_amount: num(c.cancel?.amount), cancel_reasons_top3: top3(c.cancel?.reasons),
       return_count: num(c.return?.count), return_amount: num(c.return?.amount), return_reasons_top3: top3(c.return?.reasons),
-      note: "카페24 자사몰 기준(네이버페이 주문 제외), 주문일 기준",
+      note: "카페24 자사몰 기준(네이버페이 주문 제외), 최근 7일 주문 중 지금까지 들어온 취소·반품. 최근 주문은 아직 취소·반품이 더 들어오므로 증감 비교에 쓰지 말 것 (정확한 취소·반품률은 반품 감시 담당의 결제 주차 코호트 표)",
     } : null,
     ads: mCur7 === null && mD === null ? null : {
       yesterday: mD, last7: mCur7, prev7: mPrev7,

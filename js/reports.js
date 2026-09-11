@@ -103,19 +103,43 @@ function reportHtml(r) {
   const tile = (label, value, sub) => `<div class="tile"><div class="t-label">${label}</div><div class="t-value">${value}</div><div class="t-sub">${sub}</div></div>`;
   let tiles = '', extraBoxes = '';
   if (r.agent === 'returns') {
-    const cl = d.claims || {}, ts = d.top_sellers_return || {};
-    const cc = cl.cancel || {}, rt = cl.return || {};
-    tiles = [
-      tile('최근 7일 취소', cc.last7 ? fmt(cc.last7.count) + '건' : '—', `직전 7일 대비 ${fmtDelta(cc.change_pct)}${cc.last7 ? ' · ' + fmtMan(cc.last7.amount) : ''}`),
-      tile('최근 7일 반품', rt.last7 ? fmt(rt.last7.count) + '건' : '—', `직전 7일 대비 ${fmtDelta(rt.change_pct)}${rt.last7 ? ' · ' + fmtMan(rt.last7.amount) : ''}`),
-      tile('상위 상품 순반품률', ts.rate_14d != null ? ts.rate_14d + '%' : '—', `14일 창 · 배송완료 ${fmt(ts.delivered_14d)}개 중 반품 ${fmt(ts.returned_14d)}개`),
-      tile('위험·주의 상품', (rp.risk_products || []).length + '개', `관리 상품 ${fmt(d.watched_count || 0)}개 점검 · 판정 기준일 ${md(d.judge_date)}`),
-    ].join('');
+    const ts = d.top_sellers_return || {}, co = d.cohorts || {};
+    const weeks = co.weeks || [], ms = co.mature_weeks_summary, lm = ms?.latest_mature, cur = weeks.find(w => w.partial) || weeks[0];
+    const wk = w => w ? `${md(w.start)}~${md(w.end)}` : '';
+    const pr = v => v == null ? '—' : v + '%';
+    if (weeks.length) {
+      tiles = [
+        tile('취소율 (최근 성숙 주)', lm ? pr(lm.cancel_rate) : '—', lm ? `결제 주 ${wk(lm)} · 성숙 주 평균 ${pr(ms.avg_cancel_rate)}` : '성숙한 주가 아직 없음'),
+        tile('반품률 (최근 성숙 주)', lm ? pr(lm.return_rate) : '—', lm ? `결제 ${fmt(lm.paid)}건 중 반품 ${fmt(lm.ret)}건 · 평균 ${pr(ms.avg_return_rate)}` : '성숙한 주가 아직 없음'),
+        tile('이번 주 (집계 중)', cur ? `${pr(cur.cancel_rate)} · ${pr(cur.return_rate)}` : '—', cur ? `취소 · 반품 · 결제 ${fmt(cur.paid)}건 · 아직 늘어날 수 있음` : ''),
+        tile('위험·주의 상품', (rp.risk_products || []).length + '개', `상위 상품 14일 순반품률 ${ts.rate_14d != null ? ts.rate_14d + '%' : '—'} · 관리 ${fmt(d.watched_count || 0)}개`),
+      ].join('');
+    } else {
+      // 코호트 도입 전 보고서(2026-09-11 이전 데이터)
+      const cl = d.claims || {}, cc = cl.cancel || {}, rt = cl.return || {};
+      tiles = [
+        tile('최근 7일 취소', cc.last7 ? fmt(cc.last7.count) + '건' : '—', '주문일 기준 · 미성숙 집계'),
+        tile('최근 7일 반품', rt.last7 ? fmt(rt.last7.count) + '건' : '—', '주문일 기준 · 미성숙 집계'),
+        tile('상위 상품 순반품률', ts.rate_14d != null ? ts.rate_14d + '%' : '—', `14일 창 · 배송완료 ${fmt(ts.delivered_14d)}개 중 반품 ${fmt(ts.returned_14d)}개`),
+        tile('위험·주의 상품', (rp.risk_products || []).length + '개', `관리 상품 ${fmt(d.watched_count || 0)}개 점검`),
+      ].join('');
+    }
+    const matColor = { '성숙': 'good', '집계 중': '', '진행 중': 'new' };
+    const cohortRows = (rp.cohort_table || []).map(x => {
+      const raw = weeks.find(w => `${w.start}~${w.end}` === x.week) || {};
+      return `<tr><td><b>${escHtml(x.week.replace(/\d{4}-/g, ''))}</b><div class="muted">${raw.age_days != null ? raw.age_days + '일 경과' : ''}</div></td>
+        <td><span class="chip ${matColor[x.maturity] || ''}">${escHtml(x.maturity)}</span></td>
+        <td class="r">${fmt(x.paid)}건</td><td class="r"><b>${pr(x.cancel_rate)}</b>${raw.cancel != null ? `<div class="muted">${fmt(raw.cancel)}건</div>` : ''}</td>
+        <td class="r"><b>${pr(x.return_rate)}</b>${raw.ret != null ? `<div class="muted">${fmt(raw.ret)}건</div>` : ''}</td><td>${escHtml(x.verdict)}</td></tr>`;
+    }).join('');
+    const cohortBox = cohortRows ? `<div class="box"><h3><i class="fa-regular fa-calendar-check" style="color:#4f46e5;"></i> 결제 주차별 취소·반품률 <span class="muted small">그 주에 결제된 주문 중 지금까지 취소·반품된 비율 · 성숙 = 14일 이상 경과</span></h3>
+      <div class="tbl-wrap"><table class="risk"><thead><tr><th>결제 주(월~일)</th><th>상태</th><th class="r">결제</th><th class="r">취소율</th><th class="r">반품률</th><th>판단</th></tr></thead><tbody>${cohortRows}</tbody></table></div>
+      <div class="muted small chk-hint">취소가 다음 주에 일어나도 결제한 주로 돌아갑니다. 집계 중인 주는 앞으로 더 올라갑니다.</div></div>` : '';
     const lvColor = { '위험': 'down', '주의': 'warn' };
     const riskRows = (rp.risk_products || []).map(x => `<tr><td><b>${escHtml(x.name)}</b><div class="muted">${escHtml(x.cause)}</div></td><td class="r"><b class="${lvColor[x.level] || ''}">${escHtml(x.level)}</b><div class="muted">${x.rate_14d}% · ${fmt(x.delivered_14d)}개</div></td><td>${escHtml(x.fix)}</td></tr>`).join('');
     const vColor = { '개선': 'up-good', '유지': '', '악화': 'down' };
     const watchRows = (rp.watch_review || []).map(x => `<div class="li"><div class="li-top"><b>${escHtml(x.name)}</b><span class="chip ${x.verdict === '개선' ? 'good' : x.verdict === '악화' ? 'bad' : ''}">${escHtml(x.verdict)}</span></div><div>${escHtml(x.detail)}</div></div>`).join('');
-    extraBoxes = `
+    extraBoxes = cohortBox + `
     <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 위험·주의 상품 <span class="muted small">14일 창 · 순반품률 20%↑ 위험, 10~20% 주의</span></h3>
       ${riskRows ? `<div class="tbl-wrap"><table class="risk"><thead><tr><th>상품 · 원인 추정</th><th class="r">판정</th><th>대응</th></tr></thead><tbody>${riskRows}</tbody></table></div>` : '<div class="muted">위험·주의 상품이 없어요</div>'}
     </div>
@@ -197,11 +221,17 @@ function rawTable(d, agent) {
 }
 
 function rawTableReturns(d) {
-  const cl = d.claims || {}, ts = d.top_sellers_return || {};
+  const cl = d.claims || {}, ts = d.top_sellers_return || {}, co = d.cohorts || {}, cr = d.claim_reasons_last7 || {};
   const bucket = (label, b) => b && b.last7 ? `<tr><td>${label}</td><td class="r">${fmt(b.prev7?.count)}건</td><td class="r">${fmt(b.last7.count)}건</td><td class="r">${fmt(b.last7.amount)}원</td><td>${(b.reasons || []).slice(0, 4).map(x => `${escHtml(x.reason)} ${x.cnt}(${x.prev_cnt})`).join(', ')}</td></tr>` : '';
+  const pr = v => v == null ? '—' : v + '%';
+  const dayRows = (co.days_last14 || []).map(x => `<tr><td>${x.date}</td><td class="r">${x.age_days}일</td><td class="r">${fmt(x.paid)}</td><td class="r">${fmt(x.cancel)} (${pr(x.cancel_rate)})</td><td class="r">${fmt(x.ret)} (${pr(x.return_rate)})</td></tr>`).join('');
+  const reasonRow = (label, b) => b ? `<tr><td>${label}</td><td class="r">${fmt(b.count_so_far)}건</td><td>${(b.reasons || []).slice(0, 5).map(x => `${escHtml(x.reason)} ${x.cnt}`).join(', ')}</td></tr>` : '';
+  const cohortRaw = (co.weeks || []).length ? `<h4>결제 일별 코호트 (최근 14일, 괄호 = 비율)</h4><table><thead><tr><th>결제일</th><th class="r">경과</th><th class="r">결제</th><th class="r">취소</th><th class="r">반품</th></tr></thead><tbody>${dayRows}</tbody></table>
+    <h4>최근 7일 주문의 취소·반품 사유 (사유 분포 참고용, 건수 추세 아님)</h4><table><thead><tr><th>구분</th><th class="r">지금까지</th><th>사유</th></tr></thead><tbody>${reasonRow('취소', cr.cancel)}${reasonRow('반품', cr.return)}</tbody></table>` : '';
   const risk = (ts.risk_products || []).map(p => `<tr><td>${escHtml(p.name)}${p.watched ? ' <span class="chip">관리</span>' : ''}</td><td class="r">${p.win7.rate}% (${p.win7.delivered})</td><td class="r">${p.win14.rate}% (${p.win14.delivered})</td><td class="r">${p.win30.rate}% (${p.win30.delivered})</td><td>${(p.risk_options || []).map(o => `${escHtml(o.option)} ${o.rate_14d}%`).join(', ') || '—'}</td><td>${(p.reasons_top3 || []).map(escHtml).join(', ') || '—'}</td></tr>`).join('');
-  return `<h4>취소·반품 (주문일 기준, 최근 7일 vs 직전 7일)</h4>
-    <table><thead><tr><th>구분</th><th class="r">직전 7일</th><th class="r">최근 7일</th><th class="r">금액</th><th>사유 최근(직전)</th></tr></thead><tbody>${bucket('취소', cl.cancel)}${bucket('반품', cl.return)}</tbody></table>
+  const legacy = cl.cancel ? `<h4>취소·반품 (주문일 기준, 최근 7일 vs 직전 7일 — 코호트 도입 전 방식)</h4>
+    <table><thead><tr><th>구분</th><th class="r">직전 7일</th><th class="r">최근 7일</th><th class="r">금액</th><th>사유 최근(직전)</th></tr></thead><tbody>${bucket('취소', cl.cancel)}${bucket('반품', cl.return)}</tbody></table>` : '';
+  return `${cohortRaw}${legacy}
     <h4>위험·주의 후보 (배송완료일 기준 순반품률, 괄호 = 배송완료 수량)</h4>
     ${risk ? `<table><thead><tr><th>상품</th><th class="r">7일</th><th class="r">14일</th><th class="r">30일</th><th>위험 옵션(14일)</th><th>사유 TOP3(14일)</th></tr></thead><tbody>${risk}</tbody></table>` : '<div class="muted">없음</div>'}
     <div class="muted small">판정 기준일 ${d.judge_date || ''} (기준일보다 3일 앞 — 반품은 배송완료 후 며칠 뒤 들어와서)</div>`;
