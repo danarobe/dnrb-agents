@@ -191,7 +191,7 @@ export const COMMON_RULES = `
 - actions(오늘 새로 제안하는 것)는 주간 항목과 별개로 그대로 씁니다.`;
 
 // ── Claude 호출 ──
-export async function writeReport(system: string, schema: unknown, data: unknown, week: unknown)
+export async function writeReport(system: string, schema: unknown, data: unknown, week: unknown, effort: "low" | "medium" | "high" = "medium")
   : Promise<{ report: Row; usage: unknown; model: string }> {
   if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY 미설정 — Supabase secrets에 Claude API 키를 넣고 함수를 재배포하세요");
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
@@ -199,7 +199,7 @@ export async function writeReport(system: string, schema: unknown, data: unknown
     model: MODEL,
     max_tokens: 8000,
     system,
-    output_config: { effort: "medium", format: { type: "json_schema", schema } },
+    output_config: { effort, format: { type: "json_schema", schema } },
     messages: [{
       role: "user",
       content: `아래는 기준일(어제)까지의 수집 데이터와 이번 주 앞선 날들의 보고 항목입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(data)}\n\n[this_week]\n${JSON.stringify(week)}`,
@@ -251,6 +251,11 @@ export interface AgentDef {
   system: string;                                  // Claude 시스템 프롬프트
   schema: unknown;                                 // reportSchema(...)
   collect: (D: string) => Promise<Row & { errors: string[] }>;
+  // 선택: Claude에 보낼 데이터만 줄이기(표시용 원자료는 data에 그대로 저장) — 입력 토큰·시간 절약
+  forLLM?: (data: Row) => unknown;
+  // 선택: Claude 응답에 숫자 채워 넣기(Claude가 숫자를 다시 쓰지 않게 해 출력 토큰·시간 절약)
+  postProcess?: (report: Row, data: Row) => Row;
+  effort?: "low" | "medium" | "high";   // 기본 medium
 }
 export function serveAgent(def: AgentDef) {
   Deno.serve(async (req) => {
@@ -289,8 +294,10 @@ export function serveAgent(def: AgentDef) {
         try {
           const [collected, wc] = await Promise.all([def.collect(D), weekContext(def.agent, D)]);
           data = collected;
-          const { report: written, usage, model } = await writeReport(def.system, def.schema, data,
-            { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far });
+          const llmData = def.forLLM ? def.forLLM(data) : data;
+          const { report: written0, usage, model } = await writeReport(def.system, def.schema, llmData,
+            { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far }, def.effort ?? "medium");
+          const written = def.postProcess ? def.postProcess(written0, data) : written0;
           const report = { ...written, week: wc.week, last_week: wc.last_week };
           const row = await saveRow({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage, created_by: me?.id ?? null });
           const notified = await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 }));

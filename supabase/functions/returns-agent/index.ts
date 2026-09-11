@@ -157,7 +157,8 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 취소·�
 - 관리 상품(사람이 워크스페이스 반품 관리 메뉴에서 지정한 것)은 지정 이후 나아졌는지 나빠졌는지 판정합니다. 새로 관리 상품으로 지정할 만한 것은 제안만 합니다(지정은 사람이 합니다). 판매 중단은 '대표 확인 후'.
 - risk_products(구조화 표)에는 위험·주의 상품을 순반품률 높은 순으로 넣고, 각각 원인 추정(사유·옵션 근거)과 한 줄 대응을 씁니다. 보류 상품은 넣지 않습니다.
 - watch_review에는 관리 상품 전부를 넣고 개선/유지/악화를 판정합니다 (7일·14일·30일 창의 흐름으로).
-- cohort_table에는 cohorts.weeks를 최신 주부터 그대로 옮기고(숫자 변형 금지) 한 줄 판단을 붙입니다.
+- cohort_table에는 cohorts.weeks의 week 값과 한 줄 판단만 씁니다(숫자는 코드가 채웁니다). risk_products도 name·원인·대응만.
+- summary는 4줄 이내, 각 항목 detail은 두 문장 이내로 짧게 씁니다 (보고서 생성 시간 제한이 있습니다).
 - highlights는 좋은 신호(반품 줄어든 상품, 잘 팔리면서 반품 낮은 상품, 개선된 관리 상품), warnings는 나쁜 신호입니다.
 - actions는 오늘 실행할 구체적인 것 2~3개.
 ${COMMON_RULES}`;
@@ -172,30 +173,25 @@ const SCHEMA = reportSchema({
       items: {
         type: "object",
         properties: {
-          week: { type: "string", description: "결제 주차 'YYYY-MM-DD~YYYY-MM-DD'" },
-          maturity: { type: "string", enum: ["성숙", "집계 중", "진행 중"] },
-          paid: { type: "integer" }, cancel_rate: { type: "number" }, return_rate: { type: "number" },
-          verdict: { type: "string", description: "한 줄 판단 (성숙 주 평균 대비 높음/낮음, 집계 중이면 '아직 늘어날 수 있음')" },
+          week: { type: "string", description: "cohorts.weeks[].week 값 그대로 'YYYY-MM-DD~YYYY-MM-DD'" },
+          verdict: { type: "string", description: "한 줄 판단, 30자 이내 (성숙 주 평균 대비 높음/낮음, 집계 중이면 '아직 늘어날 수 있음')" },
         },
-        required: ["week", "maturity", "paid", "cancel_rate", "return_rate", "verdict"], additionalProperties: false,
+        required: ["week", "verdict"], additionalProperties: false,
       },
-      description: "결제 주차별 취소·반품률 표 (최신 주부터, cohorts.weeks 그대로 + 판단)",
+      description: "결제 주차별 판단. cohorts.weeks 전부, 최신 주부터. 숫자는 쓰지 말 것(코드가 채움)",
     },
     risk_products: {
       type: "array",
       items: {
         type: "object",
         properties: {
-          name: { type: "string", description: "상품명 (데이터 그대로)" },
-          level: { type: "string", enum: ["위험", "주의"] },
-          rate_14d: { type: "number", description: "14일 순반품률 %" },
-          delivered_14d: { type: "integer", description: "14일 배송완료 수량" },
-          cause: { type: "string", description: "원인 추정 — 사유·옵션 근거 포함" },
-          fix: { type: "string", description: "한 줄 대응" },
+          name: { type: "string", description: "상품명 (risk_products[].name 그대로)" },
+          cause: { type: "string", description: "원인 추정 — 사유·옵션 근거 포함, 60자 이내" },
+          fix: { type: "string", description: "한 줄 대응, 40자 이내" },
         },
-        required: ["name", "level", "rate_14d", "delivered_14d", "cause", "fix"], additionalProperties: false,
+        required: ["name", "cause", "fix"], additionalProperties: false,
       },
-      description: "위험·주의 상품 표. 순반품률 높은 순, 최대 10개",
+      description: "위험·주의 상품 표. 순반품률 높은 순, 최대 8개. 등급·수치는 코드가 채우니 쓰지 말 것",
     },
     watch_review: {
       type: "array",
@@ -213,4 +209,35 @@ const SCHEMA = reportSchema({
   },
 });
 
-serveAgent({ agent: AGENT, label: "취소·반품 감시 담당", system: SYSTEM, schema: SCHEMA, collect });
+// Claude에 보낼 때는 표시 전용 원자료를 뺀다 (일별 코호트 14행, 위험 옵션 2개 초과, 상품 8개 초과)
+function forLLM(data: Row) {
+  const co = (data.cohorts ?? {}) as Row;
+  const ts = (data.top_sellers_return ?? {}) as Row;
+  return {
+    ...data,
+    cohorts: { ...co, days_last14: undefined, days_note: "일별 코호트는 생략 — 주차 표로 판단" },
+    top_sellers_return: {
+      ...ts,
+      risk_products: ((ts.risk_products ?? []) as Row[]).slice(0, 8).map((p) => ({ ...p, risk_options: ((p.risk_options ?? []) as Row[]).slice(0, 2), product_no: undefined, rank7: undefined, paid_14d: undefined })),
+    },
+  };
+}
+// Claude가 쓴 판단에 숫자를 코드가 붙인다 (출력 토큰 절약 + 숫자 오기 방지)
+function postProcess(report: Row, data: Row): Row {
+  const weeks = (((data.cohorts ?? {}) as Row).weeks ?? []) as Row[];
+  const byWeek = new Map(weeks.map((w) => [String(w.week), w]));
+  const cohortTable = ((report.cohort_table ?? []) as Row[]).map((x) => {
+    const w = byWeek.get(String(x.week)) ?? {};
+    return { week: x.week, verdict: x.verdict, maturity: w.maturity ?? "", paid: num(w.paid), cancel_rate: w.cancel_rate ?? null, return_rate: w.return_rate ?? null };
+  });
+  const risk = ((((data.top_sellers_return ?? {}) as Row).risk_products ?? []) as Row[]);
+  const byName = new Map(risk.map((p) => [String(p.name), p]));
+  const riskProducts = ((report.risk_products ?? []) as Row[]).map((x) => {
+    const p = byName.get(String(x.name));
+    const w14 = (p?.win14 ?? {}) as Row;
+    return { ...x, level: String(w14.level ?? "주의"), rate_14d: w14.rate ?? null, delivered_14d: num(w14.delivered) };
+  });
+  return { ...report, cohort_table: cohortTable, risk_products: riskProducts };
+}
+
+serveAgent({ agent: AGENT, label: "취소·반품 감시 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess });
