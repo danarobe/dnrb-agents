@@ -21,7 +21,7 @@
 - `config.js` — Supabase URL/anon key, 워크스페이스 URL.
 - `api.js` — 세션(loadSession/authLogin/logout), `callFn`(함수 호출, `x-auth-token` 자동), `dbProxy`, 포맷(fmtMan = 만 원/억 원, fmtDelta, dateLabel), toast, btnBusy/btnIdle.
 - `agents.js` — **담당자 등록부 `AGENTS`**(key = `agent_reports.agent`, status active/planned, fn = 실행 함수). 홈 카드 렌더(`renderHome`), API 키 안내(`renderSetupNotice` — sales-agent `status.configured`), `agentRun(key)`(action=run POST → 완료 시 `#reports/<id>`).
-- `reports.js` — 보고서 피드. `reportsLoad()`(60건 캐시) → 좌측 목록 + 우측 상세(`reportHtml`): 헤드라인(mood 색)+요약 → KPI 4타일(어제/7일/이달/광고비·ROAS, 증감은 지난주 같은 요일·직전 7일·지난달 같은 기간) → 주목/주의 2열 → 오늘 할 일 3(담당 칩) → note·수집 오류 → `수집한 숫자 보기`(rawTable, 근거 확인용). 실패 행은 빨간 상자로 원인 표시. 관리자가 아니면 목록 대신 안내.
+- `reports.js` — 보고서 피드. `reportsLoad()`(60건 캐시) → 좌측 목록 + 우측 상세(`reportHtml`): 헤드라인(mood 색)+요약 → KPI 4타일(어제/7일/이달/광고비·ROAS, 증감은 지난주 같은 요일·직전 7일·지난달 같은 기간) → 오늘의 주목/주의 2열 → **이번 주 누적: P 주목 / N 주의 2열(등장일 칩·NEW) → 이번 주 할 일(since 칩) → 저번 주 해야 했을 일(회색 점선 상자)** → note·수집 오류. 주간 필드가 없는 옛 보고서는 actions를 '이번 주 할 일'로 표시 → `수집한 숫자 보기`(rawTable, 근거 확인용). 실패 행은 빨간 상자로 원인 표시. 관리자가 아니면 목록 대신 안내.
 - `app.js` — 해시 라우터 `#home | #reports | #reports/<id>`, 로그인 화면 전환.
 - 모든 사용자 데이터·보고서 문자열은 `escHtml`을 거쳐 innerHTML에 넣는다(보고서는 Claude 출력이라 신뢰하지 않음).
 
@@ -29,12 +29,12 @@
 - **흐름**: run → ① `collect(D)` — 워크스페이스 함수를 `x-agent-secret`으로 admin 호출(실측 약 10초) → ② Claude `claude-opus-5`(effort medium, `output_config.format` json_schema 구조화 응답, `npm:@anthropic-ai/sdk`) → ③ `agent_reports` 저장 + 관리자 전원 `notifications`(link_menu agents) + 웹 푸시(VAPID) → 응답 `{id, report, notified}`.
 - **기준일 D** = 실행일 전날(KST). `?date=` / body.date로 과거 날짜 지정 가능(오늘 이후는 어제로 보정).
 - **수집 항목**: 매출 8구간(어제/그저께/지난주 같은 요일/최근 7/직전 7/이달 누적/지난달 같은 기간/지난달 전체 — `revenue`. **첫 호출 후 나머지 병렬**: 카페24 토큰 동시 갱신 경쟁 방지), 상품 조회·주문율 3구간(`summary`), 취소반품 최근 7일(`cafe24-claims`), Meta `summary` 3구간. 파생: 급증 TOP8(워크스페이스 홈과 같은 규칙: 이번 주 10개↑·(cur+5)/(prev+5)), 주문율 하락(두 주 조회 300↑·직전 1%↑·60% 이하), 조회 많고 안 팔림(500↑·0.5%↓), 어제 TOP8, ROAS(카페24)=카페24 매출÷Meta 광고비. 항목별 try/catch → `data.errors[]`에 남기고 나머지로 진행.
-- **리포트 JSON**(REPORT_SCHEMA): headline(40자)/mood(good·neutral·bad)/summary[3~5]/highlights[]/warnings[]/actions[정확히 3, owner=광고팀·상품팀·CS팀·대표]/note. 시스템 프롬프트 원칙: 숫자 근거, 요일 효과(전날보다 지난주 같은 요일·7일 비교 우선), 만 원 단위, 추측은 추측으로, 큰 결정은 '대표 확인 후', 없는 상품·숫자 금지.
+- **리포트 JSON**(REPORT_SCHEMA): headline(40자)/mood(good·neutral·bad)/summary[3~5]/highlights[]/warnings[]/actions[정확히 3, owner=광고팀·상품팀·CS팀·대표]/note + **주간 누적 3종(2026-09-11 사용자 요청 — "그날 못 보면 잊힌다")**: `week_highlights`/`week_warnings`[{title,detail,dates[],status new|ongoing}, 최대 8]·`week_actions`[{title,why,owner,since,status}, 최대 6]. 함수의 `weekContext(D)`가 이번 주(월~D-1, 날짜별 최신 1건)의 highlights/warnings/actions를 `this_week.prior_days`로 프롬프트에 넣고 Claude가 합친다(같은 상품=하나, 해소된 주의는 제외, 유효한 할 일 유지). **저번 주 할 일은 Claude 미경유** — 저번 주 마지막 보고서의 week_actions(없으면 actions)를 `report.last_week{start,end,from_report_date,actions}`로 그대로 붙임. `report.week{start,end}`도 저장. 주 = 월~일(KST), 월요일 아침 보고서(D=일요일)가 그 주 전체 마무리. 시스템 프롬프트 원칙: 숫자 근거, 요일 효과(전날보다 지난주 같은 요일·7일 비교 우선), 만 원 단위, 추측은 추측으로, 큰 결정은 '대표 확인 후', 없는 상품·숫자 금지.
 - **실패도 행으로 남긴다**(status error + error + 수집 data). API 키가 없으면 `status.configured=false` → 화면 상단 안내 박스.
 - **액션**: `run`(POST, 관리자 또는 x-cron-secret) / `collect`(GET, 수집 숫자만 — 점검용) / `status`(GET, 관리자).
 - **자동 실행**: pg_cron 잡 `sales-agent-morning`(jobid 2, `0 23 * * *` UTC = **08:00 KST**) → `net.http_post(sales-agent?action=run, Authorization Bearer anon, x-cron-secret, timeout 180s)`. 워크스페이스 meta-budget의 `budget-midnight-kst`와 같은 방식. 잡 수정은 Supabase 관리 API SQL(`cron.unschedule` 후 `cron.schedule`; 관리 토큰은 macOS 키체인 `security find-generic-password -s "Supabase CLI" -w`, python urllib은 403이라 curl).
 - **배포**: `supabase functions deploy sales-agent --project-ref eeffmbusaqaadeojjlnc` (secrets 변경 후에도 재배포).
-- **필요 secrets**: `ANTHROPIC_API_KEY`(**사용자가 console.anthropic.com에서 발급해 넣어야 함** — 2026-09-10 현재 미설정), `AGENT_SECRET`(설정 완료), `CRON_SECRET`(워크스페이스와 공유), `SUPABASE_ANON_KEY`·`SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY`(자동), `VAPID_*`(선택).
+- **필요 secrets**: `ANTHROPIC_API_KEY`(사용자가 2026-09-10 발급·설정 완료, 만료 없음), `AGENT_SECRET`(설정 완료), `CRON_SECRET`(워크스페이스와 공유), `SUPABASE_ANON_KEY`·`SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY`(자동), `VAPID_*`(선택).
 - **검증(2026-09-10)**: collect 실측 오류 0건·10.4초, 키 미설정 run → error 행 저장 확인, 화면은 node 스텁 DOM으로 홈·보고서(정상/실패)·비관리자 차단 확인.
 
 ## 4. DB
@@ -48,6 +48,6 @@
 - **원칙(사용자 결정)**: 에이전트는 **제안만** 한다. 광고 게재·가격 변경·고객 발송 같은 바깥 행동은 자동화하지 않는다.
 
 ## 6. 남은 일
-- ANTHROPIC_API_KEY 입력(사용자) → 첫 보고서 확인 → 프롬프트·액션 품질 다듬기.
+- 첫 보고서 2건 확인됨(2026-09-10, 입력 약 4.5K·출력 약 2K 토큰/건). 프롬프트·액션 품질 다듬기 계속.
 - 오늘 할 일 체크(제안 → 담당 배정 → 완료 기록, `agent_actions` 테이블 예정), 에이전트에게 질문하기(보고서 맥락 + 데이터 재조회).
 - 2호 담당 = 취소·반품 감시(워크스페이스 `returnwatch`/`returnreasons` 액션 재사용 가능).

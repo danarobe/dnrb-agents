@@ -61,6 +61,45 @@ async function callFn(name: string, params: Record<string, string>): Promise<Rec
 
 type Row = Record<string, unknown>;
 
+// ═══════════════════ ⓪ 주간 문맥 (2026-09-11 사용자 요청) ═══════════════════
+// "그날 못 보면 잊힌다" → 이번 주(월~기준일) 앞선 날들의 주목·주의·할 일을 Claude에게 같이 주고
+// 주간 누적 항목(week_highlights / week_warnings / week_actions)을 쓰게 한다.
+// 저번 주 할 일은 저번 주 마지막 보고서의 week_actions를 그대로 붙인다(Claude 미경유).
+function mondayOf(ymd: string): string {
+  const d = new Date(`${ymd}T12:00:00Z`).getUTCDay();
+  return addDays(ymd, -((d + 6) % 7));
+}
+async function weekContext(D: string) {
+  const wStart = mondayOf(D);
+  const lwStart = addDays(wStart, -7), lwEnd = addDays(wStart, -1);
+  const q = async (filter: string): Promise<Row[]> => {
+    const r = await rest(`agent_reports?agent=eq.${AGENT}&status=eq.ok&${filter}&select=report_date,report,created_at&order=report_date.asc,created_at.desc`);
+    return r.ok ? (await r.json()) as Row[] : [];
+  };
+  // 날짜별 최신 1건만 (같은 날 여러 번 실행했을 수 있음)
+  const latestPerDate = (rows: Row[]) => {
+    const m = new Map<string, Row>();
+    for (const r of rows) if (!m.has(String(r.report_date))) m.set(String(r.report_date), r);
+    return [...m.values()];
+  };
+  const prior = latestPerDate(await q(`report_date=gte.${wStart}&report_date=lt.${D}`));
+  const priorDays = prior.map((r) => {
+    const rp = (r.report ?? {}) as Row;
+    return { date: String(r.report_date), dow: dow(String(r.report_date)), highlights: rp.highlights ?? [], warnings: rp.warnings ?? [], actions: rp.actions ?? [] };
+  });
+  const lw = latestPerDate(await q(`report_date=gte.${lwStart}&report_date=lte.${lwEnd}`));
+  const lwLast = lw.length ? lw[lw.length - 1] : null;   // asc 정렬이라 마지막 = 저번 주 가장 늦은 날
+  const lwRp = (lwLast?.report ?? null) as Row | null;
+  const lastWeekActions = lwRp
+    ? (Array.isArray(lwRp.week_actions) && lwRp.week_actions.length ? lwRp.week_actions : (lwRp.actions ?? []))
+    : [];
+  return {
+    week: { start: wStart, end: D },
+    prior_days: priorDays,
+    last_week: { start: lwStart, end: lwEnd, from_report_date: lwLast ? String(lwLast.report_date) : null, actions: lastWeekActions },
+  };
+}
+
 // ═══════════════════ ① 수집 ═══════════════════
 async function collect(D: string) {
   const errors: string[] = [];
@@ -226,8 +265,48 @@ const REPORT_SCHEMA = {
       description: "오늘 당장 실행할 구체적 액션 정확히 3개",
     },
     note: { type: "string", description: "데이터 한계나 주의점. 없으면 빈 문자열" },
+    week_highlights: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" }, detail: { type: "string", description: "이번 주 흐름을 한두 문장으로 (여러 날 등장했으면 변화까지)" },
+          dates: { type: "array", items: { type: "string" }, description: "등장한 기준일 목록 YYYY-MM-DD, 오래된 순" },
+          status: { type: "string", enum: ["new", "ongoing"], description: "new = 오늘 처음, ongoing = 이번 주 앞선 날에도 있었음" },
+        },
+        required: ["title", "detail", "dates", "status"], additionalProperties: false,
+      },
+      description: "이번 주(월~기준일) 누적 주목 항목. 앞선 날들의 highlights와 오늘 것을 합쳐 같은 상품·같은 신호는 하나로. 최대 8개",
+    },
+    week_warnings: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" }, detail: { type: "string" },
+          dates: { type: "array", items: { type: "string" } },
+          status: { type: "string", enum: ["new", "ongoing"] },
+        },
+        required: ["title", "detail", "dates", "status"], additionalProperties: false,
+      },
+      description: "이번 주 누적 주의 항목. 이미 해소된 것(하락했다가 회복 등)은 뺀다. 최대 8개",
+    },
+    week_actions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" }, why: { type: "string" },
+          owner: { type: "string", enum: ["광고팀", "상품팀", "CS팀", "대표"] },
+          since: { type: "string", description: "처음 제안한 기준일 YYYY-MM-DD" },
+          status: { type: "string", enum: ["new", "ongoing"] },
+        },
+        required: ["title", "why", "owner", "since", "status"], additionalProperties: false,
+      },
+      description: "이번 주 할 일. 앞선 날 actions 중 아직 유효한 것을 유지(since = 처음 제안일)하고 오늘 새 제안을 더한다. 중요한 순, 최대 6개",
+    },
   },
-  required: ["headline", "mood", "summary", "highlights", "warnings", "actions", "note"],
+  required: ["headline", "mood", "summary", "highlights", "warnings", "actions", "note", "week_highlights", "week_warnings", "week_actions"],
   additionalProperties: false,
 } as const;
 
@@ -242,9 +321,17 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 매출 분
 - 액션은 오늘 당장 할 수 있는 구체적인 것 3개. 담당(광고팀/상품팀/CS팀/대표)을 정합니다. 예산 변경·가격 변경 같은 큰 결정은 '대표 확인 후'로 표현합니다.
 - 데이터가 비어 있거나(null) 수집 오류(errors)가 있으면 그 부분은 모른다고 쓰고, 있는 데이터로만 판단합니다.
 - 상품명은 데이터에 있는 그대로 씁니다. 없는 상품이나 숫자를 만들어내지 않습니다.
-- 응답은 지정된 JSON 형식으로만 씁니다.`;
+- 응답은 지정된 JSON 형식으로만 씁니다.
 
-async function writeReport(data: unknown): Promise<{ report: Record<string, unknown>; usage: unknown; model: string }> {
+주간 항목(week_highlights / week_warnings / week_actions) — 대표가 그날 보고서를 못 봐도 놓치지 않게 하는 용도:
+- this_week.prior_days(이번 주 앞선 날들의 주목·주의·할 일)와 오늘 것을 합쳐 씁니다. 같은 상품·같은 문제는 하나로 합치고 dates에 등장한 날짜를 전부 적습니다.
+- 오늘 처음 나온 항목은 status "new", 앞선 날에도 있었으면 "ongoing". 여러 날 이어진 항목은 detail에 흐름(계속 오르는지, 꺾였는지)을 씁니다.
+- 주의 항목 중 이미 해소된 것(예: 전환율이 떨어졌다가 회복)은 week_warnings에서 뺍니다.
+- week_actions는 앞선 날 actions 중 아직 유효한 것을 유지(since = 처음 제안한 날)하고 오늘의 새 제안을 더합니다. 이미 지난 일이거나 의미가 없어진 것은 뺍니다. 중요한 순으로 최대 6개.
+- prior_days가 비어 있으면(주 첫날) 주간 항목은 오늘 것과 같고 status는 전부 "new"입니다.
+- actions(오늘 새로 제안하는 3개)는 주간 항목과 별개로 그대로 씁니다.`;
+
+async function writeReport(data: unknown, week: unknown): Promise<{ report: Record<string, unknown>; usage: unknown; model: string }> {
   if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY 미설정 — Supabase secrets에 Claude API 키를 넣고 sales-agent를 재배포하세요");
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   const res = await client.messages.create({
@@ -254,7 +341,7 @@ async function writeReport(data: unknown): Promise<{ report: Record<string, unkn
     output_config: { effort: "medium", format: { type: "json_schema", schema: REPORT_SCHEMA } },
     messages: [{
       role: "user",
-      content: `아래는 기준일(어제)까지의 수집 데이터입니다. 아침 리포트를 작성하세요.\n\n${JSON.stringify(data)}`,
+      content: `아래는 기준일(어제)까지의 수집 데이터와 이번 주 앞선 날들의 보고 항목입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(data)}\n\n[this_week]\n${JSON.stringify(week)}`,
     }],
   } as Parameters<typeof client.messages.create>[0]);
   if (res.stop_reason === "refusal") throw new Error("Claude가 응답을 거부했습니다");
@@ -336,8 +423,11 @@ Deno.serve(async (req) => {
       const t0 = Date.now();
       let data: Awaited<ReturnType<typeof collect>> | null = null;
       try {
-        data = await collect(D);
-        const { report, usage, model } = await writeReport(data);
+        const [collected, wc] = await Promise.all([collect(D), weekContext(D)]);
+        data = collected;
+        const { report: written, usage, model } = await writeReport(data, { week: wc.week, prior_days: wc.prior_days });
+        // 저번 주 할 일은 Claude를 거치지 않고 저번 주 마지막 보고서 것을 그대로 붙인다 (화면에서 "저번 주 해야 했을 일")
+        const report = { ...written, week: wc.week, last_week: wc.last_week };
         const row = await saveRow({
           agent: AGENT, report_date: D, trigger, status: "ok", data, report, model, usage,
           created_by: me?.id ?? null,

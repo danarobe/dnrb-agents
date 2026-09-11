@@ -62,10 +62,18 @@ function reportHtml(r) {
       : tile('어제 광고비', '—', 'Meta 데이터 없음'),
   ].join('');
   const list = (arr, cls) => (arr || []).length ? (arr || []).map(x => `<div class="li"><b class="${cls}">${escHtml(x.title)}</b><div>${escHtml(x.detail)}</div></div>`).join('') : '<div class="muted">없음</div>';
-  const actions = (rp.actions || []).map((x, i) => `<div class="act">
+  const md = d => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
+  const chips = x => `${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${(x.dates || []).length ? `<span class="chip">${x.dates.map(md).join(' · ')}</span>` : ''}`;
+  const wlist = (arr, cls) => (arr || []).length ? (arr || []).map(x => `<div class="li"><div class="li-top"><b class="${cls}">${escHtml(x.title)}</b>${chips(x)}</div><div>${escHtml(x.detail)}</div></div>`).join('') : '<div class="muted">아직 없음</div>';
+  const actRow = (x, i, opts = {}) => `<div class="act ${opts.past ? 'past' : ''}">
       <span class="num">${i + 1}</span>
-      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span></div><div class="muted">${escHtml(x.why)}</div></div>
-    </div>`).join('');
+      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}</div><div class="muted">${escHtml(x.why)}</div></div>
+    </div>`;
+  const hasWeek = Array.isArray(rp.week_actions) || Array.isArray(rp.week_highlights);
+  const weekLabel = rp.week ? `${md(rp.week.start)} ~ ${md(rp.week.end)}` : '';
+  const weekActions = (hasWeek ? rp.week_actions : rp.actions) || [];
+  const lw = rp.last_week || null;
+  const lwLabel = lw ? `${md(lw.start)} ~ ${md(lw.end)}` : '';
   return head + `
     <div class="headline mood-${rp.mood || 'neutral'}">
       <div class="h-text">${escHtml(rp.headline)}</div>
@@ -73,10 +81,16 @@ function reportHtml(r) {
     </div>
     <div class="tiles">${tiles}</div>
     <div class="two">
-      <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 주목할 상품·신호</h3>${list(rp.highlights, 'up')}</div>
-      <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 주의 신호</h3>${list(rp.warnings, 'down')}</div>
+      <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 오늘의 주목</h3>${list(rp.highlights, 'up')}</div>
+      <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 오늘의 주의</h3>${list(rp.warnings, 'down')}</div>
     </div>
-    <div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 오늘 할 일</h3>${actions}</div>
+    ${hasWeek ? `<div class="week-head"><i class="fa-regular fa-calendar"></i> 이번 주 누적 <span class="muted">${weekLabel} · 앞선 날 보고서와 합친 것. 그날 못 봤어도 여기서 확인</span></div>
+    <div class="two">
+      <div class="box wk-p"><h3><span class="pn p">P</span> 이번 주 주목</h3>${wlist(rp.week_highlights, 'up')}</div>
+      <div class="box wk-n"><h3><span class="pn n">N</span> 이번 주 주의</h3>${wlist(rp.week_warnings, 'down')}</div>
+    </div>` : ''}
+    <div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 이번 주 할 일${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i)).join('') : '<div class="muted">없음</div>'}</div>
+    ${lw ? `<div class="box past-box"><h3><i class="fa-regular fa-clock" style="color:#9ca3af;"></i> 저번 주 해야 했을 일 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''}</span></h3>${(lw.actions || []).length ? lw.actions.map((x, i) => actRow(x, i, { past: true })).join('') : '<div class="muted">저번 주 보고서가 없어요</div>'}</div>` : ''}
     ${rp.note ? `<div class="muted small"><i class="fa-regular fa-circle-question"></i> ${escHtml(rp.note)}</div>` : ''}
     ${dataErrors(r.data)}
     <details class="raw"><summary>수집한 숫자 보기</summary>${rawTable(r.data)}</details>`;
