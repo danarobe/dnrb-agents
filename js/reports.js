@@ -4,6 +4,8 @@
    #reports/<id>   : 그 보고서
 ────────────────────────────────────────── */
 let __reportsCache = null;
+const reportsState = { filter: '' };
+function reportsFilter(k) { reportsState.filter = k; renderReports(location.hash.split('/')[1]); }
 async function reportsLoad(force) {
   if (__reportsCache && !force) return __reportsCache;
   const rows = await dbProxy('agent_reports?select=id,agent,report_date,trigger,status,report,data,error,model,created_at&order=created_at.desc&limit=60') || [];
@@ -18,22 +20,22 @@ async function reportsLoad(force) {
 const actionsState = { map: null };
 async function actionsLoad(force) {
   if (actionsState.map && !force) return actionsState.map;
-  const rows = await dbProxy('agent_actions?agent=eq.sales&select=action_id,done,done_by,done_at,title,owner,week_start').catch(() => []);
-  actionsState.map = new Map((rows || []).map(r => [r.action_id, r]));
+  const rows = await dbProxy('agent_actions?select=agent,action_id,done,done_by,done_at,title,owner,week_start').catch(() => []);
+  actionsState.map = new Map((rows || []).map(r => [r.agent + '|' + r.action_id, r]));
   return actionsState.map;
 }
 const actionKey = x => x.id || ('legacy:' + (x.since || '') + ':' + String(x.title || '').slice(0, 40));
 async function actionToggle(input) {
-  const key = input.dataset.key, checked = input.checked;
+  const key = input.dataset.key, agent = input.dataset.agent || 'sales', checked = input.checked;
   input.disabled = true;
   try {
     const rows = await dbProxy('agent_actions?on_conflict=agent,action_id', {
       method: 'POST', prefer: 'resolution=merge-duplicates,return=representation',
-      body: { agent: 'sales', action_id: key, week_start: input.dataset.week || null, title: input.dataset.title, owner: input.dataset.owner,
+      body: { agent, action_id: key, week_start: input.dataset.week || null, title: input.dataset.title, owner: input.dataset.owner,
         done: checked, done_by: checked ? SESSION.name : null, done_at: checked ? new Date().toISOString() : null },
     });
     const row = rows && rows[0];
-    if (row) actionsState.map.set(key, row);
+    if (row) actionsState.map.set(agent + '|' + key, row);
     const wrap = input.closest('.act');
     if (wrap) {
       wrap.classList.toggle('done', checked);
@@ -59,6 +61,7 @@ async function renderReports(id) {
       <div class="head-actions"><button class="btn primary" id="run-sales" onclick="agentRun('sales')"><i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행</button></div>
     </div>
     <div id="setup-notice"></div>
+    <div class="filter-chips" id="report-filter"></div>
     <div class="reports-layout">
       <aside class="report-list" id="report-list"><div class="muted pad"><i class="fa-solid fa-spinner fa-spin"></i> 불러오는 중</div></aside>
       <section class="report-view" id="report-view"></section>
@@ -68,12 +71,17 @@ async function renderReports(id) {
   try { [rows] = await Promise.all([reportsLoad(), actionsLoad()]); }
   catch (e) { $('report-list').innerHTML = `<div class="muted pad">불러오기 실패: ${escHtml(e.message)}</div>`; return; }
   const cur = rows.find(r => r.id === id) || rows[0];
-  $('report-list').innerHTML = rows.length ? rows.map(r => {
+  // 담당자 필터 — 보고 있는 보고서의 담당자 또는 '전체'
+  const filterAgent = reportsState.filter;
+  const shown = filterAgent ? rows.filter(r => r.agent === filterAgent) : rows;
+  $('report-filter').innerHTML = [['', '전체'], ...AGENTS.filter(a => a.status === 'active').map(a => [a.key, a.name])]
+    .map(([k, label]) => `<button class="chip-btn ${filterAgent === k ? 'on' : ''}" onclick="reportsFilter('${k}')">${label}</button>`).join('');
+  $('report-list').innerHTML = shown.length ? shown.map(r => {
     const a = agentOf(r.agent) || { name: r.agent, color: '#6b7280', icon: 'fa-robot' };
     return `<a class="report-item ${cur && r.id === cur.id ? 'active' : ''} ${r.status === 'error' ? 'err' : ''}" href="#reports/${r.id}">
       <span class="dot" style="background:${r.status === 'error' ? '#dc2626' : a.color};"></span>
       <span class="ri-body">
-        <span class="ri-top"><b>${dateShort(r.report_date)}</b> <span class="muted">${r.trigger === 'cron' ? '자동' : '수동'}</span></span>
+        <span class="ri-top"><b>${dateShort(r.report_date)}</b> <span class="muted">${a.short || a.name} · ${r.trigger === 'cron' ? '자동' : '수동'}</span></span>
         <span class="ri-line">${r.status === 'error' ? '보고서 실패' : escHtml(r.report?.headline || a.name)}</span>
       </span></a>`;
   }).join('') : `<div class="muted pad">아직 보고서가 없어요. 매일 아침 8시에 자동으로 도착하고, <b>지금 실행</b>으로 바로 만들 수도 있어요.</div>`;
@@ -91,24 +99,45 @@ function reportHtml(r) {
     return head + `<div class="notice err"><b><i class="fa-solid fa-triangle-exclamation"></i> 이번 보고서는 만들지 못했어요.</b><br>${escHtml(r.error || '원인 미상')}</div>` + dataErrors(r.data);
   }
   const rp = r.report, d = r.data || {}, rev = d.revenue || {}, ch = rev.change_pct || {}, ads = d.ads;
-  const tile = (label, value, sub) => `<div class="tile"><div class="t-label">${label}</div><div class="t-value">${value}</div><div class="t-sub">${sub}</div></div>`;
-  const tiles = [
-    tile('어제 매출', fmtMan(rev.yesterday?.revenue), `지난주 같은 요일 대비 ${fmtDelta(ch.vs_same_dow_last_week)} · 주문 ${rev.yesterday ? fmt(rev.yesterday.orders) + '건' : '—'}`),
-    tile('최근 7일 매출', fmtMan(rev.last7?.revenue), `직전 7일 대비 ${fmtDelta(ch.last7_vs_prev7)}`),
-    tile('이달 누적', fmtMan(rev.mtd?.revenue), `지난달 같은 기간 대비 ${fmtDelta(ch.mtd_vs_last_month_same)}`),
-    ads?.yesterday ? tile('어제 광고비', fmtMan(ads.yesterday.spend), `ROAS(카페24) ${ads.roas_cafe24?.yesterday ?? '—'} · 최근 7일 ${ads.roas_cafe24?.last7 ?? '—'}`)
-      : tile('어제 광고비', '—', 'Meta 데이터 없음'),
-  ].join('');
-  const list = (arr, cls) => (arr || []).length ? (arr || []).map(x => `<div class="li"><b class="${cls}">${escHtml(x.title)}</b><div>${escHtml(x.detail)}</div></div>`).join('') : '<div class="muted">없음</div>';
   const md = d => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
+  const tile = (label, value, sub) => `<div class="tile"><div class="t-label">${label}</div><div class="t-value">${value}</div><div class="t-sub">${sub}</div></div>`;
+  let tiles = '', extraBoxes = '';
+  if (r.agent === 'returns') {
+    const cl = d.claims || {}, ts = d.top_sellers_return || {};
+    const cc = cl.cancel || {}, rt = cl.return || {};
+    tiles = [
+      tile('최근 7일 취소', cc.last7 ? fmt(cc.last7.count) + '건' : '—', `직전 7일 대비 ${fmtDelta(cc.change_pct)}${cc.last7 ? ' · ' + fmtMan(cc.last7.amount) : ''}`),
+      tile('최근 7일 반품', rt.last7 ? fmt(rt.last7.count) + '건' : '—', `직전 7일 대비 ${fmtDelta(rt.change_pct)}${rt.last7 ? ' · ' + fmtMan(rt.last7.amount) : ''}`),
+      tile('상위 상품 순반품률', ts.rate_14d != null ? ts.rate_14d + '%' : '—', `14일 창 · 배송완료 ${fmt(ts.delivered_14d)}개 중 반품 ${fmt(ts.returned_14d)}개`),
+      tile('위험·주의 상품', (rp.risk_products || []).length + '개', `관리 상품 ${fmt(d.watched_count || 0)}개 점검 · 판정 기준일 ${md(d.judge_date)}`),
+    ].join('');
+    const lvColor = { '위험': 'down', '주의': 'warn' };
+    const riskRows = (rp.risk_products || []).map(x => `<tr><td><b>${escHtml(x.name)}</b><div class="muted">${escHtml(x.cause)}</div></td><td class="r"><b class="${lvColor[x.level] || ''}">${escHtml(x.level)}</b><div class="muted">${x.rate_14d}% · ${fmt(x.delivered_14d)}개</div></td><td>${escHtml(x.fix)}</td></tr>`).join('');
+    const vColor = { '개선': 'up-good', '유지': '', '악화': 'down' };
+    const watchRows = (rp.watch_review || []).map(x => `<div class="li"><div class="li-top"><b>${escHtml(x.name)}</b><span class="chip ${x.verdict === '개선' ? 'good' : x.verdict === '악화' ? 'bad' : ''}">${escHtml(x.verdict)}</span></div><div>${escHtml(x.detail)}</div></div>`).join('');
+    extraBoxes = `
+    <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 위험·주의 상품 <span class="muted small">14일 창 · 순반품률 20%↑ 위험, 10~20% 주의</span></h3>
+      ${riskRows ? `<div class="tbl-wrap"><table class="risk"><thead><tr><th>상품 · 원인 추정</th><th class="r">판정</th><th>대응</th></tr></thead><tbody>${riskRows}</tbody></table></div>` : '<div class="muted">위험·주의 상품이 없어요</div>'}
+    </div>
+    <div class="box"><h3><i class="fa-solid fa-star" style="color:#b45309;"></i> 관리 상품 점검 <span class="muted small">워크스페이스 반품 관리에서 지정한 상품</span></h3>${watchRows || '<div class="muted">관리 상품이 없어요</div>'}</div>`;
+  } else {
+    tiles = [
+      tile('어제 매출', fmtMan(rev.yesterday?.revenue), `지난주 같은 요일 대비 ${fmtDelta(ch.vs_same_dow_last_week)} · 주문 ${rev.yesterday ? fmt(rev.yesterday.orders) + '건' : '—'}`),
+      tile('최근 7일 매출', fmtMan(rev.last7?.revenue), `직전 7일 대비 ${fmtDelta(ch.last7_vs_prev7)}`),
+      tile('이달 누적', fmtMan(rev.mtd?.revenue), `지난달 같은 기간 대비 ${fmtDelta(ch.mtd_vs_last_month_same)}`),
+      ads?.yesterday ? tile('어제 광고비', fmtMan(ads.yesterday.spend), `ROAS(카페24) ${ads.roas_cafe24?.yesterday ?? '—'} · 최근 7일 ${ads.roas_cafe24?.last7 ?? '—'}`)
+        : tile('어제 광고비', '—', 'Meta 데이터 없음'),
+    ].join('');
+  }
+  const list = (arr, cls) => (arr || []).length ? (arr || []).map(x => `<div class="li"><b class="${cls}">${escHtml(x.title)}</b><div>${escHtml(x.detail)}</div></div>`).join('') : '<div class="muted">없음</div>';
   const chips = x => `${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${(x.dates || []).length ? `<span class="chip">${x.dates.map(md).join(' · ')}</span>` : ''}`;
   const wlist = (arr, cls) => (arr || []).length ? (arr || []).map(x => `<div class="li"><div class="li-top"><b class="${cls}">${escHtml(x.title)}</b>${chips(x)}</div><div>${escHtml(x.detail)}</div></div>`).join('') : '<div class="muted">아직 없음</div>';
   const doneMap = actionsState.map || new Map();
   const actRow = (x, i, opts = {}) => {
-    const key = actionKey(x), st = doneMap.get(key), done = !!(st && st.done);
+    const key = actionKey(x), st = doneMap.get(r.agent + '|' + key), done = !!(st && st.done);
     const doneMeta = done ? `완료 · ${escHtml(st.done_by || '')} · ${st.done_at ? timeLabel(st.done_at) : ''}` : '';
     return `<div class="act ${opts.past ? 'past' : ''} ${done ? 'done' : ''}">
-      <label class="chk" title="완료 체크"><input type="checkbox" class="act-chk" ${done ? 'checked' : ''} data-key="${escHtml(key)}" data-week="${escHtml(opts.week || '')}" data-title="${escHtml(x.title)}" data-owner="${escHtml(x.owner || '')}"><span class="num">${i + 1}</span></label>
+      <label class="chk" title="완료 체크"><input type="checkbox" class="act-chk" ${done ? 'checked' : ''} data-key="${escHtml(key)}" data-agent="${escHtml(r.agent)}" data-week="${escHtml(opts.week || '')}" data-title="${escHtml(x.title)}" data-owner="${escHtml(x.owner || '')}"><span class="num">${i + 1}</span></label>
       <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}</div><div class="muted">${escHtml(x.why)}</div><div class="done-meta">${doneMeta}</div></div>
     </div>`;
   };
@@ -127,6 +156,7 @@ function reportHtml(r) {
       <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 오늘의 주목</h3>${list(rp.highlights, 'up')}</div>
       <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 오늘의 주의</h3>${list(rp.warnings, 'down')}</div>
     </div>
+    ${extraBoxes}
     ${hasWeek ? `<div class="week-head"><i class="fa-regular fa-calendar"></i> 이번 주 누적 <span class="muted">${weekLabel} · 앞선 날 보고서와 합친 것. 그날 못 봤어도 여기서 확인</span></div>
     <div class="two">
       <div class="box wk-p"><h3><span class="pn p">P</span> 이번 주 주목</h3>${wlist(rp.week_highlights, 'up')}</div>
@@ -136,7 +166,7 @@ function reportHtml(r) {
     ${lw ? `<div class="box past-box"><h3><i class="fa-regular fa-clock" style="color:#9ca3af;"></i> 저번 주 해야 했을 일 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''}</span></h3>${(lw.actions || []).length ? lw.actions.map((x, i) => actRow(x, i, { past: true, week: lw.start })).join('') : '<div class="muted">저번 주 보고서가 없어요</div>'}</div>` : ''}
     ${rp.note ? `<div class="muted small"><i class="fa-regular fa-circle-question"></i> ${escHtml(rp.note)}</div>` : ''}
     ${dataErrors(r.data)}
-    <details class="raw"><summary>수집한 숫자 보기</summary>${rawTable(r.data)}</details>`;
+    <details class="raw"><summary>수집한 숫자 보기</summary>${rawTable(r.data, r.agent)}</details>`;
 }
 
 function dataErrors(data) {
@@ -145,8 +175,9 @@ function dataErrors(data) {
 }
 
 /* 수집 숫자 표 — 보고서 근거 확인용 */
-function rawTable(d) {
+function rawTable(d, agent) {
   if (!d) return '';
+  if (agent === 'returns') return rawTableReturns(d);
   const rev = d.revenue || {}, pr = d.periods || {};
   const row = (label, r, p) => r ? `<tr><td>${label}</td><td class="muted">${Array.isArray(p) ? p[0] + ' ~ ' + p[1] : (p || '')}</td><td class="r">${fmt(r.revenue)}원</td><td class="r">${fmt(r.orders)}건</td></tr>` : '';
   const products = (arr, cols) => (arr || []).length
@@ -163,4 +194,15 @@ function rawTable(d) {
     <h4>주문율 하락 상품</h4>${products(p.rate_drops_7d, [['상품', x => escHtml(x.name)], ['조회', x => fmt(x.views_7d), 'r'], ['직전 주문율', x => x.rate_prev7d + '%', 'r'], ['최근 주문율', x => x.rate_7d + '%', 'r']])}
     ${d.claims_last7 ? `<h4>최근 7일 취소·반품</h4><div class="muted">취소 ${fmt(d.claims_last7.cancel_count)}건 (${(d.claims_last7.cancel_reasons_top3 || []).join(', ')}) · 반품 ${fmt(d.claims_last7.return_count)}건 (${(d.claims_last7.return_reasons_top3 || []).join(', ')})</div>` : ''}
     ${d.ads ? `<h4>Meta 광고</h4><div class="muted">어제 광고비 ${fmt(d.ads.yesterday?.spend)}원 · 최근 7일 ${fmt(d.ads.last7?.spend)}원 (직전 7일 ${fmt(d.ads.prev7?.spend)}원) · ROAS(카페24) 어제 ${d.ads.roas_cafe24?.yesterday ?? '—'} / 7일 ${d.ads.roas_cafe24?.last7 ?? '—'} / 직전 7일 ${d.ads.roas_cafe24?.prev7 ?? '—'}</div>` : ''}`;
+}
+
+function rawTableReturns(d) {
+  const cl = d.claims || {}, ts = d.top_sellers_return || {};
+  const bucket = (label, b) => b && b.last7 ? `<tr><td>${label}</td><td class="r">${fmt(b.prev7?.count)}건</td><td class="r">${fmt(b.last7.count)}건</td><td class="r">${fmt(b.last7.amount)}원</td><td>${(b.reasons || []).slice(0, 4).map(x => `${escHtml(x.reason)} ${x.cnt}(${x.prev_cnt})`).join(', ')}</td></tr>` : '';
+  const risk = (ts.risk_products || []).map(p => `<tr><td>${escHtml(p.name)}${p.watched ? ' <span class="chip">관리</span>' : ''}</td><td class="r">${p.win7.rate}% (${p.win7.delivered})</td><td class="r">${p.win14.rate}% (${p.win14.delivered})</td><td class="r">${p.win30.rate}% (${p.win30.delivered})</td><td>${(p.risk_options || []).map(o => `${escHtml(o.option)} ${o.rate_14d}%`).join(', ') || '—'}</td><td>${(p.reasons_top3 || []).map(escHtml).join(', ') || '—'}</td></tr>`).join('');
+  return `<h4>취소·반품 (주문일 기준, 최근 7일 vs 직전 7일)</h4>
+    <table><thead><tr><th>구분</th><th class="r">직전 7일</th><th class="r">최근 7일</th><th class="r">금액</th><th>사유 최근(직전)</th></tr></thead><tbody>${bucket('취소', cl.cancel)}${bucket('반품', cl.return)}</tbody></table>
+    <h4>위험·주의 후보 (배송완료일 기준 순반품률, 괄호 = 배송완료 수량)</h4>
+    ${risk ? `<table><thead><tr><th>상품</th><th class="r">7일</th><th class="r">14일</th><th class="r">30일</th><th>위험 옵션(14일)</th><th>사유 TOP3(14일)</th></tr></thead><tbody>${risk}</tbody></table>` : '<div class="muted">없음</div>'}
+    <div class="muted small">판정 기준일 ${d.judge_date || ''} (기준일보다 3일 앞 — 반품은 배송완료 후 며칠 뒤 들어와서)</div>`;
 }

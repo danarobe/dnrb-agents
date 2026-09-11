@@ -12,8 +12,10 @@ const AGENTS = [
     sources: ['카페24 매출·상품', '카페24 취소반품', 'Meta 광고'],
   },
   {
-    key: 'returns', name: '취소·반품 감시 담당', icon: 'fa-rotate-left', color: '#b91c1c', status: 'planned',
-    schedule: '매일', desc: '반품 사유가 몰리는 상품을 찾아 상세페이지·옵션 수정 포인트를 제안합니다.', sources: ['카페24 취소반품', '반품 관리 목록'],
+    key: 'returns', name: '취소·반품 감시 담당', icon: 'fa-rotate-left', color: '#b91c1c', status: 'active', fn: 'returns-agent',
+    schedule: '매일 아침 8시 15분',
+    desc: '취소·반품이 지난주보다 늘었는지, 잘 팔리는데 반품 많은 상품과 옵션·사유를 찾아 상세페이지·검수·출고 대응을 제안합니다. 관리 상품은 나아졌는지 판정합니다.',
+    sources: ['카페24 취소반품', '순반품률(7/14/30일)', '반품 사유', '반품 관리 목록'],
   },
   {
     key: 'content', name: '상품 콘텐츠 담당', icon: 'fa-images', color: '#0891b2', status: 'planned',
@@ -56,7 +58,7 @@ async function renderHome() {
         return;
       }
       const wa = Array.isArray(r.report?.week_actions) ? r.report.week_actions : [];
-      const doneN = wa.filter(x => { const st = (actionsState.map || new Map()).get(actionKey(x)); return st && st.done; }).length;
+      const doneN = wa.filter(x => { const st = (actionsState.map || new Map()).get(r.agent + '|' + actionKey(x)); return st && st.done; }).length;
       el.innerHTML = `<a class="last-report mood-${r.report?.mood || 'neutral'}" href="#reports/${r.id}">
           <span class="when">${dateShort(r.report_date)} 기준 · ${relTime(r.created_at)}</span>
           <b>${escHtml(r.report?.headline || '')}</b>

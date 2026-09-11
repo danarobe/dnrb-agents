@@ -4,7 +4,7 @@
 > 2026-09-10 사용자 결정: 워크스페이스(~/dnrb-dashboard, 1만 2천 줄 단일 파일)가 너무 무거워져 **화면은 이 저장소로 분리**, 데이터 연결·계정은 워크스페이스와 **같은 Supabase 프로젝트를 공유**한다.
 
 ## 0. 한눈에 보기
-- **소스**: `~/dnrb-agents` — `index.html` 뼈대 + `css/app.css` + `js/`(config·api·agents·reports·app, 기능별 분리) + `supabase/functions/sales-agent`.
+- **소스**: `~/dnrb-agents` — `index.html` 뼈대 + `css/app.css` + `js/`(config·api·agents·reports·app, 기능별 분리) + `supabase/functions/`(**`_shared/agent.ts` 공통 뼈대** + `sales-agent` + `returns-agent`).
 - **배포**: GitHub Pages `https://danarobe.github.io/dnrb-agents/` (공개 레포 `danarobe/dnrb-agents`, main 브랜치 루트). **git push하면 자동 배포**(30~60초).
 - **Supabase**: 워크스페이스와 같은 프로젝트 `eeffmbusaqaadeojjlnc`(서울). anon key·URL은 `js/config.js`(공개돼도 되는 값 — 서버가 로그인 토큰을 검증).
 - **로컬 프리뷰**: `.claude/launch.json`의 dnrb-agents, 포트 8735.
@@ -21,9 +21,12 @@
 - `config.js` — Supabase URL/anon key, 워크스페이스 URL.
 - `api.js` — 세션(loadSession/authLogin/logout), `callFn`(함수 호출, `x-auth-token` 자동), `dbProxy`, 포맷(fmtMan = 만 원/억 원, fmtDelta, dateLabel), toast, btnBusy/btnIdle.
 - `agents.js` — **담당자 등록부 `AGENTS`**(key = `agent_reports.agent`, status active/planned, fn = 실행 함수). 홈 카드 렌더(`renderHome`), API 키 안내(`renderSetupNotice` — sales-agent `status.configured`), `agentRun(key)`(action=run POST → 완료 시 `#reports/<id>`).
-- `reports.js` — 보고서 피드. `reportsLoad()`(60건, **같은 날 재실행은 최신 1건만 표시**) + `actionsLoad()`/`actionToggle()`(완료 체크, change 이벤트 위임 `.act-chk`) → 좌측 목록 + 우측 상세(`reportHtml`): 헤드라인(mood 색)+요약 → KPI 4타일(어제/7일/이달/광고비·ROAS, 증감은 지난주 같은 요일·직전 7일·지난달 같은 기간) → 오늘의 주목/주의 2열 → **이번 주 누적: P 주목 / N 주의 2열(등장일 칩·NEW) → 이번 주 할 일(since 칩) → 저번 주 해야 했을 일(회색 점선 상자)** → note·수집 오류. 주간 필드가 없는 옛 보고서는 actions를 '이번 주 할 일'로 표시 → `수집한 숫자 보기`(rawTable, 근거 확인용). 실패 행은 빨간 상자로 원인 표시. 관리자가 아니면 목록 대신 안내.
+- `reports.js` — 보고서 피드. `reportsLoad()`(60건, **같은 날 재실행은 최신 1건만 표시**, 담당자 필터 칩 `reportsFilter`) + `actionsLoad()`/`actionToggle()`(완료 체크, change 이벤트 위임 `.act-chk`, **키 = agent|action_id** — 두 담당자가 같은 id를 쓸 수 있음). `reportHtml`은 `r.agent`로 타일·추가 표를 분기(sales/returns), 나머지(헤드라인·주간·할 일)는 공통 → 좌측 목록 + 우측 상세(`reportHtml`): 헤드라인(mood 색)+요약 → KPI 4타일(어제/7일/이달/광고비·ROAS, 증감은 지난주 같은 요일·직전 7일·지난달 같은 기간) → 오늘의 주목/주의 2열 → **이번 주 누적: P 주목 / N 주의 2열(등장일 칩·NEW) → 이번 주 할 일(since 칩) → 저번 주 해야 했을 일(회색 점선 상자)** → note·수집 오류. 주간 필드가 없는 옛 보고서는 actions를 '이번 주 할 일'로 표시 → `수집한 숫자 보기`(rawTable, 근거 확인용). 실패 행은 빨간 상자로 원인 표시. 관리자가 아니면 목록 대신 안내.
 - `app.js` — 해시 라우터 `#home | #reports | #reports/<id>`, 로그인 화면 전환.
 - 모든 사용자 데이터·보고서 문자열은 `escHtml`을 거쳐 innerHTML에 넣는다(보고서는 Claude 출력이라 신뢰하지 않음).
+
+## 3-0. 공통 뼈대 `_shared/agent.ts` (2026-09-11, 2호를 만들며 분리)
+담당자 함수는 `serveAgent({ agent, label, system, schema, collect })` 한 줄로 끝난다. 뼈대가 하는 일: 인증(관리자 또는 x-cron-secret) → `status`/`collect`/`run` → 기준일 D 보정 → `collect(D)`와 `weekContext(agent, D)` 병렬 → `writeReport`(claude-opus-5, effort medium, json_schema) → `agent_reports` 저장(report에 week/last_week 덧붙임) → `notifyAdmins(label)`(종 알림 link_menu agents + 웹 푸시). 실패는 error 행. 공용 도우미: `callFn`(x-agent-secret), `rest`(service_role), `safeCollector`(항목별 try/catch → errors[]), `reportSchema({highlights, warnings, actions, extra})`(공통 필드 + 주간 3종 + 담당자별 extra), `COMMON_RULES`(글쓰기 원칙 + 주간 항목 규칙 — 각 SYSTEM 끝에 붙임). **뼈대를 고치면 모든 담당자 함수를 재배포**(배포 시 번들 복사).
 
 ## 3. 매출 분석 담당 (`supabase/functions/sales-agent`, 에이전트 1호)
 - **흐름**: run → ① `collect(D)` — 워크스페이스 함수를 `x-agent-secret`으로 admin 호출(실측 약 10초) → ② Claude `claude-opus-5`(effort medium, `output_config.format` json_schema 구조화 응답, `npm:@anthropic-ai/sdk`) → ③ `agent_reports` 저장 + 관리자 전원 `notifications`(link_menu agents) + 웹 푸시(VAPID) → 응답 `{id, report, notified}`.
@@ -36,6 +39,13 @@
 - **배포**: `supabase functions deploy sales-agent --project-ref eeffmbusaqaadeojjlnc` (secrets 변경 후에도 재배포).
 - **필요 secrets**: `ANTHROPIC_API_KEY`(사용자가 2026-09-10 발급·설정 완료, 만료 없음), `AGENT_SECRET`(설정 완료), `CRON_SECRET`(워크스페이스와 공유), `SUPABASE_ANON_KEY`·`SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY`(자동), `VAPID_*`(선택).
 - **검증(2026-09-10)**: collect 실측 오류 0건·10.4초, 키 미설정 run → error 행 저장 확인, 화면은 node 스텁 DOM으로 홈·보고서(정상/실패)·비관리자 차단 확인.
+
+## 3-1. 취소·반품 감시 담당 (`supabase/functions/returns-agent`, 에이전트 2호, 2026-09-11)
+- **자동 실행**: pg_cron `returns-agent-morning`(jobid 3, `15 23 * * *` UTC = **08:15 KST** — 매출 담당 뒤 15분, 카페24 토큰 갱신 경쟁 회피).
+- **수집**(실측 52초, 오류 0): ① `cafe24-claims` 최근 7일·직전 7일(취소/반품 건수·금액·사유 TOP6 + prev_cnt) ② `returnwatch&end_date=E&top=30&risk=20&min_qty=10&extra=<관리 상품 번호>` — 7/14/30일 창 순반품률(배송완료일 기준, R00~R40) ③ `returnreasons` E−13~E — 상품별 사유 TOP3(40자 절단) ④ `return_watch` 테이블(관리 상품·지정 사유·판매 중단). **판정 기준일 E = D−3**(= 오늘−4일): 반품이 배송완료 후 며칠 뒤 들어와 어제 기준은 절반 이하로 나옴(워크스페이스 반품 관리 메뉴 규칙과 동일).
+- **파생**: 등급 = 배송완료 <10 보류 / 순반품률 ≥20 위험 / 10~20 주의 / 그 외 양호. `risk_products`(순위권 상품 중 flagged·위험·주의, 14일 창 순, 12개, 옵션별 14일 위험 옵션(배송 5↑·20%↑)·사유 TOP3·관리 여부), `good_sellers_low_return`(14일 상위 10위 안·양호), `watched_products`(관리 상품 7/14/30 흐름), 상위 30 상품 합산 14일 순반품률.
+- **리포트 extra 필드**: `risk_products[{name, level 위험|주의, rate_14d, delivered_14d, cause, fix}]`(표), `watch_review[{name, verdict 개선|유지|악화, detail}]`. 프롬프트 규칙: 옵션 집중이면 옵션 문제, 사유별 대응(사이즈→실측·안내 / 색상·소재→사진·설명 / 불량→제작처·검수 / 배송지연→출고), 관리 상품 지정·판매 중단은 사람이(제안만, '대표 확인 후').
+- **화면**: 타일 4(최근 7일 취소·반품 건수와 증감, 상위 상품 14일 순반품률, 위험·주의 상품 수) → 오늘의 주목/주의 → **위험·주의 상품 표(상품·원인 / 판정·수치 / 대응)** + **관리 상품 점검**(개선·유지·악화 칩) → 주간 누적 → 할 일. `rawTableReturns`에 취소반품 표·위험 후보 창별 표.
 
 ## 4. DB
 - `agent_actions`(마이그레이션 `0007_agent_actions.sql`, 적용 완료, 2026-09-11): **할 일 완료 체크**. agent/action_id(unique 쌍)/week_start/title·owner(스냅숏)/done/done_by/done_at. 앱이 db 프록시(admin)로 `on_conflict=agent,action_id` upsert(prefer merge-duplicates). 키 = `week_actions[].id`(에이전트 부여 `기준일YYYYMMDD-순번`; 유지 항목은 id 불변). id 없는 옛 보고서 항목은 `legacy:since:제목40자` 임시 키(다음 보고서부터 진짜 id로 바뀌어 체크가 이어지지 않음 — 2026-09-10 보고서 한정). `weekContext()`가 done=true id를 읽어 `week_actions_so_far[].done`으로 프롬프트에 넣고, 시스템 프롬프트가 **done=true는 반드시 제외**하게 한다. 화면: 번호 동그라미가 체크박스(완료 = 초록 ✓ + 취소선 + "완료 · 이름 · 시각"), 저번 주 할 일도 체크 가능. 홈 카드에 "이번 주 할 일 M/N 완료".
@@ -51,4 +61,4 @@
 ## 6. 남은 일
 - 첫 보고서 2건 확인됨(2026-09-10, 입력 약 4.5K·출력 약 2K 토큰/건). 프롬프트·액션 품질 다듬기 계속.
 - 완료 체크는 됨(2026-09-11). 담당 배정·에이전트에게 질문하기(보고서 맥락 + 데이터 재조회)는 아직.
-- 2호 담당 = 취소·반품 감시(워크스페이스 `returnwatch`/`returnreasons` 액션 재사용 가능).
+- 2호 완료(2026-09-11). 3호 후보 = 상품 콘텐츠(포토 스튜디오·번역기 연동) 또는 마케팅(Meta·안정재고).

@@ -5,3 +5,7 @@
 # 매출 분석 에이전트 — 관리자 로그인 또는 x-cron-secret(pg_cron 08:00 KST)
 [functions.sales-agent]
 verify_jwt = true
+
+# 취소·반품 감시 담당 — 관리자 로그인 또는 x-cron-secret(pg_cron 08:15 KST)
+[functions.returns-agent]
+verify_jwt = true

@@ -159,6 +159,19 @@ button, input { font-family: inherit; font-size: inherit; }
 .chk-hint { margin-top: 6px; }
 .last-report .progress { display: block; font-size: .74rem; color: var(--muted); margin-top: 4px; }
 
+/* ── 담당자 필터·반품 표 (2026-09-11 2호) ── */
+.filter-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.chip-btn { border: 1.5px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px; font-size: .78rem; font-weight: 700; color: var(--muted); cursor: pointer; }
+.chip-btn.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.tbl-wrap { overflow-x: auto; }
+table.risk { width: 100%; border-collapse: collapse; font-size: .82rem; }
+table.risk th, table.risk td { padding: 8px 8px; border-bottom: 1px solid #f3f4f6; text-align: left; vertical-align: top; }
+table.risk th { color: var(--muted); font-size: .74rem; }
+table.risk .r { text-align: right; white-space: nowrap; }
+.warn { color: #b45309; }
+.chip.good { color: var(--good); background: var(--good-bg); }
+.chip.bad { color: var(--bad); background: var(--bad-bg); }
+
 /* ── 토스트 ── */
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); background: #1a1a2e; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: .85rem; opacity: 0; pointer-events: none; transition: all .2s; z-index: 50; max-width: 90vw; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
