@@ -93,9 +93,16 @@ async function weekContext(D: string) {
   const lastWeekActions = lwRp
     ? (Array.isArray(lwRp.week_actions) && lwRp.week_actions.length ? lwRp.week_actions : (lwRp.actions ?? []))
     : [];
+  // 이번 주 할 일(지금까지) = 이번 주 가장 최근 보고서의 week_actions + 완료 체크(agent_actions.done) (2026-09-11)
+  const doneRes = await rest(`agent_actions?agent=eq.${AGENT}&done=eq.true&select=action_id`);
+  const doneIds = new Set<string>(doneRes.ok ? ((await doneRes.json()) as Row[]).map((r) => String(r.action_id)) : []);
+  const latestPrior = prior.length ? prior[prior.length - 1] : null;
+  const soFarRaw = ((latestPrior?.report as Row | undefined)?.week_actions ?? []) as Row[];
+  const weekActionsSoFar = soFarRaw.map((a) => ({ ...a, done: a.id ? doneIds.has(String(a.id)) : false }));
   return {
     week: { start: wStart, end: D },
     prior_days: priorDays,
+    week_actions_so_far: weekActionsSoFar,
     last_week: { start: lwStart, end: lwEnd, from_report_date: lwLast ? String(lwLast.report_date) : null, actions: lastWeekActions },
   };
 }
@@ -296,14 +303,15 @@ const REPORT_SCHEMA = {
       items: {
         type: "object",
         properties: {
+          id: { type: "string", description: "할 일 고유 id. 이전 항목을 유지하면 그 id 그대로, 새 항목은 '기준일YYYYMMDD-순번' (예: 20260911-1). id가 없던 이전 항목에는 새 id 부여" },
           title: { type: "string" }, why: { type: "string" },
           owner: { type: "string", enum: ["광고팀", "상품팀", "CS팀", "대표"] },
           since: { type: "string", description: "처음 제안한 기준일 YYYY-MM-DD" },
           status: { type: "string", enum: ["new", "ongoing"] },
         },
-        required: ["title", "why", "owner", "since", "status"], additionalProperties: false,
+        required: ["id", "title", "why", "owner", "since", "status"], additionalProperties: false,
       },
-      description: "이번 주 할 일. 앞선 날 actions 중 아직 유효한 것을 유지(since = 처음 제안일)하고 오늘 새 제안을 더한다. 중요한 순, 최대 6개",
+      description: "이번 주 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since 그대로)하고 오늘 새 제안을 더한다. done=true는 뺀다. 중요한 순, 최대 6개",
     },
   },
   required: ["headline", "mood", "summary", "highlights", "warnings", "actions", "note", "week_highlights", "week_warnings", "week_actions"],
@@ -327,7 +335,7 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 매출 분
 - this_week.prior_days(이번 주 앞선 날들의 주목·주의·할 일)와 오늘 것을 합쳐 씁니다. 같은 상품·같은 문제는 하나로 합치고 dates에 등장한 날짜를 전부 적습니다.
 - 오늘 처음 나온 항목은 status "new", 앞선 날에도 있었으면 "ongoing". 여러 날 이어진 항목은 detail에 흐름(계속 오르는지, 꺾였는지)을 씁니다.
 - 주의 항목 중 이미 해소된 것(예: 전환율이 떨어졌다가 회복)은 week_warnings에서 뺍니다.
-- week_actions는 앞선 날 actions 중 아직 유효한 것을 유지(since = 처음 제안한 날)하고 오늘의 새 제안을 더합니다. 이미 지난 일이거나 의미가 없어진 것은 뺍니다. 중요한 순으로 최대 6개.
+- week_actions는 this_week.week_actions_so_far(이번 주 지금까지의 할 일, done = 사람이 완료 체크한 것)에서 done=false인 항목을 id·since 그대로 유지하고 오늘의 새 제안을 더합니다. **done=true인 항목은 완료된 것이니 반드시 뺍니다.** 지난 일이거나 의미가 없어진 것도 뺍니다. 새 항목의 id는 '기준일YYYYMMDD-순번'. 중요한 순으로 최대 6개.
 - prior_days가 비어 있으면(주 첫날) 주간 항목은 오늘 것과 같고 status는 전부 "new"입니다.
 - actions(오늘 새로 제안하는 3개)는 주간 항목과 별개로 그대로 씁니다.`;
 
@@ -425,7 +433,7 @@ Deno.serve(async (req) => {
       try {
         const [collected, wc] = await Promise.all([collect(D), weekContext(D)]);
         data = collected;
-        const { report: written, usage, model } = await writeReport(data, { week: wc.week, prior_days: wc.prior_days });
+        const { report: written, usage, model } = await writeReport(data, { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far });
         // 저번 주 할 일은 Claude를 거치지 않고 저번 주 마지막 보고서 것을 그대로 붙인다 (화면에서 "저번 주 해야 했을 일")
         const report = { ...written, week: wc.week, last_week: wc.last_week };
         const row = await saveRow({

@@ -6,9 +6,47 @@
 let __reportsCache = null;
 async function reportsLoad(force) {
   if (__reportsCache && !force) return __reportsCache;
-  __reportsCache = await dbProxy('agent_reports?select=id,agent,report_date,trigger,status,report,data,error,model,created_at&order=created_at.desc&limit=60') || [];
+  const rows = await dbProxy('agent_reports?select=id,agent,report_date,trigger,status,report,data,error,model,created_at&order=created_at.desc&limit=60') || [];
+  // 같은 날을 여러 번 실행했으면 최신 것만 보여준다 (재실행으로 목록이 어지러워지는 것 방지, 2026-09-11)
+  const seen = new Set();
+  __reportsCache = rows.filter(r => { const k = r.agent + '|' + r.report_date; if (seen.has(k)) return false; seen.add(k); return true; });
   return __reportsCache;
 }
+
+/* ── 할 일 완료 체크 (agent_actions, 2026-09-11) ──
+   키 = 에이전트가 붙인 week_actions[].id. id가 없는 옛 보고서 항목은 since+제목으로 임시 키를 만든다. */
+const actionsState = { map: null };
+async function actionsLoad(force) {
+  if (actionsState.map && !force) return actionsState.map;
+  const rows = await dbProxy('agent_actions?agent=eq.sales&select=action_id,done,done_by,done_at,title,owner,week_start').catch(() => []);
+  actionsState.map = new Map((rows || []).map(r => [r.action_id, r]));
+  return actionsState.map;
+}
+const actionKey = x => x.id || ('legacy:' + (x.since || '') + ':' + String(x.title || '').slice(0, 40));
+async function actionToggle(input) {
+  const key = input.dataset.key, checked = input.checked;
+  input.disabled = true;
+  try {
+    const rows = await dbProxy('agent_actions?on_conflict=agent,action_id', {
+      method: 'POST', prefer: 'resolution=merge-duplicates,return=representation',
+      body: { agent: 'sales', action_id: key, week_start: input.dataset.week || null, title: input.dataset.title, owner: input.dataset.owner,
+        done: checked, done_by: checked ? SESSION.name : null, done_at: checked ? new Date().toISOString() : null },
+    });
+    const row = rows && rows[0];
+    if (row) actionsState.map.set(key, row);
+    const wrap = input.closest('.act');
+    if (wrap) {
+      wrap.classList.toggle('done', checked);
+      const meta = wrap.querySelector('.done-meta');
+      if (meta) meta.textContent = checked ? `완료 · ${SESSION.name} · ${timeLabel(new Date().toISOString())}` : '';
+    }
+    toast(checked ? '완료로 표시했어요' : '완료를 취소했어요');
+  } catch (e) {
+    input.checked = !checked;
+    toast('저장 실패: ' + e.message);
+  } finally { input.disabled = false; }
+}
+document.addEventListener('change', e => { if (e.target.classList && e.target.classList.contains('act-chk')) actionToggle(e.target); });
 
 async function renderReports(id) {
   const main = $('main');
@@ -27,7 +65,7 @@ async function renderReports(id) {
     </div>`;
   renderSetupNotice();
   let rows;
-  try { rows = await reportsLoad(); }
+  try { [rows] = await Promise.all([reportsLoad(), actionsLoad()]); }
   catch (e) { $('report-list').innerHTML = `<div class="muted pad">불러오기 실패: ${escHtml(e.message)}</div>`; return; }
   const cur = rows.find(r => r.id === id) || rows[0];
   $('report-list').innerHTML = rows.length ? rows.map(r => {
@@ -65,10 +103,15 @@ function reportHtml(r) {
   const md = d => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
   const chips = x => `${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${(x.dates || []).length ? `<span class="chip">${x.dates.map(md).join(' · ')}</span>` : ''}`;
   const wlist = (arr, cls) => (arr || []).length ? (arr || []).map(x => `<div class="li"><div class="li-top"><b class="${cls}">${escHtml(x.title)}</b>${chips(x)}</div><div>${escHtml(x.detail)}</div></div>`).join('') : '<div class="muted">아직 없음</div>';
-  const actRow = (x, i, opts = {}) => `<div class="act ${opts.past ? 'past' : ''}">
-      <span class="num">${i + 1}</span>
-      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}</div><div class="muted">${escHtml(x.why)}</div></div>
+  const doneMap = actionsState.map || new Map();
+  const actRow = (x, i, opts = {}) => {
+    const key = actionKey(x), st = doneMap.get(key), done = !!(st && st.done);
+    const doneMeta = done ? `완료 · ${escHtml(st.done_by || '')} · ${st.done_at ? timeLabel(st.done_at) : ''}` : '';
+    return `<div class="act ${opts.past ? 'past' : ''} ${done ? 'done' : ''}">
+      <label class="chk" title="완료 체크"><input type="checkbox" class="act-chk" ${done ? 'checked' : ''} data-key="${escHtml(key)}" data-week="${escHtml(opts.week || '')}" data-title="${escHtml(x.title)}" data-owner="${escHtml(x.owner || '')}"><span class="num">${i + 1}</span></label>
+      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}</div><div class="muted">${escHtml(x.why)}</div><div class="done-meta">${doneMeta}</div></div>
     </div>`;
+  };
   const hasWeek = Array.isArray(rp.week_actions) || Array.isArray(rp.week_highlights);
   const weekLabel = rp.week ? `${md(rp.week.start)} ~ ${md(rp.week.end)}` : '';
   const weekActions = (hasWeek ? rp.week_actions : rp.actions) || [];
@@ -89,8 +132,8 @@ function reportHtml(r) {
       <div class="box wk-p"><h3><span class="pn p">P</span> 이번 주 주목</h3>${wlist(rp.week_highlights, 'up')}</div>
       <div class="box wk-n"><h3><span class="pn n">N</span> 이번 주 주의</h3>${wlist(rp.week_warnings, 'down')}</div>
     </div>` : ''}
-    <div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 이번 주 할 일${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i)).join('') : '<div class="muted">없음</div>'}</div>
-    ${lw ? `<div class="box past-box"><h3><i class="fa-regular fa-clock" style="color:#9ca3af;"></i> 저번 주 해야 했을 일 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''}</span></h3>${(lw.actions || []).length ? lw.actions.map((x, i) => actRow(x, i, { past: true })).join('') : '<div class="muted">저번 주 보고서가 없어요</div>'}</div>` : ''}
+    <div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 이번 주 할 일${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i, { week: rp.week?.start })).join('') : '<div class="muted">없음</div>'}<div class="muted small chk-hint">체크하면 완료로 기록되고, 다음 날 보고서의 할 일에서 빠집니다.</div></div>
+    ${lw ? `<div class="box past-box"><h3><i class="fa-regular fa-clock" style="color:#9ca3af;"></i> 저번 주 해야 했을 일 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''}</span></h3>${(lw.actions || []).length ? lw.actions.map((x, i) => actRow(x, i, { past: true, week: lw.start })).join('') : '<div class="muted">저번 주 보고서가 없어요</div>'}</div>` : ''}
     ${rp.note ? `<div class="muted small"><i class="fa-regular fa-circle-question"></i> ${escHtml(rp.note)}</div>` : ''}
     ${dataErrors(r.data)}
     <details class="raw"><summary>수집한 숫자 보기</summary>${rawTable(r.data)}</details>`;

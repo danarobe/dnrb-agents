@@ -46,7 +46,7 @@ async function renderHome() {
     return;
   }
   try {
-    const rows = await reportsLoad();
+    const [rows] = await Promise.all([reportsLoad(), actionsLoad()]);
     AGENTS.forEach(a => {
       const el = $('card-last-' + a.key); if (!el) return;
       const r = rows.find(x => x.agent === a.key);
@@ -55,9 +55,12 @@ async function renderHome() {
         el.innerHTML = `<div class="last-err"><i class="fa-solid fa-triangle-exclamation"></i> ${dateShort(r.report_date)} 보고서 실패 · <a href="#reports/${r.id}">원인 보기</a></div>`;
         return;
       }
+      const wa = Array.isArray(r.report?.week_actions) ? r.report.week_actions : [];
+      const doneN = wa.filter(x => { const st = (actionsState.map || new Map()).get(actionKey(x)); return st && st.done; }).length;
       el.innerHTML = `<a class="last-report mood-${r.report?.mood || 'neutral'}" href="#reports/${r.id}">
           <span class="when">${dateShort(r.report_date)} 기준 · ${relTime(r.created_at)}</span>
           <b>${escHtml(r.report?.headline || '')}</b>
+          ${wa.length ? `<span class="progress"><i class="fa-solid fa-list-check"></i> 이번 주 할 일 ${doneN}/${wa.length} 완료</span>` : ''}
         </a>`;
     });
   } catch (e) {
