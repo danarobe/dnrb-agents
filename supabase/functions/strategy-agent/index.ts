@@ -43,10 +43,19 @@ function paJamo(s: string): string {
   return out;
 }
 const paNorm = (t: string) => paJamo(String(t || "").normalize("NFC")).replace(/\s+/g, "").replace(/ver\./gi, "ver").toLowerCase();
-type PaProd = { no: number; name: string; key: string; ver: string | null };
+type PaProd = { no: number; name: string; key: string; ver: string | null; qty: number; dominant?: boolean };
 function paGroups(prods: PaProd[]) {
   const g: Record<string, { n: number; vers: string[]; noVer: number }> = {};
   for (const p of prods) { const e = (g[p.key] = g[p.key] || { n: 0, vers: [], noVer: 0 }); e.n++; if (p.ver) e.vers.push(p.ver); else e.noVer++; }
+  // 기본판(ver 없음)이 여럿인 핵심명: 최근 판매량이 압도적(70%↑)인 상품을 '우세'로 표시 — 옛 상품(2 colors, 판매 0)과
+  // 현행 상품(3 colors, 판매 638)이 같은 이름으로 공존해 광고가 어디에도 안 붙던 사례(세러데이 나그랑, 2026-09-12)
+  for (const [key, e] of Object.entries(g)) {
+    if (e.noVer < 2) continue;
+    const cands = prods.filter((p) => p.key === key && !p.ver);
+    const total = cands.reduce((t, p) => t + p.qty, 0);
+    const top = [...cands].sort((a, b) => b.qty - a.qty)[0];
+    if (top && top.qty > 0 && top.qty / total >= 0.7) top.dominant = true;
+  }
   return g;
 }
 function paPickBest(an: string, prods: PaProd[], groups: ReturnType<typeof paGroups>): PaProd | null {
@@ -56,7 +65,7 @@ function paPickBest(an: string, prods: PaProd[], groups: ReturnType<typeof paGro
     const g = groups[p.key];
     if (g.n > 1) {
       if (p.ver) { if (!an.includes(p.ver)) continue; }
-      else { if (g.noVer > 1) continue; if (g.vers.some((v) => an.includes(v))) continue; }
+      else { if (g.noVer > 1 && !p.dominant) continue; if (g.vers.some((v) => an.includes(v))) continue; }
     }
     if (!best || p.key.length > best.key.length || (p.key === best.key && p.ver && an.includes(p.ver))) best = p;
   }
@@ -128,7 +137,7 @@ async function collect(D: string) {
 
   // ── 광고 매칭 (활성 광고 전체 → 상품) ──
   const allProds: PaProd[] = [...new Map([...rows14, ...rows7].map((r) => [Number(r.product_no), String(r.product_name ?? "")])).entries()]
-    .map(([no, name]) => ({ no, name, key: paNorm(paKey(name)), ver: paVerTok(name) ? paNorm(paVerTok(name)!) : null }))
+    .map(([no, name]) => ({ no, name, key: paNorm(paKey(name)), ver: paVerTok(name) ? paNorm(paVerTok(name)!) : null, qty: num(m14.get(no)?.order_qty) }))
     .filter((p) => p.key.length >= 3);
   const groups = paGroups(allProds);
   const adsByProduct = new Map<number, Row[]>();

@@ -13,6 +13,7 @@
 // ═══════════════════════════════════════════════
 import Anthropic from "npm:@anthropic-ai/sdk";
 import webpush from "npm:web-push@3.6.7";
+import { encodeBase64 } from "jsr:@std/encoding@1/base64";
 import { handleOptions, json, verifyAuthToken } from "./util.ts";
 
 export const SB_URL = Deno.env.get("SUPABASE_URL")!;
@@ -197,19 +198,18 @@ export async function writeReport(system: string, schema: unknown, data: unknown
   if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY 미설정 — Supabase secrets에 Claude API 키를 넣고 함수를 재배포하세요");
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   // 이미지(광고 소재 썸네일 등)는 **함수가 내려받아 base64로** 넘긴다 — Meta CDN은 robots.txt로 외부 수집을 막아
-  // URL 블록을 쓰면 Anthropic 쪽에서 "disallowed by robots.txt"로 거부됨(2026-09-12 실사례). 최대 12장, 장당 1.5MB 상한, 실패는 건너뜀.
+  // URL 블록을 쓰면 Anthropic 쪽에서 "disallowed by robots.txt"로 거부됨(2026-09-12 실사례). 최대 10장, 장당 400KB 상한, 실패는 건너뜀.
+  // ⚠ 함수 자원 한도(WORKER_RESOURCE_LIMIT) 실사례: 600px 썸네일 12장 + 문자열 base64 변환으로 초과 → 320px 썸네일 + std encodeBase64.
   const content: unknown[] = [];
-  const fetched = await Promise.all(images.slice(0, 12).map(async (im) => {
+  const fetched = await Promise.all(images.slice(0, 10).map(async (im) => {
     try {
       const res = await fetch(im.url, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) return null;
       const type = (res.headers.get("content-type") ?? "image/jpeg").split(";")[0].trim();
       if (!/^image\/(jpeg|png|webp|gif)$/.test(type)) return null;
       const buf = new Uint8Array(await res.arrayBuffer());
-      if (buf.byteLength > 1.5 * 1024 * 1024) return null;
-      let bin = "";
-      for (let i = 0; i < buf.byteLength; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-      return { label: im.label, media_type: type, data: btoa(bin) };
+      if (buf.byteLength > 400 * 1024) return null;
+      return { label: im.label, media_type: type, data: encodeBase64(buf) };
     } catch { return null; }
   }));
   for (const im of fetched) {
