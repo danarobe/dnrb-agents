@@ -18,8 +18,10 @@ const AGENTS = [
     sources: ['카페24 취소반품', '순반품률(7/14/30일)', '반품 사유', '반품 관리 목록'],
   },
   {
-    key: 'content', name: '상품 콘텐츠 담당', icon: 'fa-images', color: '#0891b2', status: 'planned',
-    schedule: '신상품 등록 시', desc: '신상품 사진 보정, 상세 문구 초안, 영·일·중 번역을 미리 준비합니다.', sources: ['포토 스튜디오', '상세 번역기'],
+    key: 'strategy', name: '상품 전략 담당', icon: 'fa-chess', color: '#0891b2', status: 'active', fn: 'strategy-agent',
+    schedule: '매일 아침 8시 30분',
+    desc: '신상품을 조회수×주문율 4분면으로 나눠 어디에 힘을 실을지 정하고, 급상승·TOP10 상품은 광고 소재를 분석해 추가 소재 컨셉·릴스 훅 멘트·상세 강조점을 제안합니다. 마진과 1+1·할인 행사를 함께 봅니다.',
+    sources: ['카페24 NEW ARRIVALS', '조회수·주문율', '혜택(1+1·할인)', 'Meta 광고 소재'],
   },
   {
     key: 'marketing', name: '마케팅 담당', icon: 'fa-bullhorn', color: '#b45309', status: 'planned',

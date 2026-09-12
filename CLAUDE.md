@@ -4,7 +4,7 @@
 > 2026-09-10 사용자 결정: 워크스페이스(~/dnrb-dashboard, 1만 2천 줄 단일 파일)가 너무 무거워져 **화면은 이 저장소로 분리**, 데이터 연결·계정은 워크스페이스와 **같은 Supabase 프로젝트를 공유**한다.
 
 ## 0. 한눈에 보기
-- **소스**: `~/dnrb-agents` — `index.html` 뼈대 + `css/app.css` + `js/`(config·api·agents·reports·app, 기능별 분리) + `supabase/functions/`(**`_shared/agent.ts` 공통 뼈대** + `sales-agent` + `returns-agent`).
+- **소스**: `~/dnrb-agents` — `index.html` 뼈대 + `css/app.css` + `js/`(config·api·agents·reports·app, 기능별 분리) + `supabase/functions/`(**`_shared/agent.ts` 공통 뼈대** + `sales-agent` + `returns-agent` + `strategy-agent`).
 - **배포**: GitHub Pages `https://danarobe.github.io/dnrb-agents/` (공개 레포 `danarobe/dnrb-agents`, main 브랜치 루트). **git push하면 자동 배포**(30~60초).
 - **Supabase**: 워크스페이스와 같은 프로젝트 `eeffmbusaqaadeojjlnc`(서울). anon key·URL은 `js/config.js`(공개돼도 되는 값 — 서버가 로그인 토큰을 검증).
 - **로컬 프리뷰**: `.claude/launch.json`의 dnrb-agents, 포트 8735.
@@ -49,6 +49,18 @@
 - **리포트 extra 필드**: `cohort_table[{week, maturity 성숙|집계 중|진행 중, paid, cancel_rate, return_rate, verdict}]`(cohorts.weeks 그대로 + 판단), `risk_products[{name, level 위험|주의, rate_14d, delivered_14d, cause, fix}]`(표), `watch_review[{name, verdict 개선|유지|악화, detail}]`. 프롬프트 규칙: 옵션 집중이면 옵션 문제, 사유별 대응(사이즈→실측·안내 / 색상·소재→사진·설명 / 불량→제작처·검수 / 배송지연→출고), 관리 상품 지정·판매 중단은 사람이(제안만, '대표 확인 후').
 - **화면**: 타일 4(최근 성숙 주 취소율·반품률 + 성숙 주 평균, 이번 주 집계 중, 위험·주의 상품 수) → 오늘의 주목/주의 → **결제 주차별 취소·반품률 표(상태 칩·경과일·판단)** → **위험·주의 상품 표(상품·원인 / 판정·수치 / 대응)** + **관리 상품 점검**(개선·유지·악화 칩) → 주간 누적 → 할 일. `rawTableReturns`에 취소반품 표·위험 후보 창별 표.
 
+## 3-2. 상품 전략 담당 (`supabase/functions/strategy-agent`, 에이전트 3호, 2026-09-12)
+사용자가 2026-09-12 '상품 콘텐츠 담당' 구상을 전면 수정해 만든 것: **어떤 상품에 힘을 실을지 + 광고 소재·상세 제안**. 일문/영문 번역은 불필요(사용자 지정), 상품 관리 시스템 데이터도 안 씀(입력이 불완전).
+- **자동 실행**: pg_cron `strategy-agent-morning`(jobid 4, `30 23 * * *` UTC = **08:30 KST**).
+- **수집**(실측 13초, 오류 0): `categorymap` → `category_products(33=NEW ARRIVALS)`·`summary` 14일/7일/직전7일·`benefits`(by_product)·`activeads` 병렬 → `productinfo`(신상품 91개, 할인 없이 1회) → `productinfo&with_discount=1`(신상품 조회 상위 24 + 집중 상품만 — 전부 읽으면 62초) → `adcards`(집중 상품 자기 소재 + 참고 소재, 최근 14일 성과·썸네일·문구). **세일 카테고리는 보지 않는다**(사용자 지정).
+- **신상품 4분면(코드가 판정, Claude는 전략 문장만)**: 등록 3일↑·14일 조회 30↑인 상품의 **중앙값**(사용자 선택 — 고정 기준 아님) 기준. 주문율↑조회↓=**노출 부족** / 둘↑=**판매 확대** / 조회↑주문율↓=**상세·가격 점검** / 둘↓=**집중도 낮춤**(광고 없으면 '(광고 미테스트)' 꼬리표 — 노출 탓일 수 있어 테스트 후 판단, 사용자 판단 존중). 등록 3일 미만·조회 30 미만은 보류. 함께 보는 것: 마진율 = (판매가−공급가×1.1)÷판매가, 할인가(discountprice), 혜택(1+1=수량할인·기간할인, benefits by_product), 품절, 활성 광고 수.
+- **집중 상품 6개 = 급상승 3(7일 vs 직전 7일, 매출 담당과 같은 규칙) + TOP10(14일 결제수량) 3 — TOP10은 최근 4개 보고서에서 다룬 상품을 뒤로 미루는 순환**(며칠에 걸쳐 10개 전부). 상품별: 자기 활성 광고(지출 상위 4, 누적 since_start + 최근 14일 last14: 지출·구매·ROAS·CTR·빈도·문구·영상 여부) + **같은 카테고리(카테고리 지도의 가장 깊은 일반 카테고리) 상위 판매 3상품의 우수 소재**(지출 10만↑ 중 ROAS 상위 2). 광고↔상품 매칭은 워크스페이스 판매 성과 `pa*` 규칙 이식(paKey/paVerTok/paJamo/paGroups/paPickBest).
+- **이미지**: 집중 상품 자기 최상위 소재 1장씩 + 참고 소재 최대 6장(총 12장 이내)을 **함수가 내려받아 base64로** Claude에 첨부(`agent.ts writeReport`의 images — Meta CDN은 robots.txt로 막혀 URL 블록은 'disallowed by robots.txt' 400, 실사례). Claude가 썸네일을 보고 소재 특성을 뽑는다.
+- **리포트 extra**: `matrix[{name, strategy≤40자}]`(postProcess가 판정·조회·주문율·마진·할인가·행사·등록일·광고 수 채움), `focus[{name, driver, creative_plan, reels_hooks[3], detail_focus, plan}]`(postProcess가 why·수치·own_ads·reference_ads 채움). 프롬프트 원칙: 판정을 바꾸지 말 것, 마진 35% 미만은 우선순위↓, 빈도 3↑=소재 피로, 훅 멘트는 실제 특징·광고 문구 근거(과장 금지), 예산 확대는 '대표 확인 후'.
+- **실측(2026-09-12 첫 보고서)**: 94초, 입력 약 40K(이미지 12장 포함)·출력 약 6.5K 토큰, 건당 약 500원. 헤드라인 "세러데이 나그랑 638개 팔리는데 광고 0개"처럼 광고 미집행 상품을 잡아냄.
+- **화면**: 타일 4(신상품 수·판정 기준, 판매 확대·노출 부족 수, 점검·낮춤 수, 집중 상품 수·행사 수) → **4분면 표**(판정 배지 4색·조회/주문율/판매·마진/할인가·행사 칩·전략) → **집중 상품 카드**(자기 소재 목록(썸네일·성과·문구)+견인 소재 / 참고 소재+추가 컨셉 / 릴스 훅 3·상세 강조·판매 계획) → 주간·할 일. `rawTableStrategy`에 신상품 전체·TOP10.
+- **다음(2단계, 사용자 확인 후)**: 상세페이지 내용 점검 — 다나로브 상세는 글자가 전부 세로 1만px 이미지 안이라 잘라서 봐야 함(이미지 슬라이서 필요).
+
 ## 4. DB
 - `agent_actions`(마이그레이션 `0007_agent_actions.sql`, 적용 완료, 2026-09-11): **할 일 완료 체크**. agent/action_id(unique 쌍)/week_start/title·owner(스냅숏)/done/done_by/done_at. 앱이 db 프록시(admin)로 `on_conflict=agent,action_id` upsert(prefer merge-duplicates). 키 = `week_actions[].id`(에이전트 부여 `기준일YYYYMMDD-순번`; 유지 항목은 id 불변). id 없는 옛 보고서 항목은 `legacy:since:제목40자` 임시 키(다음 보고서부터 진짜 id로 바뀌어 체크가 이어지지 않음 — 2026-09-10 보고서 한정). `weekContext()`가 done=true id를 읽어 `week_actions_so_far[].done`으로 프롬프트에 넣고, 시스템 프롬프트가 **done=true는 반드시 제외**하게 한다. 화면: 번호 동그라미가 체크박스(완료 = 초록 ✓ + 취소선 + "완료 · 이름 · 시각"), 저번 주 할 일도 체크 가능. 홈 카드에 "이번 주 할 일 M/N 완료".
 - `agent_reports`(마이그레이션 `supabase/migrations/0006_agent_reports.sql`, 적용 완료): agent/report_date/trigger(cron|manual)/status(ok|error)/data/report/model/usage/error/created_by/created_at. RLS on·anon 정책 없음 → 읽기는 db 프록시(admin), 쓰기는 sales-agent(service_role).
@@ -63,4 +75,4 @@
 ## 6. 남은 일
 - 첫 보고서 2건 확인됨(2026-09-10, 입력 약 4.5K·출력 약 2K 토큰/건). 프롬프트·액션 품질 다듬기 계속.
 - 완료 체크는 됨(2026-09-11). 담당 배정·에이전트에게 질문하기(보고서 맥락 + 데이터 재조회)는 아직.
-- 2호 완료(2026-09-11). 3호 후보 = 상품 콘텐츠(포토 스튜디오·번역기 연동) 또는 마케팅(Meta·안정재고).
+- 3호 완료(2026-09-12). 4호 후보 = 마케팅(주간 광고 예산 배분·소재 테스트 계획) 또는 고객 응대. 3호 2단계 = 상세페이지 이미지 판독.

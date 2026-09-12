@@ -144,6 +144,51 @@ function reportHtml(r) {
       ${riskRows ? `<div class="tbl-wrap"><table class="risk"><thead><tr><th>상품 · 원인 추정</th><th class="r">판정</th><th>대응</th></tr></thead><tbody>${riskRows}</tbody></table></div>` : '<div class="muted">위험·주의 상품이 없어요</div>'}
     </div>
     <div class="box"><h3><i class="fa-solid fa-star" style="color:#b45309;"></i> 관리 상품 점검 <span class="muted small">워크스페이스 반품 관리에서 지정한 상품</span></h3>${watchRows || '<div class="muted">관리 상품이 없어요</div>'}</div>`;
+  } else if (r.agent === 'strategy') {
+    const na = d.new_arrivals || {}, mx = rp.matrix || [];
+    const cnt = q => (na.matrix || []).filter(p => String(p.quadrant).startsWith(q)).length;
+    tiles = [
+      tile('신상품', `${fmt(na.count)}개`, `판정 가능 ${fmt(na.eligible)}개 · 기준 조회 ${fmt(na.median_views_14d)} / 주문율 ${na.median_rate_14d ?? '—'}%`),
+      tile('판매 확대 · 노출 부족', `${cnt('판매 확대')} · ${cnt('노출 부족')}`, '힘을 실을 상품'),
+      tile('상세·가격 점검 · 집중도 낮춤', `${cnt('상세·가격')} · ${cnt('집중도')}`, '손보거나 뒤로 보낼 상품'),
+      tile('집중 상품', `${(rp.focus || []).length}개`, `급상승 ${(d.trending || []).length} · TOP10 순환 · 행사 ${fmt(d.benefits_active || 0)}건 적용 중`),
+    ].join('');
+    const qColor = { '판매 확대': 'q-grow', '노출 부족': 'q-expose', '상세·가격 점검': 'q-fix', '집중도 낮춤': 'q-low' };
+    const qc = q => { const k = Object.keys(qColor).find(k => String(q).startsWith(k)); return k ? qColor[k] : 'q-na'; };
+    const won = v => v == null ? '' : Math.round(v).toLocaleString('ko-KR') + '원';
+    const mxRows = mx.map(x => `<tr>
+        <td><b>${escHtml(x.name)}</b><div class="muted">${x.age_days != null ? `등록 ${x.age_days}일` : ''}${x.sold_out ? ' · <b class="down">품절</b>' : ''}${x.active_ads ? ` · 광고 ${x.active_ads}개` : ' · 광고 없음'}</div></td>
+        <td><span class="qbadge ${qc(x.quadrant)}">${escHtml(x.quadrant)}</span></td>
+        <td class="r">${fmt(x.views_14d)}<div class="muted">${x.rate_14d != null ? x.rate_14d + '%' : '—'} · ${fmt(x.qty_14d)}개</div></td>
+        <td class="r">${x.margin_rate != null ? x.margin_rate + '%' : '—'}<div class="muted">${x.discount_price ? `할인가 ${won(x.discount_price)}` : won(x.price)}</div></td>
+        <td>${(x.promos || []).length ? (x.promos || []).map(p => `<span class="chip">${escHtml(p)}</span>`).join(' ') : '<span class="muted">—</span>'}</td>
+        <td>${escHtml(x.strategy)}</td></tr>`).join('');
+    const focusCards = (rp.focus || []).map(f => {
+      const adRow = (a, ref) => `<div class="ad-row">
+          ${a.thumb ? `<img src="${escHtml(a.thumb)}" alt="" loading="lazy">` : '<span class="ad-noimg"></span>'}
+          <div class="ad-info"><div class="ad-name">${ref ? `<span class="chip">${escHtml(a.product_name || '')}</span> ` : ''}${escHtml(a.name)} <span class="chip">${a.is_video ? '영상' : '이미지'}</span></div>
+          <div class="muted">${a.last14 ? `14일 지출 ${fmtMan(a.last14.spend)} · 구매 ${fmt(a.last14.purchases)} · ROAS ${a.last14.roas} · CTR ${a.last14.ctr}% · 빈도 ${a.last14.frequency}` : (a.since_start ? `누적 지출 ${fmtMan(a.since_start.spend)} · 구매 ${fmt(a.since_start.purchases)} · ROAS ${a.since_start.roas}` : '성과 없음')}</div>
+          ${a.body ? `<div class="ad-body">${escHtml(a.body)}</div>` : ''}</div></div>`;
+      return `<div class="focus-card">
+        <div class="focus-head"><div><b>${escHtml(f.name)}</b><div class="muted">${escHtml(f.why)}${f.category ? ` · ${escHtml(f.category)}` : ''} · 14일 조회 ${fmt(f.views_14d)} · 주문율 ${f.rate_14d ?? '—'}% · 마진 ${f.margin_rate ?? '—'}%${(f.promos || []).length ? ' · ' + f.promos.map(escHtml).join(', ') : ''}</div></div></div>
+        <div class="focus-grid">
+          <div><h4>지금 붙은 소재${f.own_ads.length ? '' : ' <span class="chip bad">광고 없음</span>'}</h4>${f.own_ads.map(a => adRow(a, false)).join('') || '<div class="muted small">이 상품에 붙은 활성 광고가 없어요</div>'}
+            <div class="fx"><b>견인 소재</b> ${escHtml(f.driver)}</div></div>
+          <div><h4>같은 카테고리 우수 소재</h4>${f.reference_ads.map(a => adRow(a, true)).join('') || '<div class="muted small">참고할 우수 소재가 없어요</div>'}
+            <div class="fx"><b>추가 소재 컨셉</b> ${escHtml(f.creative_plan)}</div></div>
+        </div>
+        <div class="fx-row">
+          <div class="fx"><b>릴스 첫 3초 훅</b><ol>${(f.reels_hooks || []).map(h => `<li>${escHtml(h)}</li>`).join('')}</ol></div>
+          <div class="fx"><b>상세에서 강조</b> ${escHtml(f.detail_focus)}</div>
+          <div class="fx"><b>판매 계획</b> ${escHtml(f.plan)}</div>
+        </div></div>`;
+    }).join('');
+    extraBoxes = `
+    <div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값 기준 · 마진율 = (판매가 − 공급가×1.1) ÷ 판매가</span></h3>
+      <div class="qlegend"><span class="qbadge q-grow">판매 확대</span> 둘 다 높음 <span class="qbadge q-expose">노출 부족</span> 주문율↑ 조회↓ <span class="qbadge q-fix">상세·가격 점검</span> 조회↑ 주문율↓ <span class="qbadge q-low">집중도 낮춤</span> 둘 다 낮음</div>
+      ${mxRows ? `<div class="tbl-wrap"><table class="risk"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div>` : '<div class="muted">판정할 신상품이 없어요</div>'}
+    </div>
+    <div class="box"><h3><i class="fa-solid fa-bullseye" style="color:#0891b2;"></i> 집중 상품 <span class="muted small">급상승 3 + 판매 TOP10 순환 3 · 광고 소재 분석</span></h3>${focusCards || '<div class="muted">없음</div>'}</div>`;
   } else {
     tiles = [
       tile('어제 매출', fmtMan(rev.yesterday?.revenue), `지난주 같은 요일 대비 ${fmtDelta(ch.vs_same_dow_last_week)} · 주문 ${rev.yesterday ? fmt(rev.yesterday.orders) + '건' : '—'}`),
@@ -202,6 +247,7 @@ function dataErrors(data) {
 function rawTable(d, agent) {
   if (!d) return '';
   if (agent === 'returns') return rawTableReturns(d);
+  if (agent === 'strategy') return rawTableStrategy(d);
   const rev = d.revenue || {}, pr = d.periods || {};
   const row = (label, r, p) => r ? `<tr><td>${label}</td><td class="muted">${Array.isArray(p) ? p[0] + ' ~ ' + p[1] : (p || '')}</td><td class="r">${fmt(r.revenue)}원</td><td class="r">${fmt(r.orders)}건</td></tr>` : '';
   const products = (arr, cols) => (arr || []).length
@@ -235,4 +281,14 @@ function rawTableReturns(d) {
     <h4>위험·주의 후보 (배송완료일 기준 순반품률, 괄호 = 배송완료 수량)</h4>
     ${risk ? `<table><thead><tr><th>상품</th><th class="r">7일</th><th class="r">14일</th><th class="r">30일</th><th>위험 옵션(14일)</th><th>사유 TOP3(14일)</th></tr></thead><tbody>${risk}</tbody></table>` : '<div class="muted">없음</div>'}
     <div class="muted small">판정 기준일 ${d.judge_date || ''} (기준일보다 3일 앞 — 반품은 배송완료 후 며칠 뒤 들어와서)</div>`;
+}
+
+function rawTableStrategy(d) {
+  const na = d.new_arrivals || {};
+  const rows = (na.matrix || []).map(p => `<tr><td>${escHtml(p.name)}</td><td>${escHtml(p.category || '')}</td><td>${escHtml(p.quadrant)}</td><td class="r">${p.age_days ?? '—'}</td><td class="r">${fmt(p.views_14d)}</td><td class="r">${p.rate_14d}%</td><td class="r">${fmt(p.qty_14d)}</td><td class="r">${p.margin_rate ?? '—'}</td><td class="r">${p.active_ads}</td><td>${(p.promos || []).map(escHtml).join(', ')}</td></tr>`).join('');
+  const top = (d.top10 || []).map(t => `<tr><td>${t.rank}</td><td>${escHtml(t.name)}</td><td class="r">${fmt(t.qty_14d)}</td><td class="r">${t.rate_14d}%</td><td class="r">${t.active_ads}</td></tr>`).join('');
+  return `<h4>신상품 전체 (${fmt(na.count)}개)</h4>
+    <table><thead><tr><th>상품</th><th>카테고리</th><th>판정</th><th class="r">등록일수</th><th class="r">조회 14일</th><th class="r">주문율</th><th class="r">판매</th><th class="r">마진%</th><th class="r">광고</th><th>행사</th></tr></thead><tbody>${rows}</tbody></table>
+    <h4>판매 TOP10 (14일 결제수량)</h4>
+    <table><thead><tr><th>#</th><th>상품</th><th class="r">판매</th><th class="r">주문율</th><th class="r">활성 광고</th></tr></thead><tbody>${top}</tbody></table>`;
 }

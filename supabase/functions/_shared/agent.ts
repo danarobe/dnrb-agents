@@ -191,19 +191,42 @@ export const COMMON_RULES = `
 - actions(오늘 새로 제안하는 것)는 주간 항목과 별개로 그대로 씁니다.`;
 
 // ── Claude 호출 ──
-export async function writeReport(system: string, schema: unknown, data: unknown, week: unknown, effort: "low" | "medium" | "high" = "medium")
+export type LLMImage = { url: string; label: string };
+export async function writeReport(system: string, schema: unknown, data: unknown, week: unknown, effort: "low" | "medium" | "high" = "medium", images: LLMImage[] = [])
   : Promise<{ report: Row; usage: unknown; model: string }> {
   if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY 미설정 — Supabase secrets에 Claude API 키를 넣고 함수를 재배포하세요");
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+  // 이미지(광고 소재 썸네일 등)는 **함수가 내려받아 base64로** 넘긴다 — Meta CDN은 robots.txt로 외부 수집을 막아
+  // URL 블록을 쓰면 Anthropic 쪽에서 "disallowed by robots.txt"로 거부됨(2026-09-12 실사례). 최대 12장, 장당 1.5MB 상한, 실패는 건너뜀.
+  const content: unknown[] = [];
+  const fetched = await Promise.all(images.slice(0, 12).map(async (im) => {
+    try {
+      const res = await fetch(im.url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+      const type = (res.headers.get("content-type") ?? "image/jpeg").split(";")[0].trim();
+      if (!/^image\/(jpeg|png|webp|gif)$/.test(type)) return null;
+      const buf = new Uint8Array(await res.arrayBuffer());
+      if (buf.byteLength > 1.5 * 1024 * 1024) return null;
+      let bin = "";
+      for (let i = 0; i < buf.byteLength; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      return { label: im.label, media_type: type, data: btoa(bin) };
+    } catch { return null; }
+  }));
+  for (const im of fetched) {
+    if (!im) continue;
+    content.push({ type: "text", text: `[이미지] ${im.label}` });
+    content.push({ type: "image", source: { type: "base64", media_type: im.media_type, data: im.data } });
+  }
+  content.push({
+    type: "text",
+    text: `아래는 기준일(어제)까지의 수집 데이터와 이번 주 앞선 날들의 보고 항목입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(data)}\n\n[this_week]\n${JSON.stringify(week)}`,
+  });
   const res = await client.messages.create({
     model: MODEL,
     max_tokens: 8000,
     system,
     output_config: { effort, format: { type: "json_schema", schema } },
-    messages: [{
-      role: "user",
-      content: `아래는 기준일(어제)까지의 수집 데이터와 이번 주 앞선 날들의 보고 항목입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(data)}\n\n[this_week]\n${JSON.stringify(week)}`,
-    }],
+    messages: [{ role: "user", content }],
   } as Parameters<typeof client.messages.create>[0]);
   if (res.stop_reason === "refusal") throw new Error("Claude가 응답을 거부했습니다");
   const text = res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
@@ -256,6 +279,7 @@ export interface AgentDef {
   // 선택: Claude 응답에 숫자 채워 넣기(Claude가 숫자를 다시 쓰지 않게 해 출력 토큰·시간 절약)
   postProcess?: (report: Row, data: Row) => Row;
   effort?: "low" | "medium" | "high";   // 기본 medium
+  images?: (data: Row) => LLMImage[];    // 선택: Claude가 봐야 할 이미지(광고 소재 썸네일 등, 최대 12장)
 }
 export function serveAgent(def: AgentDef) {
   Deno.serve(async (req) => {
@@ -296,7 +320,8 @@ export function serveAgent(def: AgentDef) {
           data = collected;
           const llmData = def.forLLM ? def.forLLM(data) : data;
           const { report: written0, usage, model } = await writeReport(def.system, def.schema, llmData,
-            { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far }, def.effort ?? "medium");
+            { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far }, def.effort ?? "medium",
+            def.images ? def.images(data) : []);
           const written = def.postProcess ? def.postProcess(written0, data) : written0;
           const report = { ...written, week: wc.week, last_week: wc.last_week };
           const row = await saveRow({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage, created_by: me?.id ?? null });
