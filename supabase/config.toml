@@ -17,3 +17,7 @@ verify_jwt = true
 # 담당자 공통 2단계(보고서 작성) — x-cron-secret 전용, 별도 worker
 [functions.agent-write]
 verify_jwt = true
+
+# 상세페이지 점검 담당 — 관리자 또는 x-cron-secret(08:45 KST), 단계별 호출은 DB pg_net
+[functions.detail-agent]
+verify_jwt = true

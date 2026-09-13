@@ -24,6 +24,12 @@ const AGENTS = [
     sources: ['카페24 NEW ARRIVALS', '조회수·주문율', '혜택(1+1·할인)', 'Meta 광고 소재'],
   },
   {
+    key: 'detail', name: '상세페이지 점검 담당', icon: 'fa-file-image', color: '#7c3aed', status: 'active', fn: 'detail-agent',
+    schedule: '매일 아침 8시 45분 · 하루 2개 상품',
+    desc: '급상승·TOP10·상세 점검 판정 상품의 상세페이지 이미지를 조각내 읽고(Gemini) 실측표·사이즈 가이드·소재·색상별 컷이 빠졌는지, 첫 화면에 무엇을 내세울지, 붙여 넣을 문장까지 제안합니다. 같은 상세는 다시 읽지 않습니다.',
+    sources: ['카페24 상세 이미지', '상품 전략·반품 보고서'],
+  },
+  {
     key: 'marketing', name: '마케팅 담당', icon: 'fa-bullhorn', color: '#b45309', status: 'planned',
     schedule: '매주 월요일', desc: '광고 성과와 재고를 보고 이번 주 밀어줄 상품과 광고 문구를 제안합니다.', sources: ['Meta 광고', '안정재고'],
   },
@@ -121,9 +127,9 @@ async function agentRun(key) {
     const d = await callFn(a.fn, { action: 'run' }, { method: 'POST', body: '{}' });
     if (d.id) { toast('보고서가 도착했어요'); __reportsCache = null; location.hash = '#reports/' + d.id; return; }
     // 2단계 실행(수집 끝 → 별도 함수가 작성 중) — 새 보고서 행이 생길 때까지 10초마다 확인 (최대 4분)
-    toast('수집 완료, 보고서 작성 중이에요 (1~2분)');
+    toast(key === 'detail' ? (d.message || '상세 이미지 읽는 중 (상품당 2~4분)') : '수집 완료, 보고서 작성 중이에요 (1~2분)');
     btnBusy(btn, '작성 중');
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < (key === 'detail' ? 48 : 24); i++) {
       await new Promise(r => setTimeout(r, 10000));
       const rows = await reportsLoad(true).catch(() => []);
       const fresh = rows.find(r => r.agent === key && new Date(r.created_at).getTime() > startedAt - 60000);

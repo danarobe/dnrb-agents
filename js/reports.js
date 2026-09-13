@@ -144,6 +144,36 @@ function reportHtml(r) {
       ${riskRows ? `<div class="tbl-wrap"><table class="risk"><thead><tr><th>상품 · 원인 추정</th><th class="r">판정</th><th>대응</th></tr></thead><tbody>${riskRows}</tbody></table></div>` : '<div class="muted">위험·주의 상품이 없어요</div>'}
     </div>
     <div class="box"><h3><i class="fa-solid fa-star" style="color:#b45309;"></i> 관리 상품 점검 <span class="muted small">워크스페이스 반품 관리에서 지정한 상품</span></h3>${watchRows || '<div class="muted">관리 상품이 없어요</div>'}</div>`;
+  } else if (r.agent === 'detail') {
+    const revs = rp.reviews || [];
+    const scoreColor = sc => sc == null ? 'var(--muted)' : sc >= 75 ? 'var(--good)' : sc >= 55 ? '#b45309' : 'var(--bad)';
+    tiles = [
+      tile('점검 상품', `${revs.length}개`, revs.map(x => (x.product_name || '').replace(/^\(.*?\)\s*/, '').slice(0, 12)).join(' · ')),
+      tile('평균 점수', revs.filter(x => x.review).length ? Math.round(revs.filter(x => x.review).reduce((t, x) => t + (x.review.score || 0), 0) / revs.filter(x => x.review).length) + '점' : '—', '실측표·사이즈·소재·컷 구성·첫 화면 기준'),
+      tile('빠진 요소', revs.reduce((t, x) => t + ((x.review?.missing || []).length), 0) + '개', '상품별 상세에서 확인'),
+      tile('읽은 이미지', revs.reduce((t, x) => t + (x.image_count || 0), 0) + '장', 'Gemini 읽기 · 같은 상세는 재사용'),
+    ].join('');
+    extraBoxes = revs.map(x => {
+      if (x.status !== 'ok' || !x.review) return `<div class="box"><h3>${escHtml(x.product_name)}</h3><div class="notice err">점검 실패: ${escHtml(x.error || '원인 미상')}</div></div>`;
+      const v = x.review, c = v.context || {};
+      const ctxBits = [];
+      if (c.new_arrival) ctxBits.push(`신상품 ${escHtml(c.new_arrival.quadrant)} · 주문율 ${c.new_arrival.rate_14d}%`);
+      if (c.focus) ctxBits.push(escHtml(c.focus.why));
+      if (c.returns) ctxBits.push(`반품 ${escHtml(c.returns.level)} ${c.returns.rate_14d}% (${(c.returns.reasons_top3 || []).slice(0, 2).map(escHtml).join(', ')})`);
+      if (c.rising_keywords) ctxBits.push(`급상승 키워드 ${c.rising_keywords.map(escHtml).join(', ')}`);
+      return `<div class="box detail-box">
+        <div class="dt-head"><div><b>${escHtml(x.product_name)}</b><div class="muted small">${escHtml(x.reason || '')}${ctxBits.length ? ' · ' + ctxBits.join(' · ') : ''} · 이미지 ${x.image_count}장</div></div>
+          <div class="score" style="color:${scoreColor(v.score)}">${v.score}<span>점</span></div></div>
+        <div class="fx"><b>총평</b> ${escHtml(v.verdict)}</div>
+        <div class="dt-grid">
+          <div><h4><i class="fa-solid fa-circle-xmark down"></i> 빠졌거나 약한 것</h4>${(v.missing || []).length ? '<ul>' + v.missing.map(m => `<li>${escHtml(m)}</li>`).join('') + '</ul>' : '<div class="muted small">없음</div>'}
+            <h4 style="margin-top:8px;"><i class="fa-solid fa-circle-check up"></i> 잘 된 것</h4>${(v.keep || []).length ? '<ul>' + v.keep.map(m => `<li>${escHtml(m)}</li>`).join('') + '</ul>' : '<div class="muted small">—</div>'}</div>
+          <div><h4><i class="fa-solid fa-star" style="color:#7c3aed;"></i> 첫 화면에 내세울 것</h4>${(v.first_screen || []).map(f => `<div class="li"><b>${escHtml(f.what)}</b><div>${escHtml(f.why)}</div></div>`).join('') || '<div class="muted small">—</div>'}
+            ${(v.reorder || []).length ? `<h4 style="margin-top:8px;"><i class="fa-solid fa-arrow-down-up-across-line" style="color:#7c3aed;"></i> 순서·강조 변경</h4><ul>${v.reorder.map(m => `<li>${escHtml(m)}</li>`).join('')}</ul>` : ''}</div>
+        </div>
+        ${(v.copy_snippets || []).length ? `<h4 style="margin-top:10px;"><i class="fa-regular fa-clipboard" style="color:#7c3aed;"></i> 붙여 넣을 문장</h4>${v.copy_snippets.map(sn => `<div class="snippet"><div class="muted small">${escHtml(sn.where)}</div><div class="snip-text">${escHtml(sn.text)}</div><button class="btn ghost sm" onclick="copyText(this)" data-text="${escHtml(sn.text)}"><i class="fa-regular fa-copy"></i> 복사</button></div>`).join('')}` : ''}
+      </div>`;
+    }).join('');
   } else if (r.agent === 'strategy') {
     const na = d.new_arrivals || {}, mx = rp.matrix || [];
     const cnt = q => (na.matrix || []).filter(p => String(p.quadrant).startsWith(q)).length;
@@ -263,6 +293,7 @@ function rawTable(d, agent) {
   if (!d) return '';
   if (agent === 'returns') return rawTableReturns(d);
   if (agent === 'strategy') return rawTableStrategy(d);
+  if (agent === 'detail') return `<div class="muted small">읽기 원문은 상세 점검 행(detail_reviews)에 저장돼 있어요. 묶음 ${escHtml(String(d.batch_id || ''))} · ${d.count || 0}개 상품</div>`;
   const rev = d.revenue || {}, pr = d.periods || {};
   const row = (label, r, p) => r ? `<tr><td>${label}</td><td class="muted">${Array.isArray(p) ? p[0] + ' ~ ' + p[1] : (p || '')}</td><td class="r">${fmt(r.revenue)}원</td><td class="r">${fmt(r.orders)}건</td></tr>` : '';
   const products = (arr, cols) => (arr || []).length
@@ -306,4 +337,9 @@ function rawTableStrategy(d) {
     <table><thead><tr><th>상품</th><th>카테고리</th><th>판정</th><th class="r">등록일수</th><th class="r">조회 14일</th><th class="r">주문율</th><th class="r">판매</th><th class="r">마진%</th><th class="r">광고</th><th>행사</th></tr></thead><tbody>${rows}</tbody></table>
     <h4>판매 TOP10 (14일 결제수량)</h4>
     <table><thead><tr><th>#</th><th>상품</th><th class="r">판매</th><th class="r">주문율</th><th class="r">활성 광고</th></tr></thead><tbody>${top}</tbody></table>`;
+}
+
+function copyText(btn) {
+  const t = btn.dataset.text || '';
+  (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('복사했어요')).catch(() => { window.prompt('복사할 문장', t); });
 }
