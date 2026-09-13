@@ -24,9 +24,9 @@ const AGENTS = [
     sources: ['카페24 NEW ARRIVALS', '조회수·주문율', '혜택(1+1·할인)', 'Meta 광고 소재'],
   },
   {
-    key: 'detail', name: '상세페이지 점검 담당', icon: 'fa-file-image', color: '#7c3aed', status: 'active', fn: 'detail-agent',
-    schedule: '매일 아침 8시 45분 · 하루 2개 상품',
-    desc: '급상승·TOP10·상세 점검 판정 상품의 상세페이지 이미지를 조각내 읽고(Gemini) 실측표·사이즈 가이드·소재·색상별 컷이 빠졌는지, 첫 화면에 무엇을 내세울지, 붙여 넣을 문장까지 제안합니다. 같은 상세는 다시 읽지 않습니다.',
+    key: 'detail', name: '상세페이지 점검 담당', icon: 'fa-file-image', color: '#7c3aed', status: 'active', fn: 'detail-agent', onDemand: true,
+    schedule: '요청할 때만 (자동 실행 없음)',
+    desc: '상품을 고르면 상세페이지 이미지를 조각내 읽고(Gemini) 실측표·사이즈 가이드·소재·색상별 컷이 빠졌는지, 첫 화면에 무엇을 내세울지, 붙여 넣을 문장까지 제안합니다. 상품 하나에 약 40원, 같은 상세는 다시 읽지 않습니다.',
     sources: ['카페24 상세 이미지', '상품 전략·반품 보고서'],
   },
   {
@@ -91,10 +91,15 @@ function agentCardSkeleton(a) {
     <p class="agent-desc">${a.desc}</p>
     <div class="agent-meta"><i class="fa-regular fa-clock"></i> ${a.schedule} · <i class="fa-solid fa-database"></i> ${a.sources.join(', ')}</div>
     <div class="agent-last" id="card-last-${a.key}"><span class="muted"><i class="fa-solid fa-spinner fa-spin"></i></span></div>
-    ${active && isAdmin() ? `<div class="agent-actions">
+    ${active && isAdmin() ? (a.onDemand ? `<div class="agent-actions ondemand">
+      <input type="text" id="pick-${a.key}" list="pick-list-${a.key}" placeholder="상품명으로 찾기 (예: 베즈 모달)" autocomplete="off" oninput="pickSuggest('${a.key}')">
+      <datalist id="pick-list-${a.key}"></datalist>
+      <a class="btn ghost" href="#reports">보고서 보기</a>
+      <button class="btn primary" id="run-${a.key}" onclick="pickAndRun('${a.key}')"><i class="fa-solid fa-magnifying-glass"></i> 이 상품 점검</button>
+    </div>` : `<div class="agent-actions">
       <a class="btn ghost" href="#reports">보고서 보기</a>
       <button class="btn primary" id="run-${a.key}" onclick="agentRun('${a.key}')"><i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행</button>
-    </div>` : ''}
+    </div>`) : ''}
   </div>`;
 }
 
@@ -118,13 +123,13 @@ supabase functions deploy sales-agent --project-ref eeffmbusaqaadeojjlnc</pre>
 }
 
 /* 지금 실행 */
-async function agentRun(key) {
+async function agentRun(key, params = {}) {
   const a = agentOf(key); if (!a || !a.fn || !isAdmin()) return;
   const btn = $('run-' + key);
-  btnBusy(btn, '분석 중');
+  btnBusy(btn, key === 'detail' ? '읽는 중' : '분석 중');
   try {
     const startedAt = Date.now();
-    const d = await callFn(a.fn, { action: 'run' }, { method: 'POST', body: '{}' });
+    const d = await callFn(a.fn, { action: 'run', ...params }, { method: 'POST', body: '{}' });
     if (d.id) { toast('보고서가 도착했어요'); __reportsCache = null; location.hash = '#reports/' + d.id; return; }
     // 2단계 실행(수집 끝 → 별도 함수가 작성 중) — 새 보고서 행이 생길 때까지 10초마다 확인 (최대 4분)
     toast(key === 'detail' ? (d.message || '상세 이미지 읽는 중 (상품당 2~4분)') : '수집 완료, 보고서 작성 중이에요 (1~2분)');
@@ -144,4 +149,53 @@ async function agentRun(key) {
     __reportsCache = null;
     if (location.hash.startsWith('#reports')) renderReports(); else renderHome();
   } finally { btnIdle(btn, '<i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행'); }
+}
+
+/* ── 상세 점검: 상품 골라 요청 (2026-09-13 사용자 결정 — 자동 실행 없음) ──
+   상품 목록은 카페24 최근 30일 조회 상품(summary)에서 가져와 datalist로 검색. 값은 '상품명 · #번호' 형태. */
+const pickState = { products: null, loading: false };
+async function pickLoadProducts() {
+  if (pickState.products || pickState.loading) return pickState.products;
+  pickState.loading = true;
+  try {
+    const end = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date()) + 'T12:00:00Z');
+    const e = new Date(end); e.setUTCDate(e.getUTCDate() - 1); const st = new Date(end); st.setUTCDate(st.getUTCDate() - 30);
+    const d = await callFn('cafe24-analytics', { action: 'summary', start_date: st.toISOString().slice(0, 10), end_date: e.toISOString().slice(0, 10) });
+    pickState.products = (d.rows || []).map(r => ({ no: r.product_no, name: r.product_name, views: r.views })).sort((a, b) => b.views - a.views);
+  } catch (e) { toast('상품 목록을 못 불러왔어요: ' + e.message); pickState.products = []; }
+  finally { pickState.loading = false; }
+  return pickState.products;
+}
+async function pickSuggest(key) {
+  const inp = $('pick-' + key), list = $('pick-list-' + key); if (!inp || !list) return;
+  const ps = await pickLoadProducts(); const q = inp.value.trim().toLowerCase().replace(/\s+/g, '');
+  if (!q) { list.innerHTML = ''; return; }
+  list.innerHTML = ps.filter(p => p.name.toLowerCase().replace(/\s+/g, '').includes(q)).slice(0, 12)
+    .map(p => `<option value="${escHtml(p.name)} · #${p.no}"></option>`).join('');
+}
+async function pickAndRun(key) {
+  const inp = $('pick-' + key); const v = (inp?.value || '').trim();
+  let no = 0;
+  const m = v.match(/#(\d+)\s*$/); if (m) no = Number(m[1]);
+  else if (/^\d+$/.test(v)) no = Number(v);
+  else if (v) { const ps = await pickLoadProducts(); const hit = ps.find(p => p.name.toLowerCase().replace(/\s+/g, '') === v.toLowerCase().replace(/\s+/g, '')) || ps.find(p => p.name.toLowerCase().includes(v.toLowerCase())); if (hit) no = hit.no; }
+  if (!no) { toast('상품을 목록에서 골라 주세요 (상품명 입력 후 선택)'); inp?.focus(); return; }
+  await agentRun(key, { product_no: String(no) });
+}
+async function detailRun(no, name) {
+  if (!isAdmin()) return;
+  if (!confirm(`'${name}' 상세페이지를 점검할까요? (약 1분, 40원 안팎)`)) return;
+  toast('상세 이미지를 읽는 중이에요 (1~2분)');
+  try {
+    const startedAt = Date.now();
+    const d = await callFn('detail-agent', { action: 'run', product_no: String(no) }, { method: 'POST', body: '{}' });
+    if (d.error) throw new Error(d.error);
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 10000));
+      const rows = await reportsLoad(true).catch(() => []);
+      const fresh = rows.find(r => r.agent === 'detail' && new Date(r.created_at).getTime() > startedAt - 60000);
+      if (fresh) { toast('상세 점검이 도착했어요'); location.hash = '#reports/' + fresh.id; return; }
+    }
+    toast('아직 읽는 중이에요. 잠시 후 보고서 목록을 확인해 주세요');
+  } catch (e) { toast('실패: ' + e.message); }
 }

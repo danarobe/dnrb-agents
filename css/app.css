@@ -219,6 +219,13 @@ table.risk td .chip { white-space: nowrap; }
 .snippet { display: flex; gap: 10px; align-items: center; border: 1px dashed #ddd6fe; border-radius: 10px; padding: 8px 10px; margin-top: 6px; background: #faf5ff; }
 .snippet .snip-text { flex: 1; font-size: .84rem; }
 
+/* ── 요청형 점검 (2026-09-13) ── */
+.agent-actions.ondemand { flex-wrap: wrap; justify-content: flex-start; }
+.agent-actions.ondemand input { flex: 1 1 100%; border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: .84rem; outline: none; }
+.agent-actions.ondemand input:focus { border-color: #7c3aed; }
+.icon-btn { border: none; background: none; color: #7c3aed; cursor: pointer; padding: 0 4px; font-size: .8rem; vertical-align: middle; }
+.icon-btn:hover { color: #5b21b6; }
+
 /* ── 토스트 ── */
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); background: #1a1a2e; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: .85rem; opacity: 0; pointer-events: none; transition: all .2s; z-index: 50; max-width: 90vw; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

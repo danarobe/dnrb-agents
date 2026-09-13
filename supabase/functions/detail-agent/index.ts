@@ -8,7 +8,8 @@
 //     prepare ─ 카페24 description → 이미지 URL·해시 → 같은 해시의 이전 읽기 있으면 재사용 → 없으면 wsrv.nl로 크기 재고 조각 계획 → read 디스패치(장마다)
 //     read(i) ─ 조각 내려받아 Gemini JSON 읽기 → detail_page_done(원자) → 마지막 장이면 judge 디스패치
 //     judge ─ 전 페이지 + 상품 맥락(전략·반품 보고서) → Claude 판단 → 저장 → 묶음이 전부 끝나면 agent_reports(agent=detail) 요약 1건 + 알림
-//   대상: 최신 상품 전략 보고서의 집중 상품 + '상세·가격 점검' 판정 상품, 14일 안에 본 상품 제외. ?product_no= 로 수동 지정 가능.
+//   ⚠ 2026-09-13 사용자 결정: **자동 실행 없음(cron 제거)** — 사람이 상품을 골라 요청할 때만(`?product_no=`, 앱 카드의 상품 검색 또는 전략 보고서의 '상세 점검' 버튼).
+//     product_no 없이 run하면 예전 자동 선정(전략 보고서 집중 상품 + '상세·가격 점검' 판정, 14일 제외, 2개)이 남아 있어 필요하면 쓸 수 있다.
 // ═══════════════════════════════════════════════
 import { handleOptions, json, verifyAuthToken } from "../_shared/util.ts";
 import { addDays, callFn, isCronRequest, MODEL, notifyAdmins, rest, Row, seoulToday } from "../_shared/agent.ts";

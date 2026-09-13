@@ -187,7 +187,7 @@ function reportHtml(r) {
     const qc = q => { const k = Object.keys(qColor).find(k => String(q).startsWith(k)); return k ? qColor[k] : 'q-na'; };
     const won = v => v == null ? '' : Math.round(v).toLocaleString('ko-KR') + '원';
     const mxRows = mx.map(x => `<tr>
-        <td><b>${escHtml(x.name)}</b><div class="muted">${x.age_days != null ? `등록 ${x.age_days}일` : ''}${x.sold_out ? ' · <b class="down">품절</b>' : ''}${x.active_ads ? ` · 광고 ${x.active_ads}개` : ' · 광고 없음'}</div></td>
+        <td><b>${escHtml(x.name)}</b>${x.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(x.product_no)}, this.dataset.n)" data-n="${escHtml(x.name)}" title="상세페이지 점검"><i class="fa-solid fa-file-image"></i></button>` : ''}<div class="muted">${x.age_days != null ? `등록 ${x.age_days}일` : ''}${x.sold_out ? ' · <b class="down">품절</b>' : ''}${x.active_ads ? ` · 광고 ${x.active_ads}개` : ' · 광고 없음'}</div></td>
         <td><span class="qbadge ${qc(x.quadrant)}">${escHtml(x.quadrant)}</span></td>
         <td class="r">${fmt(x.views_14d)}<div class="muted">${x.rate_14d != null ? x.rate_14d + '%' : '—'} · ${fmt(x.qty_14d)}개</div></td>
         <td class="r">${x.margin_rate != null ? x.margin_rate + '%' : '—'}<div class="muted">${x.discount_price ? `할인가 ${won(x.discount_price)}` : won(x.price)}</div></td>
@@ -200,7 +200,7 @@ function reportHtml(r) {
           <div class="muted">${a.last14 ? `14일 지출 ${fmtMan(a.last14.spend)} · 구매 ${fmt(a.last14.purchases)} · ROAS ${a.last14.roas} · CTR ${a.last14.ctr}% · 빈도 ${a.last14.frequency}` : (a.since_start ? `누적 지출 ${fmtMan(a.since_start.spend)} · 구매 ${fmt(a.since_start.purchases)} · ROAS ${a.since_start.roas}` : '성과 없음')}</div>
           ${a.body ? `<div class="ad-body">${escHtml(a.body)}</div>` : ''}</div></div>`;
       return `<div class="focus-card">
-        <div class="focus-head"><div><b>${escHtml(f.name)}</b><div class="muted">${escHtml(f.why)}${f.category ? ` · ${escHtml(f.category)}` : ''} · 14일 조회 ${fmt(f.views_14d)} · 주문율 ${f.rate_14d ?? '—'}% · 마진 ${f.margin_rate ?? '—'}%${(f.promos || []).length ? ' · ' + f.promos.map(escHtml).join(', ') : ''}</div></div></div>
+        <div class="focus-head"><div><b>${escHtml(f.name)}</b>${f.product_no ? ` <button class="btn ghost sm" onclick="detailRun(${Number(f.product_no)}, this.dataset.n)" data-n="${escHtml(f.name)}" title="상세페이지 점검 담당에게 이 상품을 맡깁니다"><i class="fa-solid fa-file-image"></i> 상세 점검</button>` : ''}<div class="muted">${escHtml(f.why)}${f.category ? ` · ${escHtml(f.category)}` : ''} · 14일 조회 ${fmt(f.views_14d)} · 주문율 ${f.rate_14d ?? '—'}% · 마진 ${f.margin_rate ?? '—'}%${(f.promos || []).length ? ' · ' + f.promos.map(escHtml).join(', ') : ''}</div></div></div>
         <div class="focus-grid">
           <div><h4>지금 붙은 소재${f.own_ads.length ? '' : ' <span class="chip bad">광고 없음</span>'}</h4>${f.own_ads.map(a => adRow(a, false)).join('') || '<div class="muted small">이 상품에 붙은 활성 광고가 없어요</div>'}
             <div class="fx"><b>견인 소재</b> ${escHtml(f.driver)}</div></div>
