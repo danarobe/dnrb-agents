@@ -13,3 +13,7 @@ verify_jwt = true
 # 상품 전략 담당 — 관리자 로그인 또는 x-cron-secret(pg_cron 08:30 KST)
 [functions.strategy-agent]
 verify_jwt = true
+
+# 담당자 공통 2단계(보고서 작성) — x-cron-secret 전용, 별도 worker
+[functions.agent-write]
+verify_jwt = true

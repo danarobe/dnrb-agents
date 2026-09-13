@@ -183,7 +183,22 @@ function reportHtml(r) {
           <div class="fx"><b>판매 계획</b> ${escHtml(f.plan)}</div>
         </div></div>`;
     }).join('');
-    extraBoxes = `
+    // 트렌드·날씨 (2026-09-13)
+    const tr = d.trends || {}, w = tr.weather, ws = w?.summary || {};
+    const dayCell = (x, past) => `<div class="wday ${past ? 'past' : ''}"><div class="wd">${x.date.slice(5).replace('-', '/')}</div><div class="wt"><b>${Math.round(x.max)}°</b>/${Math.round(x.min)}°</div>${x.rain_prob >= 60 ? '<div class="wr">☔ ' + x.rain_prob + '%</div>' : ''}</div>`;
+    const weatherStrip = w ? `<div class="wstrip">${(w.past_7d || []).map(x => dayCell(x, true)).join('')}<div class="wsep">오늘</div>${(w.next_7d || []).map(x => dayCell(x, false)).join('')}</div>
+      <div class="muted small">지난 7일 평균 ${ws.past_avg_max}°/${ws.past_avg_min}° → 앞으로 7일 ${ws.next_avg_max}°/${ws.next_avg_min}°${ws.first_min_below_15 ? ` · 최저 15°↓ 첫날 ${ws.first_min_below_15.slice(5)}` : ''}${(ws.rainy_days_next || []).length ? ` · 비 ${ws.rainy_days_next.map(x => x.slice(5)).join(', ')}` : ''}</div>` : '<div class="muted">날씨 데이터 없음</div>';
+    const risingChips = (tr.naver || []).map(c => `<div class="tr-cat"><b>${escHtml(c.category)}</b> <span class="muted small">TOP10: ${c.top10.map(escHtml).join(' · ')}</span>
+        <div class="chips">${(c.rising || []).slice(0, 18).map(r => `<span class="kchip ${r.our_products.length ? 'hit' : ''}" title="${r.our_products.map(p => escHtml(p.name)).join('\n')}">${escHtml(r.keyword)} <em>${r.kind === 'new' ? 'NEW ' + r.rank + '위' : r.prev_rank + '→' + r.rank + '위'}</em>${r.our_products.length ? `<i>${r.our_products.length}</i>` : ''}</span>`).join('')}</div></div>`).join('');
+    const trendRows = (rp.trend_actions || []).map(x => `<div class="li"><div class="li-top"><b>${escHtml(x.keyword)}</b><span class="chip new">${escHtml(x.signal)}</span><span class="muted small">${escHtml(x.our_products)}</span></div><div>${escHtml(x.suggestion)}</div></div>`).join('');
+    const trendBox = `<div class="box"><h3><i class="fa-solid fa-arrow-trend-up" style="color:#0891b2;"></i> 트렌드 · 날씨 <span class="muted small">네이버 쇼핑 인기 검색어(여성) 어제 vs 7일 전 · 서울 날씨</span></h3>
+      ${weatherStrip}
+      ${rp.weather_plan ? `<div class="fx"><b>날씨 계획</b> ${escHtml(rp.weather_plan)}</div>` : ''}
+      ${risingChips}
+      <div class="muted small">색칠된 키워드 = 우리 상품이 있는 것(숫자는 개수, 마우스를 올리면 상품명). 브랜드명은 판단에서 뺍니다.</div>
+      ${trendRows ? `<h4 style="margin-top:10px;">키워드 기반 제안</h4>${trendRows}` : ''}
+    </div>`;
+    extraBoxes = trendBox + `
     <div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값 기준 · 마진율 = (판매가 − 공급가×1.1) ÷ 판매가</span></h3>
       <div class="qlegend"><span class="qbadge q-grow">판매 확대</span> 둘 다 높음 <span class="qbadge q-expose">노출 부족</span> 주문율↑ 조회↓ <span class="qbadge q-fix">상세·가격 점검</span> 조회↑ 주문율↓ <span class="qbadge q-low">집중도 낮춤</span> 둘 다 낮음</div>
       ${mxRows ? `<div class="tbl-wrap"><table class="risk"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div>` : '<div class="muted">판정할 신상품이 없어요</div>'}

@@ -311,31 +311,69 @@ export function serveAgent(def: AgentDef) {
         const data = await def.collect(D);
         return json({ ...data, took_ms: Date.now() - t0 });
       }
+      // ── run = 2단계 (2026-09-13): ① 이 isolate에서 수집해 api_cache에 저장 → ② 자기 자신을 write로 호출(새 isolate)해 Claude·저장·알림.
+      //    Supabase 무료 요금제의 요청당 CPU 한도(WORKER_RESOURCE_LIMIT 546) 때문 — 수집(JSON 대량·TLS)과 이미지 base64·Claude 응답 파싱을
+      //    한 요청에 몰면 한도를 넘는다(상품 전략 담당 실사례). 벽시계는 1단계가 2단계 응답을 기다리므로 합산되지만 대기는 CPU가 아니다.
       if (action === "run") {
         const trigger = viaCron ? "cron" : "manual";
         const t0 = Date.now();
         let data: Row | null = null;
         try {
-          const [collected, wc] = await Promise.all([def.collect(D), weekContext(def.agent, D)]);
-          data = collected;
-          const llmData = def.forLLM ? def.forLLM(data) : data;
-          const { report: written0, usage, model } = await writeReport(def.system, def.schema, llmData,
-            { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far }, def.effort ?? "medium",
-            def.images ? def.images(data) : []);
-          const written = def.postProcess ? def.postProcess(written0, data) : written0;
-          const report = { ...written, week: wc.week, last_week: wc.last_week };
-          const row = await saveRow({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage, created_by: me?.id ?? null });
-          const notified = await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 }));
-          return json({ ok: true, id: row.id, report_date: D, report, notified, took_ms: Date.now() - t0 });
+          data = await def.collect(D);
+          const key = `agentrun:${def.agent}:${D}:${crypto.randomUUID()}`;
+          const put = await rest(`api_cache?on_conflict=cache_key`, {
+            method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+            body: JSON.stringify({ cache_key: key, payload: { data, trigger, created_by: me?.id ?? null }, created_at: new Date().toISOString() }),
+          });
+          if (!put.ok) throw new Error(`수집 데이터 임시 저장 실패 ${put.status}`);
+          // 작성 단계는 **별도 함수 agent-write**(다른 worker) — 같은 함수를 다시 부르면 같은 worker가 받아 CPU 한도가 합산됨(실측 546).
+          // 응답을 기다리지 않고 바로 돌려준다(게이트웨이가 100초 넘게 기다리면 502 HTML을 돌려준 실사례) — 화면은 새 보고서가 생길 때까지 폴링.
+          // EdgeRuntime.waitUntil로 이 worker가 응답 후에도 호출을 끝까지 유지한다.
+          const writeCall = fetch(`${SB_URL}/functions/v1/agent-write?agent=${encodeURIComponent(def.agent)}&date=${D}&key=${encodeURIComponent(key)}`, {
+            method: "POST", headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, "x-cron-secret": CRON_SECRET, "Content-Type": "application/json" }, body: "{}",
+          }).then((r) => r.text()).catch((e) => console.error("agent-write 호출 실패", String(e)));
+          // deno-lint-ignore no-explicit-any
+          const ER = (globalThis as any).EdgeRuntime;
+          if (ER?.waitUntil) ER.waitUntil(writeCall);
+          return json({ queued: true, report_date: D, key, collect_ms: Date.now() - t0, message: "수집 완료 — 보고서 작성 중(1~2분). 새 보고서가 생기면 목록에 나타납니다." }, 202);
         } catch (e) {
           const msg = String((e as Error)?.message ?? e).slice(0, 500);
           await saveRow({ agent: def.agent, report_date: D, trigger, status: "error", data, error: msg, created_by: me?.id ?? null }).catch(() => {});
           return json({ error: msg, report_date: D, took_ms: Date.now() - t0 }, 500);
         }
       }
+
       return json({ error: "알 수 없는 action" }, 400);
     } catch (e) {
       return json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, 500);
     }
   });
 }
+
+// ── 2단계 작성 (agent-write 함수가 호출): api_cache에 저장된 수집 데이터로 Claude 리포트 작성·저장·알림 ──
+export async function writeStage(def: AgentDef, D: string, key: string): Promise<Response> {
+  const got = await rest(`api_cache?cache_key=eq.${encodeURIComponent(key)}&select=payload`);
+  const row = got.ok ? ((await got.json())[0] ?? null) : null;
+  if (!row) return json({ error: "수집 데이터를 찾을 수 없습니다 (key)" }, 400);
+  await rest(`api_cache?cache_key=eq.${encodeURIComponent(key)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  const payload = row.payload as { data: Row; trigger: string; created_by: string | null };
+  const trigger = payload.trigger, data = payload.data, createdBy = payload.created_by;
+  const t0 = Date.now();
+  try {
+    const wc = await weekContext(def.agent, D);
+    const llmData = def.forLLM ? def.forLLM(data) : data;
+    const { report: written0, usage, model } = await writeReport(def.system, def.schema, llmData,
+      { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far }, def.effort ?? "medium",
+      def.images ? def.images(data) : []);
+    const written = def.postProcess ? def.postProcess(written0, data) : written0;
+    const report = { ...written, week: wc.week, last_week: wc.last_week };
+    const saved = await saveRow({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage, created_by: createdBy });
+    const notified = await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 }));
+    return json({ ok: true, id: saved.id, report_date: D, report, notified, write_ms: Date.now() - t0 });
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e).slice(0, 500);
+    await saveRow({ agent: def.agent, report_date: D, trigger, status: "error", data, error: msg, created_by: createdBy }).catch(() => {});
+    return json({ error: msg, report_date: D, write_ms: Date.now() - t0 }, 500);
+  }
+}
+export const isCronRequest = (req: Request) => !!CRON_SECRET && req.headers.get("x-cron-secret") === CRON_SECRET;

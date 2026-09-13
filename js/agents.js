@@ -117,10 +117,22 @@ async function agentRun(key) {
   const btn = $('run-' + key);
   btnBusy(btn, '분석 중');
   try {
+    const startedAt = Date.now();
     const d = await callFn(a.fn, { action: 'run' }, { method: 'POST', body: '{}' });
-    toast('보고서가 도착했어요');
-    __reportsCache = null;
-    location.hash = '#reports/' + d.id;
+    if (d.id) { toast('보고서가 도착했어요'); __reportsCache = null; location.hash = '#reports/' + d.id; return; }
+    // 2단계 실행(수집 끝 → 별도 함수가 작성 중) — 새 보고서 행이 생길 때까지 10초마다 확인 (최대 4분)
+    toast('수집 완료, 보고서 작성 중이에요 (1~2분)');
+    btnBusy(btn, '작성 중');
+    for (let i = 0; i < 24; i++) {
+      await new Promise(r => setTimeout(r, 10000));
+      const rows = await reportsLoad(true).catch(() => []);
+      const fresh = rows.find(r => r.agent === key && new Date(r.created_at).getTime() > startedAt - 60000);
+      if (fresh) {
+        if (fresh.status === 'error') { toast('보고서 작성 실패: ' + (fresh.error || '')); actionsState.map = null; if (location.hash.startsWith('#reports')) renderReports(fresh.id); else renderHome(); return; }
+        toast('보고서가 도착했어요'); location.hash = '#reports/' + fresh.id; return;
+      }
+    }
+    toast('아직 작성 중이에요. 잠시 후 보고서 목록을 새로고침해 주세요');
   } catch (e) {
     toast('실패: ' + e.message);
     __reportsCache = null;

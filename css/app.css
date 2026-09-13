@@ -194,6 +194,19 @@ table.risk td .chip { white-space: nowrap; }
 .fx ol { margin: 4px 0 0 18px; }
 .fx-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f3f4f6; }
 
+/* ── 트렌드·날씨 (2026-09-13) ── */
+.wstrip { display: flex; gap: 4px; overflow-x: auto; padding: 4px 0; align-items: stretch; }
+.wday { flex: none; width: 56px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 4px; text-align: center; font-size: .72rem; background: #fff; }
+.wday.past { opacity: .55; }
+.wday .wd { color: var(--muted); } .wday .wt { font-size: .8rem; margin-top: 2px; } .wday .wr { color: #1d4ed8; font-size: .66rem; margin-top: 2px; }
+.wsep { flex: none; width: 14px; writing-mode: vertical-rl; font-size: .62rem; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.tr-cat { margin-top: 10px; font-size: .82rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.kchip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: .76rem; background: #fff; display: inline-flex; gap: 5px; align-items: center; }
+.kchip em { font-style: normal; color: var(--muted); font-size: .68rem; }
+.kchip.hit { background: #ecfeff; border-color: #a5f3fc; color: #0e7490; font-weight: 700; }
+.kchip i { font-style: normal; background: #0891b2; color: #fff; border-radius: 999px; padding: 0 6px; font-size: .64rem; }
+
 /* ── 토스트 ── */
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); background: #1a1a2e; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: .85rem; opacity: 0; pointer-events: none; transition: all .2s; z-index: 50; max-width: 90vw; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
