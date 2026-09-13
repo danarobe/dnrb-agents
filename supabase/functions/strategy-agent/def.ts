@@ -17,7 +17,7 @@ import { matchKeyword, NAVER_CATS, naverCategoryRanks, risingKeywords, seoulWeat
 const AGENT = "strategy";
 const NEW_CAT = 33;                 // NEW ARRIVALS
 const MIN_AGE_DAYS = 3, MIN_VIEWS = 30;
-const FOCUS_MAX = 6, REF_IMG_MAX = 6;
+const FOCUS_MAX = 5, REF_IMG_MAX = 5;   // 6→5 (2026-09-13): 작성 단계 150초 벽시계 한도 — 출력 토큰을 줄여 생성 시간 단축
 const SPECIAL_CATS = /new arrivals|best|sale|세일|size pick|autumn|summer|winter|spring|🍁|🌞|⌛|🔎/i;
 
 // ── 광고명 ↔ 상품명 매칭 (워크스페이스 index.html의 pa* 이식) ──
@@ -329,7 +329,7 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 - '집중도 낮춤'(둘 다↓): 대표의 판단대로 집중도를 낮추되, '(광고 미테스트)'가 붙은 상품은 노출 부족 탓일 수 있어 "한 번 테스트 후 판단"으로 씁니다.
 - '데이터 부족'·'노출 거의 없음'은 판단을 보류하고 필요하면 한 줄만.
 - 마진율이 낮은 상품(예: 35% 미만)은 밀어도 남는 게 적으니 우선순위를 낮추고, 마진 좋은 '판매 확대' 상품이 최우선입니다. 적용 중인 혜택(promos: 1+1·기간할인)과 할인가를 전략에 반영합니다.
-- matrix에는 '판매 확대'·'노출 부족'·'상세·가격 점검' 상품 전부와 '집중도 낮춤' 중 중요한 것만 넣고, strategy는 40자 이내 한 줄.
+- matrix에는 '판매 확대'·'노출 부족'·'상세·가격 점검' 중 중요한 순으로 최대 15개만 넣고, strategy는 30자 이내 한 줄. (보고서 생성 시간 제한이 있어 짧게)
 
 2) 집중 상품 (focus — 급상승 상품과 판매 TOP10, 최대 ${FOCUS_MAX}개):
 - own_ads(그 상품에 붙은 소재)의 since_start(누적)·last14(최근 14일) 성과를 소재 단위로 비교해 어떤 소재가 판매를 견인하는지 짚습니다. CTR은 첫 3초의 힘, ROAS는 판매력, 빈도 3 이상은 소재 피로입니다. 영상/이미지, 광고 문구(body)의 소구점을 근거로 씁니다.
@@ -356,7 +356,7 @@ const SCHEMA = reportSchema({
     matrix: {
       type: "array",
       items: { type: "object", properties: { name: { type: "string", description: "new_arrivals.matrix[].name 그대로" }, strategy: { type: "string", description: "40자 이내 한 줄 전략" } }, required: ["name", "strategy"], additionalProperties: false },
-      description: "신상품 전략 표. 판매 확대·노출 부족·상세·가격 점검 상품 전부 + 집중도 낮춤 중 중요한 것. 최대 25개. 판정·숫자는 코드가 채움",
+      description: "신상품 전략 표. 판매 확대·노출 부족·상세·가격 점검 중 중요한 순 최대 15개. 판정·숫자는 코드가 채움",
     },
     focus: {
       type: "array",
@@ -364,8 +364,8 @@ const SCHEMA = reportSchema({
         type: "object",
         properties: {
           name: { type: "string", description: "focus[].name 그대로" },
-          driver: { type: "string", description: "어떤 소재가 판매를 견인하는지, 근거 포함 100자 이내" },
-          creative_plan: { type: "string", description: "추가할 소재 컨셉 (참고 소재 특성 근거) 140자 이내" },
+          driver: { type: "string", description: "어떤 소재가 판매를 견인하는지, 근거 포함 80자 이내" },
+          creative_plan: { type: "string", description: "추가할 소재 컨셉 (참고 소재 특성 근거) 100자 이내" },
           reels_hooks: { type: "array", items: { type: "string" }, description: "릴스 첫 3초 훅 멘트 3개, 각 25자 이내" },
           detail_focus: { type: "string", description: "상세페이지에서 강조할 것 80자 이내" },
           plan: { type: "string", description: "마진·혜택·재고 고려한 판매 계획 80자 이내" },
@@ -386,10 +386,11 @@ const SCHEMA = reportSchema({
         },
         required: ["keyword", "signal", "our_products", "suggestion"], additionalProperties: false,
       },
-      description: "급상승 키워드 기반 제안. 품목·소재·스타일 키워드만(브랜드 제외), 최대 6개",
+      description: "급상승 키워드 기반 제안. 품목·소재·스타일 키워드만(브랜드 제외), 최대 5개",
     },
     weather_plan: { type: "string", description: "날씨 기반 카테고리 타이밍 한 줄, 80자 이내" },
   },
 });
 
-export const DEF: AgentDef = { agent: AGENT, label: "상품 전략 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, images };
+// effort low (2026-09-13): 생각 토큰을 줄여 생성 시간 단축 — 작성 단계는 벽시계 150초 안에 끝나야 함(546 실사례). 판단 규칙은 프롬프트에 다 있어 low로 충분.
+export const DEF: AgentDef = { agent: AGENT, label: "상품 전략 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, images, effort: "low" };

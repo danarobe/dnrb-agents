@@ -327,14 +327,10 @@ export function serveAgent(def: AgentDef) {
           });
           if (!put.ok) throw new Error(`수집 데이터 임시 저장 실패 ${put.status}`);
           // 작성 단계는 **별도 함수 agent-write**(다른 worker) — 같은 함수를 다시 부르면 같은 worker가 받아 CPU 한도가 합산됨(실측 546).
-          // 응답을 기다리지 않고 바로 돌려준다(게이트웨이가 100초 넘게 기다리면 502 HTML을 돌려준 실사례) — 화면은 새 보고서가 생길 때까지 폴링.
-          // EdgeRuntime.waitUntil로 이 worker가 응답 후에도 호출을 끝까지 유지한다.
-          const writeCall = fetch(`${SB_URL}/functions/v1/agent-write?agent=${encodeURIComponent(def.agent)}&date=${D}&key=${encodeURIComponent(key)}`, {
-            method: "POST", headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, "x-cron-secret": CRON_SECRET, "Content-Type": "application/json" }, body: "{}",
-          }).then((r) => r.text()).catch((e) => console.error("agent-write 호출 실패", String(e)));
-          // deno-lint-ignore no-explicit-any
-          const ER = (globalThis as any).EdgeRuntime;
-          if (ER?.waitUntil) ER.waitUntil(writeCall);
+          // 호출은 **DB의 pg_net**(rpc agent_dispatch_write)이 한다: 이 함수가 202로 끝나며 연결이 끊겨도 agent-write는 계속 돈다.
+          // (직접 fetch + waitUntil 방식은 호출자 종료와 함께 agent-write도 죽어 보고서가 안 남는 실사례, 2026-09-13)
+          const dispatch = await rest("rpc/agent_dispatch_write", { method: "POST", body: JSON.stringify({ p_agent: def.agent, p_date: D, p_key: key }) });
+          if (!dispatch.ok) throw new Error(`작성 단계 예약 실패 ${dispatch.status}: ${(await dispatch.text()).slice(0, 160)}`);
           return json({ queued: true, report_date: D, key, collect_ms: Date.now() - t0, message: "수집 완료 — 보고서 작성 중(1~2분). 새 보고서가 생기면 목록에 나타납니다." }, 202);
         } catch (e) {
           const msg = String((e as Error)?.message ?? e).slice(0, 500);
