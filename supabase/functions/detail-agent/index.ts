@@ -138,7 +138,7 @@ async function maybeSummarize(id: string) {
   if (exists.ok && ((await exists.json()) as unknown[]).length) return;   // 이미 요약함 (동시 완료 경쟁)
   const oks = rows.filter((x) => x.status === "ok");
   const headline = oks.length
-    ? `상세 점검 ${oks.length}건: ` + oks.map((x) => `${String(x.product_name).replace(/^\(.*?\)\s*/, "").slice(0, 14)} ${(x.review as Row)?.score ?? "-"}점`).join(", ")
+    ? `상세 점검 ${oks.length}건: ` + oks.map((x) => `${String(x.product_name).replace(/^\s*(?:\([^)]*\)|\[[^\]]*\])\s*/g, "").replace(/\s*\([^)]*\)\s*$/, "").slice(0, 16)} ${(x.review as Row)?.score ?? "-"}점`).join(", ")
     : `상세 점검 실패 ${rows.length}건`;
   const report = {
     headline, mood: oks.some((x) => Number((x.review as Row)?.score) < 60) ? "bad" : "neutral",
