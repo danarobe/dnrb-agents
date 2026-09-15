@@ -92,6 +92,9 @@ async function collect(D: string) {
     safe("Meta 활성 광고", () => callFn("meta-ads", { action: "activeads" })),
   ]);
   const newNos: number[] = ((newCat?.product_nos ?? []) as unknown[]).map(Number).filter((n) => n > 0);
+  // Meta 활성 광고 수집이 실패하면(2026-09-15 실사례 'Meta API 400: Invalid parameter') 광고 수는 0이 아니라 '모름'(null)으로 남긴다 —
+  // 0으로 두면 보고서가 "광고 전면 공백"처럼 오판한다(실제로는 광고가 돌고 있었음).
+  const adsKnown = !!active;
   const cats = (cm?.categories ?? {}) as Record<string, { name: string; depth: number; parent: number }>;
   const prodCats = (cm?.products ?? {}) as Record<string, number[]>;
   const leafCat = (no: number): string => {
@@ -160,19 +163,19 @@ async function collect(D: string) {
       created: String(p.created_date ?? "").slice(0, 10) || null, age_days: ageOf(no), sold_out: String(p.sold_out ?? "") === "T",
       price, discount_price: dprice && dprice < price ? dprice : null, margin_rate: marginRate(price, supply), promos: promosOf(no),
       views_14d: num(r?.views), orders_14d: num(r?.order_count), qty_14d: num(r?.order_qty), rate_14d: num(r?.rate), qty_7d: num(r7?.order_qty), views_7d: num(r7?.views),
-      active_ads: ads.length, ad_spend_total: Math.round(ads.reduce((t, a) => t + num(a.spend), 0)),
+      active_ads: adsKnown ? ads.length : null, ad_spend_total: adsKnown ? Math.round(ads.reduce((t, a) => t + num(a.spend), 0)) : null,
     };
   });
   const eligible = newProducts.filter((p) => (p.age_days ?? 99) >= MIN_AGE_DAYS && p.views_14d >= MIN_VIEWS);
   const medViews = median(eligible.map((p) => p.views_14d)), medRate = median(eligible.map((p) => p.rate_14d));
   const quadrantOf = (p: typeof newProducts[number]) => {
     if ((p.age_days ?? 99) < MIN_AGE_DAYS) return "데이터 부족(등록 3일 미만)";
-    if (p.views_14d < MIN_VIEWS) return p.active_ads ? "노출 거의 없음" : "노출 거의 없음(광고 없음)";
+    if (p.views_14d < MIN_VIEWS) return p.active_ads !== 0 ? "노출 거의 없음" : "노출 거의 없음(광고 없음)";
     const hv = p.views_14d >= medViews, hr = p.rate_14d >= medRate;
     if (hr && !hv) return "노출 부족";
     if (hr && hv) return "판매 확대";
     if (!hr && hv) return "상세·가격 점검";
-    return p.active_ads ? "집중도 낮춤" : "집중도 낮춤(광고 미테스트)";
+    return p.active_ads !== 0 ? "집중도 낮춤" : "집중도 낮춤(광고 미테스트)";   // null(수집 실패)이면 꼬리표 없이
   };
   const matrix = newProducts.map((p) => ({ ...p, quadrant: quadrantOf(p) }))
     .sort((a, b) => (b.rate_14d * Math.log1p(b.views_14d)) - (a.rate_14d * Math.log1p(a.views_14d)));
@@ -246,10 +249,12 @@ async function collect(D: string) {
       matrix: `신상품(NEW ARRIVALS ${newNos.length}개) 중 등록 ${MIN_AGE_DAYS}일↑·14일 조회 ${MIN_VIEWS}↑인 ${eligible.length}개의 중앙값(조회 ${Math.round(medViews)}, 주문율 ${medRate}%) 기준 4분면`,
       margin: "마진율 = (판매가 − 공급가×1.1) ÷ 판매가. 낮으면 밀어도 남는 게 적음",
       ads: "since_start = 광고 시작~어제 누적, last14 = 최근 14일. 빈도(frequency) 3 이상이면 같은 사람에게 반복 노출 = 소재 피로",
+      ads_status: adsKnown ? "정상" : "⚠ Meta 활성 광고 수집 실패 — 모든 상품의 active_ads·own_ads가 비어 있는 것은 '광고 없음'이 아니라 '모름'. 광고 개수·소재·광고 착수 여부를 판단하지 말고 필요하면 '광고 정보 확인 불가'라고만 쓸 것",
     },
+    ads_known: adsKnown,
     new_arrivals: { count: newNos.length, eligible: eligible.length, median_views_14d: Math.round(medViews), median_rate_14d: medRate, matrix },
     focus,
-    top10: top10.map((t) => ({ rank: t.rank, product_no: t.no, name: nameOf(t.no), qty_14d: num(m14.get(t.no)?.order_qty), rate_14d: num(m14.get(t.no)?.rate), active_ads: (adsByProduct.get(t.no) ?? []).length })),
+    top10: top10.map((t) => ({ rank: t.rank, product_no: t.no, name: nameOf(t.no), qty_14d: num(m14.get(t.no)?.order_qty), rate_14d: num(m14.get(t.no)?.rate), active_ads: adsKnown ? (adsByProduct.get(t.no) ?? []).length : null })),
     trending: trending.map((t) => ({ product_no: t.no, name: nameOf(t.no), qty_7d: t.qty7, qty_prev7d: t.prevQty })),
     benefits_active: num(ben?.active_count),
     trends: {
@@ -309,7 +314,7 @@ function postProcess(report: Row, data: Row): Row {
   const byName = new Map(matrix.map((p) => [String(p.name), p]));
   const mt = ((report.matrix ?? []) as Row[]).map((x) => {
     const p = byName.get(String(x.name)) ?? {};
-    return { name: x.name, strategy: x.strategy, quadrant: p.quadrant ?? "", views_14d: num(p.views_14d), rate_14d: p.rate_14d ?? null, qty_14d: num(p.qty_14d), margin_rate: p.margin_rate ?? null, discount_price: p.discount_price ?? null, price: num(p.price), promos: p.promos ?? [], age_days: p.age_days ?? null, active_ads: num(p.active_ads), sold_out: !!p.sold_out, product_no: p.product_no ?? null };
+    return { name: x.name, strategy: x.strategy, quadrant: p.quadrant ?? "", views_14d: num(p.views_14d), rate_14d: p.rate_14d ?? null, qty_14d: num(p.qty_14d), margin_rate: p.margin_rate ?? null, discount_price: p.discount_price ?? null, price: num(p.price), promos: p.promos ?? [], age_days: p.age_days ?? null, active_ads: p.active_ads ?? null, sold_out: !!p.sold_out, product_no: p.product_no ?? null };
   });
   const focus = (data.focus ?? []) as Row[];
   const fByName = new Map(focus.map((f) => [String(f.name), f]));
@@ -328,6 +333,7 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 - '상세·가격 점검'(조회↑ 주문율↓): 상세페이지·가격·옵션 점검. 할인 중인데도 낮으면 상품 자체 문제일 수 있음.
 - '집중도 낮춤'(둘 다↓): 대표의 판단대로 집중도를 낮추되, '(광고 미테스트)'가 붙은 상품은 노출 부족 탓일 수 있어 "한 번 테스트 후 판단"으로 씁니다.
 - '데이터 부족'·'노출 거의 없음'은 판단을 보류하고 필요하면 한 줄만.
+- rules.ads_status가 '정상'이 아니면(광고 수집 실패) active_ads가 null이고 own_ads가 비어 있습니다. 이때는 "광고 0개"·"광고 공백"·"광고 착수" 같은 광고 유무 판단을 절대 하지 말고, headline·summary에도 광고 얘기를 넣지 않으며, 소재 분석 칸에는 '광고 정보 확인 불가(수집 실패)'라고만 씁니다.
 - 마진율이 낮은 상품(예: 35% 미만)은 밀어도 남는 게 적으니 우선순위를 낮추고, 마진 좋은 '판매 확대' 상품이 최우선입니다. 적용 중인 혜택(promos: 1+1·기간할인)과 할인가를 전략에 반영합니다.
 - matrix에는 '판매 확대'·'노출 부족'·'상세·가격 점검' 중 중요한 순으로 최대 15개만 넣고, strategy는 30자 이내 한 줄. (보고서 생성 시간 제한이 있어 짧게)
 
@@ -337,7 +343,7 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 - reels_hooks: 릴스 첫 3초에 말할 훅 멘트 3개, 각 25자 이내, 상품의 실제 특징(핏·소재·활용)과 광고 문구에 나온 소구점에 근거. 과장·허위 금지.
 - detail_focus: 상세페이지에서 앞쪽에 내세우거나 강조할 것 한 줄(반품 사유·주문율·광고 반응을 근거로).
 - plan: 마진·혜택·재고(sold_out)를 고려한 판매 계획 한 줄 (예산 확대는 '대표 확인 후').
-- 광고가 하나도 없는 집중 상품은 "광고 착수" 제안이 첫 번째입니다.
+- 광고가 하나도 없는 집중 상품은 "광고 착수" 제안이 첫 번째입니다(rules.ads_status가 '정상'일 때만).
 
 3) 트렌드·날씨 (trends):
 - trends.naver[].rising = 네이버에서 새로 뜨거나 크게 오른 검색어(정해 둔 목록이 아니라 순위표에서 자동 발견). 브랜드명(에고이스트·시슬리·자라 등)은 무시하고 **품목·소재·스타일 키워드**만 봅니다.

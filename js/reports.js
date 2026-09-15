@@ -188,7 +188,7 @@ function reportHtml(r) {
     const qc = q => { const k = Object.keys(qColor).find(k => String(q).startsWith(k)); return k ? qColor[k] : 'q-na'; };
     const won = v => v == null ? '' : Math.round(v).toLocaleString('ko-KR') + '원';
     const mxRows = mx.map(x => `<tr>
-        <td><b>${escHtml(x.name)}</b>${x.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(x.product_no)}, this.dataset.n)" data-n="${escHtml(x.name)}" title="상세페이지 점검"><i class="fa-solid fa-file-image"></i></button>` : ''}<div class="muted">${x.age_days != null ? `등록 ${x.age_days}일` : ''}${x.sold_out ? ' · <b class="down">품절</b>' : ''}${x.active_ads ? ` · 광고 ${x.active_ads}개` : ' · 광고 없음'}</div></td>
+        <td><b>${escHtml(x.name)}</b>${x.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(x.product_no)}, this.dataset.n)" data-n="${escHtml(x.name)}" title="상세페이지 점검"><i class="fa-solid fa-file-image"></i></button>` : ''}<div class="muted">${x.age_days != null ? `등록 ${x.age_days}일` : ''}${x.sold_out ? ' · <b class="down">품절</b>' : ''}${x.active_ads == null ? ' · <span class="warn">광고 정보 없음</span>' : x.active_ads ? ` · 광고 ${x.active_ads}개` : ' · 광고 없음'}</div></td>
         <td><span class="qbadge ${qc(x.quadrant)}">${escHtml(x.quadrant)}</span></td>
         <td class="r">${fmt(x.views_14d)}<div class="muted">${x.rate_14d != null ? x.rate_14d + '%' : '—'} · ${fmt(x.qty_14d)}개</div></td>
         <td class="r">${x.margin_rate != null ? x.margin_rate + '%' : '—'}<div class="muted">${x.discount_price ? `할인가 ${won(x.discount_price)}` : won(x.price)}</div></td>
@@ -203,7 +203,7 @@ function reportHtml(r) {
       return `<div class="focus-card">
         <div class="focus-head"><div><b>${escHtml(f.name)}</b>${f.product_no ? ` <button class="btn ghost sm" onclick="detailRun(${Number(f.product_no)}, this.dataset.n)" data-n="${escHtml(f.name)}" title="상세페이지 점검 담당에게 이 상품을 맡깁니다"><i class="fa-solid fa-file-image"></i> 상세 점검</button>` : ''}<div class="muted">${escHtml(f.why)}${f.category ? ` · ${escHtml(f.category)}` : ''} · 14일 조회 ${fmt(f.views_14d)} · 주문율 ${f.rate_14d ?? '—'}% · 마진 ${f.margin_rate ?? '—'}%${(f.promos || []).length ? ' · ' + f.promos.map(escHtml).join(', ') : ''}</div></div></div>
         <div class="focus-grid">
-          <div><h4>지금 붙은 소재${f.own_ads.length ? '' : ' <span class="chip bad">광고 없음</span>'}</h4>${f.own_ads.map(a => adRow(a, false)).join('') || '<div class="muted small">이 상품에 붙은 활성 광고가 없어요</div>'}
+          <div><h4>지금 붙은 소재${f.own_ads.length ? '' : (d.ads_known === false ? ' <span class="chip">광고 정보 없음</span>' : ' <span class="chip bad">광고 없음</span>')}</h4>${f.own_ads.map(a => adRow(a, false)).join('') || (d.ads_known === false ? '<div class="muted small">Meta 광고 정보를 받지 못해 소재를 볼 수 없어요 (수집 실패 — 광고가 없다는 뜻이 아님)</div>' : '<div class="muted small">이 상품에 붙은 활성 광고가 없어요</div>')}
             <div class="fx"><b>견인 소재</b> ${escHtml(f.driver)}</div></div>
           <div><h4>같은 카테고리 우수 소재</h4>${f.reference_ads.map(a => adRow(a, true)).join('') || '<div class="muted small">참고할 우수 소재가 없어요</div>'}
             <div class="fx"><b>추가 소재 컨셉</b> ${escHtml(f.creative_plan)}</div></div>
@@ -229,7 +229,8 @@ function reportHtml(r) {
       <div class="muted small">색칠된 키워드 = 우리 상품이 있는 것(숫자는 개수, 마우스를 올리면 상품명). 브랜드명은 판단에서 뺍니다.</div>
       ${trendRows ? `<h4 style="margin-top:10px;">키워드 기반 제안</h4>${trendRows}` : ''}
     </div>`;
-    extraBoxes = trendBox + `
+    const adsWarn = d.ads_known === false ? `<div class="notice warn"><b><i class="fa-solid fa-plug-circle-xmark"></i> Meta 광고 정보를 못 받았어요.</b> 이 보고서의 광고 개수·소재 분석은 비어 있습니다. 광고가 없다는 뜻이 아니라 수집이 실패한 것이니, 광고 관련 판단은 다음 보고서에서 확인하세요.</div>` : '';
+    extraBoxes = adsWarn + trendBox + `
     <div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값 기준 · 마진율 = (판매가 − 공급가×1.1) ÷ 판매가</span></h3>
       <div class="qlegend"><span class="qbadge q-grow">판매 확대</span> 둘 다 높음 <span class="qbadge q-expose">노출 부족</span> 주문율↑ 조회↓ <span class="qbadge q-fix">상세·가격 점검</span> 조회↑ 주문율↓ <span class="qbadge q-low">집중도 낮춤</span> 둘 다 낮음</div>
       ${mxRows ? `<div class="tbl-wrap"><table class="risk"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div>` : '<div class="muted">판정할 신상품이 없어요</div>'}
@@ -333,8 +334,8 @@ function rawTableReturns(d) {
 
 function rawTableStrategy(d) {
   const na = d.new_arrivals || {};
-  const rows = (na.matrix || []).map(p => `<tr><td>${escHtml(p.name)}</td><td>${escHtml(p.category || '')}</td><td>${escHtml(p.quadrant)}</td><td class="r">${p.age_days ?? '—'}</td><td class="r">${fmt(p.views_14d)}</td><td class="r">${p.rate_14d}%</td><td class="r">${fmt(p.qty_14d)}</td><td class="r">${p.margin_rate ?? '—'}</td><td class="r">${p.active_ads}</td><td>${(p.promos || []).map(escHtml).join(', ')}</td></tr>`).join('');
-  const top = (d.top10 || []).map(t => `<tr><td>${t.rank}</td><td>${escHtml(t.name)}</td><td class="r">${fmt(t.qty_14d)}</td><td class="r">${t.rate_14d}%</td><td class="r">${t.active_ads}</td></tr>`).join('');
+  const rows = (na.matrix || []).map(p => `<tr><td>${escHtml(p.name)}</td><td>${escHtml(p.category || '')}</td><td>${escHtml(p.quadrant)}</td><td class="r">${p.age_days ?? '—'}</td><td class="r">${fmt(p.views_14d)}</td><td class="r">${p.rate_14d}%</td><td class="r">${fmt(p.qty_14d)}</td><td class="r">${p.margin_rate ?? '—'}</td><td class="r">${p.active_ads ?? '—'}</td><td>${(p.promos || []).map(escHtml).join(', ')}</td></tr>`).join('');
+  const top = (d.top10 || []).map(t => `<tr><td>${t.rank}</td><td>${escHtml(t.name)}</td><td class="r">${fmt(t.qty_14d)}</td><td class="r">${t.rate_14d}%</td><td class="r">${t.active_ads ?? '—'}</td></tr>`).join('');
   return `<h4>신상품 전체 (${fmt(na.count)}개)</h4>
     <table><thead><tr><th>상품</th><th>카테고리</th><th>판정</th><th class="r">등록일수</th><th class="r">조회 14일</th><th class="r">주문율</th><th class="r">판매</th><th class="r">마진%</th><th class="r">광고</th><th>행사</th></tr></thead><tbody>${rows}</tbody></table>
     <h4>판매 TOP10 (14일 결제수량)</h4>
