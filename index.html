@@ -29,6 +29,7 @@
       <a class="logo" href="#home"><span class="mark">AI</span><b>DNRB 에이전트</b></a>
       <nav class="nav" id="nav"></nav>
       <div class="top-right">
+        <span id="notif-wrap" class="notif-wrap"><button class="btn ghost sm" onclick="notifToggle(event)" title="알림" aria-label="알림"><i class="fa-regular fa-bell"></i><span id="notif-badge" class="notif-badge" style="display:none;"></span></button></span>
         <a class="btn ghost sm" href="https://danarobe.github.io/dnrb-dashboard/" title="DNRB 워크스페이스로 이동"><i class="fa-solid fa-table-columns"></i> <span class="hide-m">워크스페이스</span></a>
         <span id="user-info" class="muted"></span>
         <button class="btn ghost sm" onclick="logout()" title="로그아웃"><i class="fa-solid fa-right-from-bracket"></i></button>
@@ -38,12 +39,14 @@
     <footer class="foot muted">에이전트는 제안만 합니다. 광고·가격·고객 발송 같은 실제 실행은 사람이 확인한 뒤에 합니다.</footer>
   </div>
 
+  <div id="notif-drop" class="notif-drop" style="display:none;"></div>
   <div id="toast" class="toast"></div>
 
   <script src="js/config.js"></script>
   <script src="js/api.js"></script>
   <script src="js/agents.js"></script>
   <script src="js/reports.js"></script>
+  <script src="js/notify.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

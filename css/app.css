@@ -226,6 +226,20 @@ table.risk td .chip { white-space: nowrap; }
 .icon-btn { border: none; background: none; color: #7c3aed; cursor: pointer; padding: 0 4px; font-size: .8rem; vertical-align: middle; }
 .icon-btn:hover { color: #5b21b6; }
 
+/* ── 알림 (2026-09-15) ── */
+.notif-wrap { position: relative; display: inline-block; }
+.notif-badge { position: absolute; top: -4px; right: -4px; background: var(--bad); color: #fff; font-size: .62rem; font-weight: 800; border-radius: 999px; padding: 1px 5px; min-width: 16px; text-align: center; }
+.notif-drop { position: fixed; top: 58px; right: 14px; width: min(360px, calc(100vw - 28px)); max-height: 70vh; overflow-y: auto; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 34px rgba(15, 23, 42, .16); z-index: 60; }
+.ntf-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #f3f4f6; font-size: .84rem; }
+.ntf-head button { border: none; background: none; color: var(--brand); font-size: .74rem; font-weight: 700; cursor: pointer; }
+.ntf { padding: 10px 14px; border-bottom: 1px solid #f8f9fb; cursor: pointer; }
+.ntf.unread { background: var(--brand-bg); }
+.ntf-top { font-size: .72rem; color: var(--muted); margin-bottom: 2px; } .ntf-top b { color: #4338ca; }
+.ntf-msg { font-size: .8rem; color: var(--ink-2); }
+.ntf-read summary { padding: 8px 14px; font-size: .74rem; color: var(--muted); cursor: pointer; }
+.ntf-push { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid #f3f4f6; background: #fafbff; font-size: .74rem; color: var(--muted); }
+.ntf-push i { color: #818cf8; } .ntf-push span { flex: 1; }
+
 /* ── 토스트 ── */
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); background: #1a1a2e; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: .85rem; opacity: 0; pointer-events: none; transition: all .2s; z-index: 50; max-width: 90vw; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

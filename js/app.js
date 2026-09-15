@@ -14,6 +14,7 @@ function route() {
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.key === k));
   if (k === 'home') renderHome();
   if (k === 'reports') renderReports(id);
+  if (typeof notifLoad === 'function') notifLoad();   // 60초 스로틀
   window.scrollTo(0, 0);
 }
 

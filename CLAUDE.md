@@ -22,7 +22,8 @@
 - `api.js` — 세션(loadSession/authLogin/logout), `callFn`(함수 호출, `x-auth-token` 자동), `dbProxy`, 포맷(fmtMan = 만 원/억 원, fmtDelta, dateLabel), toast, btnBusy/btnIdle.
 - `agents.js` — **담당자 등록부 `AGENTS`**(key = `agent_reports.agent`, status active/planned, fn = 실행 함수). 홈 카드 렌더(`renderHome`), API 키 안내(`renderSetupNotice` — sales-agent `status.configured`), `agentRun(key)`(action=run POST → 완료 시 `#reports/<id>`).
 - `reports.js` — 보고서 피드. `reportsLoad()`(60건, **같은 날 재실행은 최신 1건만 표시**, 담당자 필터 칩 `reportsFilter`) + `actionsLoad()`/`actionToggle()`(완료 체크, change 이벤트 위임 `.act-chk`, **키 = agent|action_id** — 두 담당자가 같은 id를 쓸 수 있음). `reportHtml`은 `r.agent`로 타일·추가 표를 분기(sales/returns), 나머지(헤드라인·주간·할 일)는 공통 → 좌측 목록 + 우측 상세(`reportHtml`): 헤드라인(mood 색)+요약 → KPI 4타일(어제/7일/이달/광고비·ROAS, 증감은 지난주 같은 요일·직전 7일·지난달 같은 기간) → 오늘의 주목/주의 2열 → **이번 주 누적: P 주목 / N 주의 2열(등장일 칩·NEW) → 이번 주 할 일(since 칩) → 저번 주 해야 했을 일(회색 점선 상자)** → note·수집 오류. 주간 필드가 없는 옛 보고서는 actions를 '이번 주 할 일'로 표시 → `수집한 숫자 보기`(rawTable, 근거 확인용). 실패 행은 빨간 상자로 원인 표시. 관리자가 아니면 목록 대신 안내.
-- `app.js` — 해시 라우터 `#home | #reports | #reports/<id>`, 로그인 화면 전환.
+- `app.js` — 해시 라우터 `#home | #reports | #reports/<id>`, 로그인 화면 전환. 라우팅마다 `notifLoad()`(60초 스로틀).
+- `notify.js`(2026-09-15, 사용자 요청 "보고서가 나오면 관리자 모두에게 알림") — 헤더 종 아이콘: `notifications`(db 프록시, 본인 것) 목록·안 읽음 배지·모두 읽음·클릭 시 해당 담당자 최신 보고서로. **휴대폰 알림(웹 푸시) 켜기/끄기**: 워크스페이스와 같은 VAPID 공개키(`PUSH_PUBKEY`)·`push_subscriptions`(user_id 본인), `sw.js` 서비스 워커(경로 /dnrb-agents/). 푸시는 **기기마다 따로** 켜야 하며 아이폰은 홈 화면에 추가 후에만 가능. 서버 쪽 알림 발송은 `agent.ts notifyAdmins`(관리자 전원 notifications + 구독 기기 푸시) — 이미 모든 담당자가 호출. 실측 2026-09-15: 관리자 3명 모두 알림 행 생성됨, 푸시 기기는 admin 2·pmk8668us 1·rlaeksk1994 0(켠 적 없음).
 - 모든 사용자 데이터·보고서 문자열은 `escHtml`을 거쳐 innerHTML에 넣는다(보고서는 Claude 출력이라 신뢰하지 않음).
 
 ## 3-0. 공통 뼈대 `_shared/agent.ts` (2026-09-11, 2호를 만들며 분리)
