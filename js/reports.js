@@ -86,6 +86,7 @@ async function renderReports(id) {
       </span></a>`;
   }).join('') : `<div class="muted pad">아직 보고서가 없어요. 매일 아침 8시에 자동으로 도착하고, <b>지금 실행</b>으로 바로 만들 수도 있어요.</div>`;
   $('report-view').innerHTML = cur ? reportHtml(cur) : '';
+  if (cur && cur.status === 'ok' && cur.report && typeof askLoad === 'function') askLoad(cur.id);   // 담당자에게 질문 (2026-09-15)
   if (cur && window.innerWidth <= 800) $('report-view').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -280,6 +281,7 @@ function reportHtml(r) {
     ${lw ? `<div class="box past-box"><h3><i class="fa-regular fa-clock" style="color:#9ca3af;"></i> 저번 주 해야 했을 일 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''}</span></h3>${(lw.actions || []).length ? lw.actions.map((x, i) => actRow(x, i, { past: true, week: lw.start })).join('') : '<div class="muted">저번 주 보고서가 없어요</div>'}</div>` : ''}
     ${rp.note ? `<div class="muted small"><i class="fa-regular fa-circle-question"></i> ${escHtml(rp.note)}</div>` : ''}
     ${dataErrors(r.data)}
+    ${typeof askBoxHtml === 'function' ? askBoxHtml(r) : ''}
     <details class="raw"><summary>수집한 숫자 보기</summary>${rawTable(r.data, r.agent)}</details>`;
 }
 

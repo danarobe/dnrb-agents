@@ -240,6 +240,24 @@ table.risk td .chip { white-space: nowrap; }
 .ntf-push { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid #f3f4f6; background: #fafbff; font-size: .74rem; color: var(--muted); }
 .ntf-push i { color: #818cf8; } .ntf-push span { flex: 1; }
 
+/* ── 담당자에게 질문 (2026-09-15) ── */
+.ask-box { border-color: #c7d2fe; background: #fafbff; }
+.qa { padding: 10px 0; border-bottom: 1px dashed #e0e7ff; font-size: .84rem; }
+.qa:last-child { border-bottom: none; }
+.qa .q { color: var(--ink-2); }
+.qa .q i { color: #818cf8; margin-right: 2px; }
+.qa .q b { font-size: .86rem; }
+.qa .a { margin: 6px 0 0 18px; padding: 10px 12px; background: #fff; border: 1px solid var(--line); border-radius: 12px; line-height: 1.6; }
+.qa .a p { margin: 0 0 4px; } .qa .a p:last-child { margin-bottom: 0; }
+.qa .a ul { margin: 2px 0 4px 18px; }
+.qa.pending .a { border-style: dashed; }
+.ask-tools { margin-top: 6px; font-size: .72rem; color: var(--muted); display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.ask-chips { margin: 8px 0 6px; }
+.ask-chip { font-weight: 600; }
+.ask-form { display: flex; gap: 8px; margin-top: 4px; }
+.ask-form input { flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 10px; padding: 9px 12px; font-size: .88rem; outline: none; background: #fff; }
+.ask-form input:focus { border-color: var(--brand); }
+
 /* ── 토스트 ── */
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); background: #1a1a2e; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: .85rem; opacity: 0; pointer-events: none; transition: all .2s; z-index: 50; max-width: 90vw; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

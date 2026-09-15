@@ -21,3 +21,7 @@ verify_jwt = true
 # 상세페이지 점검 담당 — 관리자 또는 x-cron-secret(08:45 KST), 단계별 호출은 DB pg_net
 [functions.detail-agent]
 verify_jwt = true
+
+# 담당자에게 질문하기 — 관리자 로그인만(요청형, cron 없음). 보고서 맥락 + 데이터 재조회 툴
+[functions.agent-ask]
+verify_jwt = true

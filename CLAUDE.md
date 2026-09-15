@@ -4,7 +4,7 @@
 > 2026-09-10 사용자 결정: 워크스페이스(~/dnrb-dashboard, 1만 2천 줄 단일 파일)가 너무 무거워져 **화면은 이 저장소로 분리**, 데이터 연결·계정은 워크스페이스와 **같은 Supabase 프로젝트를 공유**한다.
 
 ## 0. 한눈에 보기
-- **소스**: `~/dnrb-agents` — `index.html` 뼈대 + `css/app.css` + `js/`(config·api·agents·reports·app, 기능별 분리) + `supabase/functions/`(**`_shared/agent.ts` 공통 뼈대** + `sales-agent` + `returns-agent` + `strategy-agent`).
+- **소스**: `~/dnrb-agents` — `index.html` 뼈대 + `css/app.css` + `js/`(config·api·agents·reports·notify·ask·app, 기능별 분리) + `supabase/functions/`(**`_shared/agent.ts` 공통 뼈대** + `sales-agent` + `returns-agent` + `strategy-agent` + `detail-agent` + `agent-write`(2단계 작성) + `agent-ask`(질문하기)).
 - **배포**: GitHub Pages `https://danarobe.github.io/dnrb-agents/` (공개 레포 `danarobe/dnrb-agents`, main 브랜치 루트). **git push하면 자동 배포**(30~60초).
 - **Supabase**: 워크스페이스와 같은 프로젝트 `eeffmbusaqaadeojjlnc`(서울). anon key·URL은 `js/config.js`(공개돼도 되는 값 — 서버가 로그인 토큰을 검증).
 - **로컬 프리뷰**: `.claude/launch.json`의 dnrb-agents, 포트 8735.
@@ -70,8 +70,17 @@
 - DB: `detail_reviews`(마이그레이션 0008) — 워크스페이스 db 프록시 admin 읽기. RPC `agent_call(fn, qs)`(범용 디스패처), `detail_page_done(id, idx, page, total)`.
 - 첫 실측(2489 베즈 모달 골지 가디건): 72점, "착용컷·소재는 충실, 실측이 맨 끝에 있어 아쉬움".
 
+## 3-4. 담당자에게 질문하기 (`supabase/functions/agent-ask` + `js/ask.js`, 2026-09-15)
+보고서 화면 맨 아래 **'담당자에게 질문'** 상자. 대표가 그 보고서를 읽다 궁금한 걸 물으면 담당자가 답한다(요청형, cron 없음, 관리자만).
+- **맥락** = ① 보고서 본문 ② 그날 수집 데이터(담당자 `forLLM`으로 줄인 것, 상세 점검은 reviews의 판단만) ③ 같은 보고서의 앞선 문답 6개. 페르소나는 각 def.ts `system`에서 COMMON_RULES 앞부분(담당자 고유 규칙 — 코호트 원칙 등)만 떼어 쓰고 `ASK_RULES`(결론 먼저·8줄 이내·숫자 근거·추측 표시·큰 결정은 대표 확인 후·일반 문장)를 붙인다.
+- **데이터 재조회(툴 7개, strict)**: `revenue`(매출) · `products`(상품 조회·판매, 이름 검색·정렬) · `claims`(취소반품 사유) · `cohort_weeks`(결제 주차 코호트) · `return_watch`(순반품률, 이름 검색) · `meta_ads`(합계+상위 소재 10) · `product_info`(가격·마진·등록일·품절). 워크스페이스 함수를 `x-agent-secret`으로 호출, 결과는 코드가 줄여서(최대 15행) 넘김. 최대 4회, 병렬 가능. **75초를 넘기면 `tool_choice: none`으로 지금까지 정보로 답하게** 함(게이트웨이 100초 502 회피). ⚠ strict 툴 스키마는 `minimum/maximum/maxItems`를 거부(400 실사례) → 범위는 설명에 쓰고 코드가 clamp.
+- **모델·비용**: claude-opus-5, effort low, max_tokens 2000. 보고서+데이터를 **system 블록에 넣고 `cache_control`** → 같은 보고서에 이어 묻는 질문은 캐시 읽기(실측 두 번째 질문 cache_read 9~15K, 새 입력 1~2K). 실측: 매출 보고서 첫 질문 9.2K 입력·29초, 툴 2회 병렬 13초, 반품 50초(툴 2회), 전략 26K 입력·12초. 질문당 약 50~200원(화면 안내와 동일).
+- **기록**: `agent_questions`(마이그레이션 0009: report_id → agent_reports cascade, question/answer/tools_used[{tool,label}]/usage/asked_by·name/took_ms). 읽기·쓰기 모두 agent-ask(service_role) — db 프록시 화이트리스트 불필요. 액션: `list`(GET report_id) / `ask`(POST {report_id, question≤500자}).
+- **화면**(`js/ask.js`): `askBoxHtml(r)`을 `reportHtml` 끝(수집 숫자 보기 위)에 붙이고 `renderReports`가 `askLoad(id)` 호출. 담당자별 제안 질문 칩 3개(`ASK_SUGGEST`), 보내면 내 질문을 먼저 pending으로 그리고 답이 오면 목록 재조회. 답변은 escHtml 후 줄 단위 `<p>`, '- ' 줄은 `<ul>`. '다시 조회:' 칩으로 어떤 데이터를 봤는지 표시. 검증(2026-09-15): QA 임시 admin으로 실제 질문 4건(매출 2·반품·전략) 정상, node 스텁 DOM 렌더 확인, 테스트 문답·계정 삭제.
+
 ## 4. DB
 - `agent_actions`(마이그레이션 `0007_agent_actions.sql`, 적용 완료, 2026-09-11): **할 일 완료 체크**. agent/action_id(unique 쌍)/week_start/title·owner(스냅숏)/done/done_by/done_at. 앱이 db 프록시(admin)로 `on_conflict=agent,action_id` upsert(prefer merge-duplicates). 키 = `week_actions[].id`(에이전트 부여 `기준일YYYYMMDD-순번`; 유지 항목은 id 불변). id 없는 옛 보고서 항목은 `legacy:since:제목40자` 임시 키(다음 보고서부터 진짜 id로 바뀌어 체크가 이어지지 않음 — 2026-09-10 보고서 한정). `weekContext()`가 done=true id를 읽어 `week_actions_so_far[].done`으로 프롬프트에 넣고, 시스템 프롬프트가 **done=true는 반드시 제외**하게 한다. 화면: 번호 동그라미가 체크박스(완료 = 초록 ✓ + 취소선 + "완료 · 이름 · 시각"), 저번 주 할 일도 체크 가능. 홈 카드에 "이번 주 할 일 M/N 완료".
+- `agent_questions`(0009, 2026-09-15): 담당자에게 질문 문답 — §3-4. RLS on·정책 없음, agent-ask(service_role)만 접근.
 - `detail_reviews`(0008, 2026-09-13): 상세 점검 행 — batch_id/product_no/desc_hash/images(조각 계획)/pages(Gemini 읽기, 장별)/pages_done/status(reading|judging|ok|error)/review(Claude 판단+context+usage).
 - `agent_reports`(마이그레이션 `supabase/migrations/0006_agent_reports.sql`, 적용 완료): agent/report_date/trigger(cron|manual)/status(ok|error)/data/report/model/usage/error/created_by/created_at. RLS on·anon 정책 없음 → 읽기는 db 프록시(admin), 쓰기는 sales-agent(service_role).
 
@@ -84,5 +93,5 @@
 
 ## 6. 남은 일
 - 첫 보고서 2건 확인됨(2026-09-10, 입력 약 4.5K·출력 약 2K 토큰/건). 프롬프트·액션 품질 다듬기 계속.
-- 완료 체크는 됨(2026-09-11). 담당 배정·에이전트에게 질문하기(보고서 맥락 + 데이터 재조회)는 아직.
-- 3호 완료(2026-09-12). 4호 후보 = 마케팅(주간 광고 예산 배분·소재 테스트 계획) 또는 고객 응대. 3호 2단계 = 상세페이지 이미지 판독.
+- 완료 체크(2026-09-11)·에이전트에게 질문하기(2026-09-15, §3-4) 완료. 담당 배정은 아직.
+- 3호 완료(2026-09-12), 3호 2단계 상세 점검 완료(2026-09-13). 4호 후보 = 마케팅(주간 광고 예산 배분·소재 테스트 계획) 또는 고객 응대 — 사용자 확인 후.
