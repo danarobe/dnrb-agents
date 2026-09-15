@@ -216,6 +216,8 @@ table.risk td .chip { white-space: nowrap; }
 .dt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 8px; font-size: .84rem; }
 .dt-grid h4 { font-size: .78rem; font-weight: 800; margin-bottom: 4px; color: var(--ink-2); }
 .dt-grid ul { margin: 0 0 0 18px; line-height: 1.6; }
+.top-fix { background: #faf5ff; border: 1px solid #ddd6fe; border-radius: 10px; padding: 8px 10px; }
+.top-fix strong { color: #5b21b6; }
 .snippet { display: flex; gap: 10px; align-items: center; border: 1px dashed #ddd6fe; border-radius: 10px; padding: 8px 10px; margin-top: 6px; background: #faf5ff; }
 .snippet .snip-text { flex: 1; font-size: .84rem; }
 

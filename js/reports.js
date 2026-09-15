@@ -166,6 +166,8 @@ function reportHtml(r) {
         <div class="dt-head"><div><b>${escHtml(x.product_name)}</b><div class="muted small">${escHtml(x.reason || '')}${ctxBits.length ? ' · ' + ctxBits.join(' · ') : ''} · 이미지 ${x.image_count}장</div></div>
           <div class="score" style="color:${scoreColor(v.score)}">${v.score}<span>점</span></div></div>
         <div class="fx"><b>총평</b> ${escHtml(v.verdict)}</div>
+        ${v.top_priority ? `<div class="fx top-fix"><b>가장 먼저</b> <strong>${escHtml(v.top_priority.what)}</strong> <span class="muted">— ${escHtml(v.top_priority.why)}</span></div>` : ''}
+        ${(v.keyword_review || []).length ? `<div class="fx"><b>키워드 검증</b> ${v.keyword_review.map(k => `<span class="chip ${k.fits === '맞음' ? 'good' : k.fits === '안 맞음' ? 'bad' : ''}" title="${escHtml(k.reason)}">${escHtml(k.keyword)} · ${escHtml(k.fits)}</span>`).join(' ')} <span class="muted small">(마우스를 올리면 근거)</span></div>` : ''}
         <div class="dt-grid">
           <div><h4><i class="fa-solid fa-circle-xmark down"></i> 빠졌거나 약한 것</h4>${(v.missing || []).length ? '<ul>' + v.missing.map(m => `<li>${escHtml(m)}</li>`).join('') + '</ul>' : '<div class="muted small">없음</div>'}
             <h4 style="margin-top:8px;"><i class="fa-solid fa-circle-check up"></i> 잘 된 것</h4>${(v.keep || []).length ? '<ul>' + v.keep.map(m => `<li>${escHtml(m)}</li>`).join('') + '</ul>' : '<div class="muted small">—</div>'}</div>

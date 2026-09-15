@@ -54,9 +54,9 @@ function tilePlan(w: number, h: number): { cy: number; ch: number }[] {
 }
 
 // ── Gemini 읽기 ──
-const READ_PROMPT = `이것은 여성 의류 쇼핑몰(다나로브) 상세페이지 이미지 한 장을 위에서 아래로 자른 조각들입니다. 조각에서 보이는 내용을 JSON으로 정리하세요.
-{"texts":["눈에 띄는 문구·설명 (최대 10개, 원문 그대로 짧게)"],"has_size_table":false,"size_table_text":"실측표가 있으면 항목과 수치를 한 줄로 (없으면 빈 문자열)","has_size_guide":false,"size_guide_text":"사이즈 추천·모델 키/사이즈 안내 (없으면 빈 문자열)","has_fabric_care":false,"fabric_text":"소재·혼용률·세탁 안내 (없으면 빈 문자열)","colors_shown":["보이는 색상 이름"],"wear_shots":0,"detail_shots":0,"has_model_info":false,"has_benefit_notice":false,"benefit_text":"할인·1+1·쿠폰 등 혜택 문구 (없으면 빈 문자열)","layout_notes":"구성 특징 한 줄 (예: 첫 조각이 착용컷, 글자 작음, 여백 많음)"}
-규칙: 보이는 것만 적고 추측하지 않습니다. 착용컷(사람이 입은 사진)과 디테일컷(옷 부분 확대)을 세어 주세요.`;
+const READ_PROMPT = `이것은 여성 패션 쇼핑몰(다나로브) 상세페이지 이미지 한 장을 위에서 아래로 자른 조각들입니다(의류·신발·가방·액세서리 중 하나). 모든 조각을 합쳐 **JSON 객체 하나**로 정리하세요(조각별 배열 금지).
+{"texts":["눈에 띄는 문구·설명 (최대 12개, 원문 그대로 짧게)"],"has_size_table":false,"size_table_text":"실측표(의류: 어깨·가슴·총장 / 신발: 굽높이·발볼·안창길이·무게 / 가방: 가로·세로·폭)가 있으면 항목과 수치를 한 줄로 (없으면 빈 문자열)","has_size_guide":false,"size_guide_text":"사이즈 추천·정사이즈/반업 안내·모델 키/사이즈·발볼 안내 등 사이즈 관련 안내 원문 (없으면 빈 문자열)","has_fabric_care":false,"fabric_text":"소재·혼용률·세탁/관리 안내 (없으면 빈 문자열)","colors_shown":["보이는 색상 이름"],"wear_shots":0,"detail_shots":0,"has_model_info":false,"has_benefit_notice":false,"benefit_text":"할인·1+1·쿠폰 등 혜택 문구 (없으면 빈 문자열)","features":["이미지·문구로 확인되는 디자인 특징 (예: 앞코 리본, 발등 스트랩, 버클, 지퍼, 포켓, 골지, 오버핏 — 보이는 것만, 최대 8개)"],"layout_notes":"구성 특징 한 줄 (예: 첫 조각이 착용컷, 글자 작음, 여백 많음)"}
+규칙: 보이는 것만 적고 추측하지 않습니다. 착용컷(사람이 입거나 신은 사진)과 디테일컷(제품 부분 확대)을 세어 주세요. 사이즈 관련 문구는 한 글자도 빼지 말고 size_guide_text에 그대로 옮깁니다.`;
 async function geminiRead(tiles: { mime: string; data: string }[]): Promise<Row> {
   const parts: unknown[] = [{ text: READ_PROMPT }];
   for (const t of tiles) parts.push({ inline_data: { mime_type: t.mime, data: t.data } });
@@ -70,9 +70,43 @@ async function geminiRead(tiles: { mime: string; data: string }[]): Promise<Row>
   const text = body?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
   const usage = body?.usageMetadata ?? {};
   let parsed: Row = {};
-  try { parsed = JSON.parse(text); } catch { parsed = { texts: [String(text).slice(0, 500)] }; }
+  try { parsed = JSON.parse(text); } catch { parsed = { texts: [String(text).slice(0, 500)], parse_error: true }; }
+  // Gemini가 조각별 배열로 답하는 경우(2026-09-15 실사례 — 첫 장이 통째로 문자열로 버려졌음) → 한 객체로 합친다
+  if (Array.isArray(parsed)) parsed = mergePages(parsed as Row[]);
   return { ...parsed, _usage: { in: usage.promptTokenCount, out: usage.candidatesTokenCount } };
 }
+
+function mergePages(arr: Row[]): Row {
+  const out: Row = {};
+  for (const o of arr) {
+    if (!o || typeof o !== "object") continue;
+    for (const [k, v] of Object.entries(o)) {
+      const cur = out[k];
+      if (Array.isArray(v)) out[k] = [...new Set([...(Array.isArray(cur) ? cur : []), ...v])];
+      else if (typeof v === "boolean") out[k] = Boolean(cur) || v;
+      else if (typeof v === "number") out[k] = Number(cur ?? 0) + v;
+      else if (typeof v === "string") out[k] = [cur, v].filter(Boolean).join(" / ");
+      else out[k] = v;
+    }
+  }
+  return out;
+}
+
+// ── 상품 종류 판별 (2026-09-15 — 신발에 의류 체크리스트를 들이대던 오판 방지) ──
+type ProductType = "shoes" | "bag" | "acc" | "apparel";
+function productTypeOf(name: string, cats: string[]): ProductType {
+  const t = `${name} ${cats.join(" ")}`.toLowerCase();
+  if (/슈즈|플랫|로퍼|샌들|부츠|슬리퍼|뮬|힐|스니커즈|운동화|shoes|boots|sandal|loafer|sneaker/.test(t)) return "shoes";
+  if (/가방|백|백팩|토트|숄더|크로스|파우치|클러치|bag/.test(t)) return "bag";
+  if (/목걸이|귀걸이|팔찌|반지|모자|캡|비니|벨트|양말|스카프|머플러|헤어|acc|jewel|hat|belt|socks/.test(t)) return "acc";
+  return "apparel";
+}
+const CHECKLIST: Record<ProductType, string> = {
+  shoes: "신발 체크리스트: ① 사이즈 추천(정사이즈/반업, 발볼 넓은 분·발등 높은 분 안내) ② 실측(굽높이·발볼 너비·안창 길이·무게) ③ 소재·관리(가죽/스웨이드 관리법) ④ 착화감 근거(쿠션·뒤꿈치·유연성) ⑤ 컬러별 소재 차이 ⑥ 착용컷·디테일컷. **모델 착용 사이즈·키는 신발에서는 부차적 — 없다고 지적하지 말 것.**",
+  bag: "가방 체크리스트: ① 실측(가로·세로·폭·끈 길이·무게) ② 수납(휴대폰·지갑·태블릿 들어가는지 비교컷) ③ 소재·관리 ④ 내부 구성(포켓·지퍼) ⑤ 착용컷(크기 감) ⑥ 컬러. 모델 키·의류 실측표는 해당 없음.",
+  acc: "액세서리 체크리스트: ① 크기·길이·무게 ② 소재(알러지·변색 안내) ③ 착용컷(크기 감) ④ 관리법 ⑤ 세트·옵션 구성. 의류 실측표·모델 사이즈는 해당 없음.",
+  apparel: "의류 체크리스트: ① 실측표(어깨·가슴·소매·총장, 사이즈별) ② 사이즈 추천·모델 키/착용 사이즈 ③ 소재·혼용률·세탁 ④ 핏 설명(오버핏/슬림, 비침·신축) ⑤ 색상별 착용컷·디테일컷 ⑥ 코디 제안.",
+};
 
 // ── Claude 판단 ──
 const JUDGE_SCHEMA = {
@@ -80,22 +114,34 @@ const JUDGE_SCHEMA = {
   properties: {
     score: { type: "integer", description: "상세페이지 완성도 0~100 (실측표·사이즈 가이드·소재·색상별 컷·착용컷·첫 화면 소구 기준)" },
     verdict: { type: "string", description: "한 줄 총평 40자 이내" },
-    missing: { type: "array", items: { type: "string" }, description: "빠졌거나 약한 요소 (예: '실측표 없음', '소재·세탁 안내 없음'). 최대 6개" },
+    top_priority: { type: "object", properties: { what: { type: "string", description: "지금 당장 고칠 딱 한 가지 (30자 이내)" }, why: { type: "string", description: "왜 이것이 1순위인지 — 주문율·반품 사유·조회수 같은 숫자 근거" } }, required: ["what", "why"], additionalProperties: false, description: "가장 먼저 고칠 한 가지" },
+    missing: { type: "array", items: { type: "string" }, description: "빠졌거나 약한 요소 — 중요한 순, '요소 — 왜 중요한지' 형식. 상품 종류 체크리스트에 해당하는 것만(신발에 모델 사이즈 같은 의류 항목 금지). 최대 5개" },
+    keyword_review: { type: "array", items: { type: "object", properties: { keyword: { type: "string" }, fits: { type: "string", enum: ["맞음", "부분", "안 맞음"] }, reason: { type: "string", description: "그 키워드를 정의하는 특징(예: 메리제인 = 발등 스트랩)이 pages의 features·texts에 있는지로 판단" } }, required: ["keyword", "fits", "reason"], additionalProperties: false }, description: "context.rising_keywords 각각이 이 상품에 실제로 맞는지 검증. 키워드가 없으면 빈 배열" },
     first_screen: { type: "array", items: { type: "object", properties: { what: { type: "string" }, why: { type: "string" } }, required: ["what", "why"], additionalProperties: false }, description: "첫 화면(맨 위 1~2조각)에 내세울 것 2~3개와 근거(반품 사유·광고 반응·급상승 키워드·주문율)" },
     reorder: { type: "array", items: { type: "string" }, description: "구성 순서·강조 변경 제안. 최대 4개, 각 40자 이내" },
-    copy_snippets: { type: "array", items: { type: "object", properties: { where: { type: "string", description: "넣을 위치" }, text: { type: "string", description: "붙여 넣을 문장(1~2문장)" } }, required: ["where", "text"], additionalProperties: false }, description: "바로 붙여 넣을 문장 2~4개 (실측 안내, 사이즈 추천, 소재, 혜택 등 빠진 것 위주)" },
+    copy_snippets: { type: "array", items: { type: "object", properties: { where: { type: "string", description: "넣을 위치" }, text: { type: "string", description: "붙여 넣을 문장(1~2문장). 실측 수치는 절대 지어내지 말고 '굽높이 ○cm'처럼 ○ 자리표시" } }, required: ["where", "text"], additionalProperties: false }, description: "바로 붙여 넣을 문장 2~4개 (사이즈 추천, 실측 틀, 소재·관리, 소구 문구 등 빠진 것 위주). 숫자는 pages에 있는 것만" },
     keep: { type: "array", items: { type: "string" }, description: "잘 되어 있는 점 1~3개" },
   },
-  required: ["score", "verdict", "missing", "first_screen", "reorder", "copy_snippets", "keep"], additionalProperties: false,
+  required: ["score", "verdict", "top_priority", "missing", "keyword_review", "first_screen", "reorder", "copy_snippets", "keep"], additionalProperties: false,
 };
-const JUDGE_SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상세페이지 점검 담당자입니다. Gemini가 이미지 조각을 읽어 정리한 pages(위에서 아래 순서)와 상품 맥락(판매·주문율·반품 사유·광고 반응·급상승 키워드)을 보고 상세페이지를 점검합니다.
-원칙: 독자는 비개발자 경영자, 쉬운 한국어, 짧게. 있는 것을 없다고 하지 말고, pages에 근거가 있는 것만 씁니다. 반품 사유가 '사이즈'면 실측표·사이즈 추천을 최우선으로, 광고 문구에서 반응 좋은 소구점은 첫 화면에 올리라고 제안합니다. 급상승 키워드가 상품과 맞으면 상품명·상단 문구에 반영을 제안합니다. 응답은 지정 JSON만.`;
+const JUDGE_SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상세페이지 점검 담당자입니다. Gemini가 이미지 조각을 읽어 정리한 pages(위에서 아래 순서)와 상품 맥락(상품 종류·가격·판매·주문율·반품 사유·광고 반응·급상승 키워드)을 보고 상세페이지를 점검합니다.
+독자는 비개발자 경영자. 쉬운 한국어로 짧고 날카롭게 — 두루뭉술한 칭찬·지적 대신 "무엇이 빠져서 어떤 손해(주문율·반품·문의)가 나는지"를 씁니다.
+
+절대 규칙:
+1. product_type과 checklist에 맞는 항목만 점검합니다. 신발·가방·액세서리에 '모델 착용 사이즈', '의류 실측표' 같은 의류 항목을 요구하지 않습니다.
+2. 있는 것을 없다고 하지 않습니다. pages의 texts·size_guide_text·fabric_text·features에 근거가 있는 것만 씁니다. 첫 장(image 1)에 parse_error가 있으면 그 장은 모른다고 전제합니다.
+3. **숫자를 지어내지 않습니다.** 실측·무게·굽높이 등 수치는 pages에 있을 때만 쓰고, 없으면 copy_snippets에 '굽높이 ○cm / 발볼 ○cm'처럼 ○ 자리표시로 틀만 줍니다. 지어낸 수치는 고객에게 그대로 나가 반품으로 돌아옵니다.
+4. 급상승 키워드는 keyword_review에서 먼저 검증합니다: 그 키워드를 정의하는 특징(메리제인 = 발등 스트랩, 로퍼 = 발등 덮는 슬립온, 골지 = 세로 골 짜임, 크롭 = 짧은 기장 …)이 features·texts·상품명에 실제로 있는지. '맞음'일 때만 상품명·상단 문구 반영을 제안하고, '안 맞음'이면 반영 제안을 절대 하지 않습니다(키워드로 유입된 고객이 실물과 달라 반품·CS로 돌아옴). '부분'이면 정확한 표현(예: '리본 플랫')으로 바꿔 제안합니다.
+5. 우선순위: 반품 사유·주문율(context.new_arrival.rate_14d가 중앙값보다 낮으면 상세·가격 문제)·조회수를 근거로 **효과가 큰 것 하나**를 top_priority로 고릅니다. 반품 사유가 사이즈면 사이즈 안내가 1순위, 조회는 많은데 주문율이 낮으면 첫 화면 소구·가격 근거가 1순위.
+6. 광고 문구(ad_bodies)에서 반응 좋은 소구점은 첫 화면에 올리라고 제안합니다. 전략 담당의 detail_focus가 있으면 참고하되 pages 근거로 검증합니다.
+7. score는 checklist 항목 충족도(60%) + 첫 화면 소구·구성 순서(25%) + 데이터 문제 대응(반품 사유·주문율, 15%)로 매깁니다. 상품 종류에 해당 없는 항목은 감점하지 않습니다.
+응답은 지정 JSON만.`;
 async function claudeJudge(context: Row): Promise<{ review: Row; usage: unknown }> {
   if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY 미설정");
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   const res = await client.messages.create({
     model: MODEL, max_tokens: 4000, system: JUDGE_SYSTEM,
-    output_config: { effort: "low", format: { type: "json_schema", schema: JUDGE_SCHEMA } },
+    output_config: { effort: "medium", format: { type: "json_schema", schema: JUDGE_SCHEMA } },   // low→medium (2026-09-15): 키워드 검증·우선순위 판단이 늘어 생각 여유를 줌(건당 +20원 안팎)
     messages: [{ role: "user", content: `상세페이지 점검 자료입니다.\n${JSON.stringify(context)}` }],
   } as Parameters<typeof client.messages.create>[0]);
   if (res.stop_reason === "refusal") throw new Error("Claude가 응답을 거부했습니다");
@@ -104,8 +150,17 @@ async function claudeJudge(context: Row): Promise<{ review: Row; usage: unknown 
 }
 
 // ── 상품 맥락: 최신 전략·반품 보고서에서 이 상품 관련 정보 ──
-async function productContext(no: number, name: string): Promise<Row> {
+async function productContext(no: number, name: string, price?: number): Promise<Row> {
   const ctx: Row = {};
+  // 상품 종류(카페24 카테고리 이름 + 상품명) → 체크리스트 (2026-09-15)
+  try {
+    const cm = await callFn("cafe24-analytics", { action: "categorymap" }) as { categories?: Record<string, { name: string }>; products?: Record<string, number[]> };
+    const cats = ((cm.products ?? {})[String(no)] ?? []).map((c) => cm.categories?.[String(c)]?.name ?? "").filter(Boolean);
+    ctx.categories = cats;
+    ctx.product_type = productTypeOf(name, cats);
+  } catch { ctx.product_type = productTypeOf(name, []); }
+  ctx.checklist = CHECKLIST[ctx.product_type as ProductType];
+  if (price) ctx.price = price;
   const latest = async (agent: string) => { const r = await rest(`agent_reports?agent=eq.${agent}&status=eq.ok&select=report,data&order=created_at.desc&limit=1`); return r.ok ? ((await r.json())[0] ?? null) : null; };
   const st = await latest("strategy");
   if (st) {
@@ -182,7 +237,8 @@ Deno.serve(async (req) => {
       const recent = await rest(`detail_reviews?status=in.(ok,reading,judging)&created_at=gte.${since}T00:00:00Z&select=product_no`);
       const seen = new Set<number>(recent.ok ? ((await recent.json()) as Row[]).map((x) => Number(x.product_no)) : []);
       const chosen: typeof picks = [];
-      for (const p of picks) { if (!p.no || seen.has(p.no) || chosen.some((c) => c.no === p.no)) continue; chosen.push(p); if (chosen.length >= (forced ? 1 : PER_DAY)) break; }
+      // 수동 지정(forced)은 14일 제외 규칙을 적용하지 않는다 — 사람이 고른 상품은 언제든 다시 점검(2026-09-15: 재점검 요청이 "없음"으로 무시되던 문제)
+      for (const p of picks) { if (!p.no || (!forced && seen.has(p.no)) || chosen.some((c) => c.no === p.no)) continue; chosen.push(p); if (chosen.length >= (forced ? 1 : PER_DAY)) break; }
       if (!chosen.length) return json({ ok: true, queued: [], message: "오늘 점검할 상품이 없습니다 (최근 14일 안에 다 봤거나 후보 없음)" });
       const batch = `${D}-${crypto.randomUUID().slice(0, 8)}`;
       const ids: string[] = [];
@@ -191,7 +247,7 @@ Deno.serve(async (req) => {
         if (!ins.ok) throw new Error(`행 생성 실패 ${ins.status}`);
         const id = String(((await ins.json())[0] as Row).id);
         ids.push(id);
-        await dispatch(`action=prepare&id=${id}`);
+        await dispatch(`action=prepare&id=${id}${url.searchParams.get("reread") === "1" ? "&reread=1" : ""}`);
       }
       return json({ ok: true, queued: chosen.map((c, i) => ({ id: ids[i], product_no: c.no, name: c.name, reason: c.reason })), message: "상세 이미지 읽기를 시작했어요 (상품당 2~4분)" }, 202);
     }
@@ -210,7 +266,7 @@ Deno.serve(async (req) => {
         if (!urls.length) { await fail(id, "상세 이미지가 없습니다"); return json({ ok: false, error: "no images" }); }
         // 같은 해시 + 읽기 완료된 이전 행 → pages 재사용 (비용 0)
         const prev = await rest(`detail_reviews?product_no=eq.${row.product_no}&desc_hash=eq.${pd.desc_hash}&status=eq.ok&id=neq.${id}&select=pages,images&order=created_at.desc&limit=1`);
-        const reuse = prev.ok ? ((await prev.json())[0] ?? null) : null;
+        const reuse = url.searchParams.get("reread") === "1" ? null : (prev.ok ? ((await prev.json())[0] ?? null) : null);   // reread=1: 읽기 프롬프트가 바뀌었을 때 강제 재읽기
         if (reuse && reuse.pages && Object.keys(reuse.pages).length) {
           await patchRow(id, { product_name: name, desc_hash: pd.desc_hash, image_urls: urls, images: reuse.images, pages: reuse.pages, pages_done: Object.keys(reuse.pages).length, status: "judging", model: `${GEMINI_MODEL}(재사용)+${MODEL}` });
           await dispatch(`action=judge&id=${id}`);
@@ -252,8 +308,8 @@ Deno.serve(async (req) => {
         const pages = (row.pages ?? {}) as Record<string, Row>;
         const ordered = Object.keys(pages).map(Number).sort((a, b) => a - b).map((k) => ({ image: k + 1, ...pages[String(k)], _usage: undefined }));
         const name = String(row.product_name ?? "");
-        const ctx = await productContext(Number(row.product_no), name);
-        const { review, usage } = await claudeJudge({ product_name: name, reason: row.reason, image_count: ordered.length, pages: ordered, context: ctx });
+        const ctx = await productContext(Number(row.product_no), name, Number(row.price ?? 0) || undefined);
+        const { review, usage } = await claudeJudge({ product_name: name, product_type: ctx.product_type, checklist: ctx.checklist, reason: row.reason, image_count: ordered.length, pages: ordered, context: ctx });
         await patchRow(id, { status: "ok", review: { ...review, context: ctx }, error: null });
         await rest(`detail_reviews?id=eq.${id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ review: { ...review, context: ctx, usage } }) });
         await maybeSummarize(id);
