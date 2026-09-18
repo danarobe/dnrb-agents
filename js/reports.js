@@ -86,6 +86,7 @@ async function renderReports(id) {
       </span></a>`;
   }).join('') : `<div class="muted pad">아직 보고서가 없어요. 매일 아침 8시에 자동으로 도착하고, <b>지금 실행</b>으로 바로 만들 수도 있어요.</div>`;
   $('report-view').innerHTML = cur ? reportHtml(cur) : '';
+  stackTables($('report-view'));
   if (cur && cur.status === 'ok' && cur.report && typeof askLoad === 'function') askLoad(cur.id);   // 담당자에게 질문 (2026-09-15)
   if (cur && window.innerWidth <= 800) $('report-view').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -134,7 +135,7 @@ function reportHtml(r) {
         <td class="r"><b>${pr(x.return_rate)}</b>${raw.ret != null ? `<div class="muted">${fmt(raw.ret)}건</div>` : ''}</td><td>${escHtml(x.verdict)}</td></tr>`;
     }).join('');
     const cohortBox = cohortRows ? `<div class="box"><h3><i class="fa-regular fa-calendar-check" style="color:#4f46e5;"></i> 결제 주차별 취소·반품률 <span class="muted small">그 주에 결제된 주문 중 지금까지 취소·반품된 비율 · 성숙 = 14일 이상 경과</span></h3>
-      <div class="tbl-wrap"><table class="risk"><thead><tr><th>결제 주(월~일)</th><th>상태</th><th class="r">결제</th><th class="r">취소율</th><th class="r">반품률</th><th>판단</th></tr></thead><tbody>${cohortRows}</tbody></table></div>
+      <div class="tbl-wrap"><table class="risk stack"><thead><tr><th>결제 주(월~일)</th><th>상태</th><th class="r">결제</th><th class="r">취소율</th><th class="r">반품률</th><th>판단</th></tr></thead><tbody>${cohortRows}</tbody></table></div>
       <div class="muted small chk-hint">취소가 다음 주에 일어나도 결제한 주로 돌아갑니다. 집계 중인 주는 앞으로 더 올라갑니다.</div></div>` : '';
     const lvColor = { '위험': 'down', '주의': 'warn' };
     const riskRows = (rp.risk_products || []).map(x => `<tr><td><b>${escHtml(x.name)}</b><div class="muted">${escHtml(x.cause)}</div></td><td class="r"><b class="${lvColor[x.level] || ''}">${escHtml(x.level)}</b><div class="muted">${x.rate_14d}% · ${fmt(x.delivered_14d)}개</div></td><td>${escHtml(x.fix)}</td></tr>`).join('');
@@ -142,7 +143,7 @@ function reportHtml(r) {
     const watchRows = (rp.watch_review || []).map(x => `<div class="li"><div class="li-top"><b>${escHtml(x.name)}</b><span class="chip ${x.verdict === '개선' ? 'good' : x.verdict === '악화' ? 'bad' : ''}">${escHtml(x.verdict)}</span></div><div>${escHtml(x.detail)}</div></div>`).join('');
     extraBoxes = cohortBox + `
     <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 위험·주의 상품 <span class="muted small">14일 창 · 순반품률 20%↑ 위험, 10~20% 주의</span></h3>
-      ${riskRows ? `<div class="tbl-wrap"><table class="risk"><thead><tr><th>상품 · 원인 추정</th><th class="r">판정</th><th>대응</th></tr></thead><tbody>${riskRows}</tbody></table></div>` : '<div class="muted">위험·주의 상품이 없어요</div>'}
+      ${riskRows ? `<div class="tbl-wrap"><table class="risk stack"><thead><tr><th>상품 · 원인 추정</th><th class="r">판정</th><th>대응</th></tr></thead><tbody>${riskRows}</tbody></table></div>` : '<div class="muted">위험·주의 상품이 없어요</div>'}
     </div>
     <div class="box"><h3><i class="fa-solid fa-star" style="color:#b45309;"></i> 관리 상품 점검 <span class="muted small">워크스페이스 반품 관리에서 지정한 상품</span></h3>${watchRows || '<div class="muted">관리 상품이 없어요</div>'}</div>`;
   } else if (r.agent === 'detail') {
@@ -167,7 +168,7 @@ function reportHtml(r) {
           <div class="score" style="color:${scoreColor(v.score)}">${v.score}<span>점</span></div></div>
         <div class="fx"><b>총평</b> ${escHtml(v.verdict)}</div>
         ${v.top_priority ? `<div class="fx top-fix"><b>가장 먼저</b> <strong>${escHtml(v.top_priority.what)}</strong> <span class="muted">— ${escHtml(v.top_priority.why)}</span></div>` : ''}
-        ${(v.keyword_review || []).length ? `<div class="fx"><b>키워드 검증</b> ${v.keyword_review.map(k => `<span class="chip ${k.fits === '맞음' ? 'good' : k.fits === '안 맞음' ? 'bad' : ''}" title="${escHtml(k.reason)}">${escHtml(k.keyword)} · ${escHtml(k.fits)}</span>`).join(' ')} <span class="muted small">(마우스를 올리면 근거)</span></div>` : ''}
+        ${(v.keyword_review || []).length ? `<div class="fx"><b>키워드 검증</b>${v.keyword_review.map(k => `<div class="kw-row"><span class="chip ${k.fits === '맞음' ? 'good' : k.fits === '안 맞음' ? 'bad' : ''}">${escHtml(k.keyword)} · ${escHtml(k.fits)}</span> <span class="muted small">${escHtml(k.reason)}</span></div>`).join('')}</div>` : ''}
         <div class="dt-grid">
           <div><h4><i class="fa-solid fa-circle-xmark down"></i> 빠졌거나 약한 것</h4>${(v.missing || []).length ? '<ul>' + v.missing.map(m => `<li>${escHtml(m)}</li>`).join('') + '</ul>' : '<div class="muted small">없음</div>'}
             <h4 style="margin-top:8px;"><i class="fa-solid fa-circle-check up"></i> 잘 된 것</h4>${(v.keep || []).length ? '<ul>' + v.keep.map(m => `<li>${escHtml(m)}</li>`).join('') + '</ul>' : '<div class="muted small">—</div>'}</div>
@@ -221,21 +222,21 @@ function reportHtml(r) {
     const dayCell = (x, past) => `<div class="wday ${past ? 'past' : ''}"><div class="wd">${x.date.slice(5).replace('-', '/')}</div><div class="wt"><b>${Math.round(x.max)}°</b>/${Math.round(x.min)}°</div>${x.rain_prob >= 60 ? '<div class="wr">☔ ' + x.rain_prob + '%</div>' : ''}</div>`;
     const weatherStrip = w ? `<div class="wstrip">${(w.past_7d || []).map(x => dayCell(x, true)).join('')}<div class="wsep">오늘</div>${(w.next_7d || []).map(x => dayCell(x, false)).join('')}</div>
       <div class="muted small">지난 7일 평균 ${ws.past_avg_max}°/${ws.past_avg_min}° → 앞으로 7일 ${ws.next_avg_max}°/${ws.next_avg_min}°${ws.first_min_below_15 ? ` · 최저 15°↓ 첫날 ${ws.first_min_below_15.slice(5)}` : ''}${(ws.rainy_days_next || []).length ? ` · 비 ${ws.rainy_days_next.map(x => x.slice(5)).join(', ')}` : ''}</div>` : '<div class="muted">날씨 데이터 없음</div>';
-    const risingChips = (tr.naver || []).map(c => `<div class="tr-cat"><b>${escHtml(c.category)}</b> <span class="muted small">TOP10: ${c.top10.map(escHtml).join(' · ')}</span>
+    const risingChips = (tr.naver || []).filter(c => (c.top10 || []).length || (c.rising || []).length).map(c => `<div class="tr-cat"><b>${escHtml(c.category)}</b> <span class="muted small">TOP10: ${c.top10.map(escHtml).join(' · ')}</span>
         <div class="chips">${(c.rising || []).slice(0, 18).map(r => `<span class="kchip ${r.our_products.length ? 'hit' : ''}" title="${r.our_products.map(p => escHtml(p.name)).join('\n')}">${escHtml(r.keyword)} <em>${r.kind === 'new' ? 'NEW ' + r.rank + '위' : r.prev_rank + '→' + r.rank + '위'}</em>${r.our_products.length ? `<i>${r.our_products.length}</i>` : ''}</span>`).join('')}</div></div>`).join('');
     const trendRows = (rp.trend_actions || []).map(x => `<div class="li"><div class="li-top"><b>${escHtml(x.keyword)}</b><span class="chip new">${escHtml(x.signal)}</span><span class="muted small">${escHtml(x.our_products)}</span></div><div>${escHtml(x.suggestion)}</div></div>`).join('');
     const trendBox = `<div class="box"><h3><i class="fa-solid fa-arrow-trend-up" style="color:#0891b2;"></i> 트렌드 · 날씨 <span class="muted small">네이버 쇼핑 인기 검색어(여성) 어제 vs 7일 전 · 서울 날씨</span></h3>
       ${weatherStrip}
       ${rp.weather_plan ? `<div class="fx"><b>날씨 계획</b> ${escHtml(rp.weather_plan)}</div>` : ''}
-      ${risingChips}
-      <div class="muted small">색칠된 키워드 = 우리 상품이 있는 것(숫자는 개수, 마우스를 올리면 상품명). 브랜드명은 판단에서 뺍니다.</div>
+      ${risingChips || '<div class="muted small" style="margin-top:8px;">인기 검색어 순위표를 이날은 받지 못했어요 (네이버 데이터랩 응답 없음 — 다음 보고서에서 다시 시도)</div>'}
+      ${risingChips ? '<div class="muted small">색칠된 키워드 = 우리 상품이 있는 것(숫자는 개수, 마우스를 올리면 상품명). 브랜드명은 판단에서 뺍니다.</div>' : ''}
       ${trendRows ? `<h4 style="margin-top:10px;">키워드 기반 제안</h4>${trendRows}` : ''}
     </div>`;
     const adsWarn = d.ads_known === false ? `<div class="notice warn"><b><i class="fa-solid fa-plug-circle-xmark"></i> Meta 광고 정보를 못 받았어요.</b> 이 보고서의 광고 개수·소재 분석은 비어 있습니다. 광고가 없다는 뜻이 아니라 수집이 실패한 것이니, 광고 관련 판단은 다음 보고서에서 확인하세요.</div>` : '';
     extraBoxes = adsWarn + trendBox + `
     <div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값 기준 · 마진율 = (판매가 − 공급가×1.1) ÷ 판매가</span></h3>
-      <div class="qlegend"><span class="qbadge q-grow">판매 확대</span> 둘 다 높음 <span class="qbadge q-expose">노출 부족</span> 주문율↑ 조회↓ <span class="qbadge q-fix">상세·가격 점검</span> 조회↑ 주문율↓ <span class="qbadge q-low">집중도 낮춤</span> 둘 다 낮음</div>
-      ${mxRows ? `<div class="tbl-wrap"><table class="risk"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div>` : '<div class="muted">판정할 신상품이 없어요</div>'}
+      <div class="qlegend"><span class="ql"><span class="qbadge q-grow">판매 확대</span> 둘 다 높음</span> <span class="ql"><span class="qbadge q-expose">노출 부족</span> 주문율↑ 조회↓</span> <span class="ql"><span class="qbadge q-fix">상세·가격 점검</span> 조회↑ 주문율↓</span> <span class="ql"><span class="qbadge q-low">집중도 낮춤</span> 둘 다 낮음</span></div>
+      ${mxRows ? `<div class="tbl-wrap"><table class="risk stack"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div>` : '<div class="muted">판정할 신상품이 없어요</div>'}
     </div>
     <div class="box"><h3><i class="fa-solid fa-bullseye" style="color:#0891b2;"></i> 집중 상품 <span class="muted small">급상승 3 + 판매 TOP10 순환 3 · 광고 소재 분석</span></h3>${focusCards || '<div class="muted">없음</div>'}</div>`;
   } else {
@@ -280,12 +281,20 @@ function reportHtml(r) {
       <div class="box wk-p"><h3><span class="pn p">P</span> 이번 주 주목</h3>${wlist(rp.week_highlights, 'up')}</div>
       <div class="box wk-n"><h3><span class="pn n">N</span> 이번 주 주의</h3>${wlist(rp.week_warnings, 'down')}</div>
     </div>` : ''}
-    <div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 이번 주 할 일${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i, { week: rp.week?.start })).join('') : '<div class="muted">없음</div>'}<div class="muted small chk-hint">체크하면 완료로 기록되고, 다음 날 보고서의 할 일에서 빠집니다.</div></div>
+    ${(!weekActions.length && r.agent === 'detail') ? '' : `<div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 이번 주 할 일${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i, { week: rp.week?.start })).join('') : '<div class="muted">없음</div>'}<div class="muted small chk-hint">체크하면 완료로 기록되고, 다음 날 보고서의 할 일에서 빠집니다.</div></div>`}
     ${lw ? `<div class="box past-box"><h3><i class="fa-regular fa-clock" style="color:#9ca3af;"></i> 저번 주 해야 했을 일 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''}</span></h3>${(lw.actions || []).length ? lw.actions.map((x, i) => actRow(x, i, { past: true, week: lw.start })).join('') : '<div class="muted">저번 주 보고서가 없어요</div>'}</div>` : ''}
     ${rp.note ? `<div class="muted small"><i class="fa-regular fa-circle-question"></i> ${escHtml(rp.note)}</div>` : ''}
     ${dataErrors(r.data)}
     ${typeof askBoxHtml === 'function' ? askBoxHtml(r) : ''}
     <details class="raw"><summary>수집한 숫자 보기</summary>${rawTable(r.data, r.agent)}</details>`;
+}
+
+/* 모바일용 표 → 카드: th 제목을 td의 data-label로 옮겨 두면 CSS(max-width 800px)가 행을 세로 카드로 펼친다 (2026-09-18) */
+function stackTables(root) {
+  (root || document).querySelectorAll('table.risk.stack').forEach(t => {
+    const labels = [...t.querySelectorAll('thead th')].map(th => th.innerHTML.replace(/<br\s*\/?>/gi, ' · ').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim());
+    t.querySelectorAll('tbody tr').forEach(tr => [...tr.children].forEach((td, i) => { if (labels[i]) td.setAttribute('data-label', labels[i]); }));
+  });
 }
 
 function dataErrors(data) {

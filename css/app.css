@@ -218,7 +218,10 @@ table.risk td .chip { white-space: nowrap; }
 .dt-grid ul { margin: 0 0 0 18px; line-height: 1.6; }
 .top-fix { background: #faf5ff; border: 1px solid #ddd6fe; border-radius: 10px; padding: 8px 10px; }
 .top-fix strong { color: #5b21b6; }
-.snippet { display: flex; gap: 10px; align-items: center; border: 1px dashed #ddd6fe; border-radius: 10px; padding: 8px 10px; margin-top: 6px; background: #faf5ff; }
+.kw-row { margin-top: 4px; line-height: 1.5; }
+.kw-row .chip { white-space: normal; display: inline-block; }
+.snippet { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; border: 1px dashed #ddd6fe; border-radius: 10px; padding: 8px 10px; margin-top: 6px; background: #faf5ff; }
+.snippet > .muted.small { grid-column: 1 / -1; }   /* 넣을 위치는 위 한 줄, 문장은 왼쪽 전체, 복사 버튼은 오른쪽 (2026-09-18 모바일: 셋을 한 줄에 놓아 글자가 세로로 부서지던 문제) */
 .snippet .snip-text { flex: 1; font-size: .84rem; }
 
 /* ── 요청형 점검 (2026-09-13) ── */
@@ -264,6 +267,19 @@ table.risk td .chip { white-space: nowrap; }
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); background: #1a1a2e; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: .85rem; opacity: 0; pointer-events: none; transition: all .2s; z-index: 50; max-width: 90vw; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ── 넘침 방지 (2026-09-18 모바일 점검) — 격자·플렉스 자식의 기본 min-width:auto 때문에 넓은 표·날씨 띠가 칸을 늘려
+   보고서 화면이 900px 넘게 옆으로 밀리던 문제. 자식은 min-width:0, 넓은 것은 각자 가로 스크롤. */
+.reports-layout > *, .two > *, .focus-grid > *, .dt-grid > *, .fx-row > *, .tiles > *, .cards > * { min-width: 0; }
+.report-view, .box, .focus-card, .li, .act > div, .qa .a, .ask-box { min-width: 0; }
+.headline, .li, .act > div, .qa .a, .fx, .snippet .snip-text, .agent-desc, .ntf-msg { overflow-wrap: break-word; }
+.raw { overflow-x: auto; }
+.snippet .snip-text { min-width: 0; }
+/* 표는 좁은 화면에서 글자를 세로로 부수지 않고 옆으로 스크롤 */
+.tbl-wrap table.risk { min-width: 640px; }
+table.risk td:first-child { min-width: 180px; }
+.qlegend .ql { white-space: nowrap; }
+.raw table { min-width: 480px; }
+
 /* ── 모바일 ── */
 @media (max-width: 800px) {
   .top { padding: 10px 14px; gap: 12px; }
@@ -271,7 +287,28 @@ table.risk td .chip { white-space: nowrap; }
   .main { padding: 16px 14px 32px; }
   .reports-layout { grid-template-columns: 1fr; }
   .report-list { position: static; max-height: 260px; }
-  .report-view { padding: 16px; }
+  .report-view { padding: 14px; }
+  .tiles { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .tile { padding: 10px 11px; }
+  .t-value { font-size: 1.05rem; }
+  .headline { padding: 14px 14px; }
+  .headline .h-text { font-size: 1rem; }
+  .box { padding: 10px 12px; }
+  .focus-card { padding: 12px 12px; }
+  .two { gap: 10px; }
+  /* 표 → 세로 카드 (stackTables가 data-label을 붙인 표만). 첫 칸(상품·주차)과 마지막 칸(판단·대응·전략)은 전체 폭 */
+  .tbl-wrap table.risk.stack { min-width: 0; width: 100%; }
+  table.risk.stack thead { display: none; }
+  table.risk.stack tbody tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+  table.risk.stack td { display: block; border: 0; padding: 0; text-align: left; white-space: normal; min-width: 0; }
+  table.risk.stack td.r { text-align: left; }
+  table.risk.stack td::before { content: attr(data-label); display: block; font-size: .68rem; color: var(--muted); font-weight: 700; margin-bottom: 1px; }
+  table.risk.stack td:first-child, table.risk.stack td:last-child { grid-column: 1 / -1; }
+  table.risk.stack tr:has(> td:nth-child(3):last-child) td:nth-child(2) { grid-column: 1 / -1; }   /* 3칸짜리(상품·판정·대응)는 전부 한 줄씩 */
+  table.risk.stack td:first-child::before { display: none; }
+  table.risk.stack td:first-child b { font-size: .9rem; }
+  table.risk.stack td .muted { white-space: normal; }
+  table.risk.stack td .chip { white-space: normal; display: inline-block; line-height: 1.4; }
 }
 @media (max-width: 480px) {
   .logo b { display: none; }
