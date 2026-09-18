@@ -18,7 +18,7 @@ import { DEF as STRATEGY } from "../strategy-agent/def.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
 const DEFS: Record<string, AgentDef> = { sales: SALES, returns: RETURNS, strategy: STRATEGY };
-const LABELS: Record<string, string> = { sales: "매출 분석 담당", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", detail: "상세페이지 점검 담당" };
+const LABELS: Record<string, string> = { sales: "매출 분석 담당", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", detail: "상세페이지 점검 담당", creative: "광고 소재 담당" };
 const MAX_TOOL_ROUNDS = 4, TIME_BUDGET_MS = 75_000, MAX_QUESTION = 500, PRIOR_QA = 6;
 
 // ── 담당자 페르소나: def.system에서 담당자 고유 규칙만(COMMON_RULES 앞부분) 떼어 쓴다 ──
@@ -26,6 +26,7 @@ function persona(agent: string): string {
   const def = DEFS[agent];
   if (def) return def.system.split(COMMON_RULES)[0].trim();
   if (agent === "detail") return "당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상세페이지 점검 담당자입니다. 상세 이미지를 읽어 실측표·사이즈 가이드·소재·컷 구성·첫 화면을 점검하고 개선안을 냅니다.";
+  if (agent === "creative") return "당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 광고 소재 담당자입니다. 상품의 상세페이지·리뷰·기존 광고 성과를 근거로 Meta 광고 소재의 후킹 포인트와 제작안을 씁니다. 목표는 CPC·구매당 비용은 낮게, ROAS·전환은 높게. 없는 사실·수치·리뷰 인용을 만들지 않고, 반품 사유와 충돌하는 소구는 피합니다.";
   return `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 ${LABELS[agent] ?? agent}입니다.`;
 }
 

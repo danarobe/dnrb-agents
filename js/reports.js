@@ -178,6 +178,59 @@ function reportHtml(r) {
         ${(v.copy_snippets || []).length ? `<h4 style="margin-top:10px;"><i class="fa-regular fa-clipboard" style="color:#7c3aed;"></i> 붙여 넣을 문장</h4>${v.copy_snippets.map(sn => `<div class="snippet"><div class="muted small">${escHtml(sn.where)}</div><div class="snip-text">${escHtml(sn.text)}</div><button class="btn ghost sm" onclick="copyText(this)" data-text="${escHtml(sn.text)}"><i class="fa-regular fa-copy"></i> 복사</button></div>`).join('')}` : ''}
       </div>`;
     }).join('');
+  } else if (r.agent === 'creative') {
+    // 광고 소재 담당 (2026-09-18): 상품별 후킹 포인트·제작안. 숫자·리뷰 인용은 서버가 모은 것만, 문구는 복사 버튼으로.
+    const bs = rp.briefs || [], fs = d.format_stats, acc = fs?.account;
+    const okb = bs.filter(x => x.status === 'ok' && x.brief);
+    const hooksAll = okb.flatMap(x => x.brief.hooks || []);
+    const won = v => v == null ? '—' : Math.round(v).toLocaleString('ko-KR') + '원';
+    const rvOk = okb.filter(x => x.review_status === 'ok').length;
+    tiles = [
+      tile('분석 상품', `${okb.length}개`, `급상승 ${okb.filter(x => x.kind === 'surge').length} · 베스트 ${okb.filter(x => x.kind === 'best').length}${okb.some(x => x.kind === 'manual') ? ' · 직접 고름 ' + okb.filter(x => x.kind === 'manual').length : ''}`),
+      tile('후킹 포인트', `${hooksAll.length}개`, `전환형 ${hooksAll.filter(h => h.goal === '전환형').length} · 클릭형 ${hooksAll.filter(h => h.goal === '클릭형').length}`),
+      tile('리뷰 반영', d.review_scope_missing ? '권한 대기' : `${rvOk}/${okb.length}`, d.review_scope_missing ? '카페24 재연동 후 자동 반영' : `리뷰 ${fmt(okb.reduce((t, x) => t + (x.review_count || 0), 0))}건 읽음`),
+      tile('계정 평균 (30일)', acc ? `CTR ${acc.ctr ?? '—'}%` : '—', acc ? `CPC ${won(acc.cpc)} · 구매당 ${won(acc.cost_per_purchase)} · ROAS ${acc.roas ?? '—'}` : 'Meta 성과를 못 받았어요'),
+    ].join('');
+    const cmp = (v, base, lowerBetter) => (v == null || base == null) ? '' : ((lowerBetter ? v < base : v > base) ? 'up-good' : 'down-bad');
+    const fsRows = (fs?.styles || []).map(s => `<tr><td><b>${escHtml(s.style)}</b><div class="muted">${fmt(s.ads)}개 · 지출 ${fmtMan(s.spend)}</div></td>
+        <td class="r ${cmp(s.ctr, acc?.ctr, false)}">${s.ctr ?? '—'}%</td><td class="r ${cmp(s.cpc, acc?.cpc, true)}">${won(s.cpc)}</td>
+        <td class="r ${cmp(s.cost_per_purchase, acc?.cost_per_purchase, true)}">${won(s.cost_per_purchase)}</td><td class="r ${cmp(s.roas, acc?.roas, false)}">${s.roas ?? '—'}</td></tr>`).join('');
+    const fsBox = fsRows ? `<div class="box"><h3><i class="fa-solid fa-ranking-star" style="color:#b45309;"></i> 소재 유형별 효율 <span class="muted small">최근 30일 · 광고명 규칙으로 읽은 유형 · 초록 = 계정 평균보다 좋음</span></h3>
+      <div class="tbl-wrap"><table class="risk stack"><thead><tr><th>유형</th><th class="r">CTR</th><th class="r">CPC</th><th class="r">구매당 비용</th><th class="r">ROAS</th></tr></thead><tbody>${fsRows}</tbody></table></div>
+      <div class="muted small chk-hint">계정 평균: CTR ${acc?.ctr ?? '—'}% · CPC ${won(acc?.cpc)} · 구매당 ${won(acc?.cost_per_purchase)} · ROAS ${acc?.roas ?? '—'}. 꺼진 소재도 포함(실패한 유형도 근거).</div></div>` : '';
+    const copyBtn = t => `<button class="btn ghost sm" onclick="copyText(this)" data-text="${escHtml(t)}"><i class="fa-regular fa-copy"></i> 복사</button>`;
+    const cards = bs.map(x => {
+      if (x.status !== 'ok' || !x.brief) return `<div class="focus-card"><b>${escHtml(x.product_name)}</b><div class="notice err" style="margin-top:8px;">제작안 실패: ${escHtml(x.error || '원인 미상')}</div></div>`;
+      const b = x.brief, m = x.metrics || {};
+      const rvChip = x.review_status === 'ok' ? `<span class="chip good">리뷰 ${fmt(x.review_count)}건${x.rating_avg ? ' · ★' + x.rating_avg : ''}</span>` : x.review_status === 'scope_missing' ? '<span class="chip">리뷰 권한 대기</span>' : '<span class="chip">리뷰 없음</span>';
+      const hooks = (b.hooks || []).map((h, i) => `<div class="hook">
+          <div class="hook-top"><span class="num">${i + 1}</span><b class="hook-text">${escHtml(h.hook_text)}</b></div>
+          <div class="hook-chips"><span class="chip ${h.goal === '전환형' ? 'good' : 'new'}">${escHtml(h.goal)}</span><span class="chip">${escHtml(h.angle)}</span>${(h.evidence || []).map(e => `<span class="chip ev">${escHtml(e)}</span>`).join('')}</div>
+          <div class="hook-why">${escHtml(h.why)}</div>
+          <div class="fx"><b>형식</b> ${escHtml(h.format)}</div>
+          <div class="fx"><b>첫 장면</b> ${escHtml(h.first_scene)}</div>
+          <div class="snippet"><div class="muted small">광고 본문</div><div class="snip-text" style="white-space:pre-line;">${escHtml(h.primary_text)}</div>${copyBtn(h.primary_text)}</div>
+          <div class="snippet"><div class="muted small">헤드라인</div><div class="snip-text">${escHtml(h.headline)}</div>${copyBtn(h.headline)}</div>
+        </div>`).join('');
+      const adRows = (x.ads || []).slice(0, 4).map(a => `<tr><td><b>${escHtml(a.name || a.ad_name || '')}</b>${a.body ? `<div class="muted">${escHtml(String(a.body).slice(0, 90))}</div>` : ''}</td><td class="r">${a.ctr ?? '—'}%</td><td class="r">${won(a.cpc)}</td><td class="r">${won(a.cost_per_purchase)}</td><td class="r">${a.roas ?? '—'}</td></tr>`).join('');
+      return `<div class="focus-card creative-card">
+        <div class="focus-head"><div><b>${escHtml(x.product_name)}</b> <span class="chip ${x.kind === 'surge' ? 'new' : ''}">${escHtml(m.why || '')}</span> ${rvChip} <span class="chip">신뢰도 ${escHtml(b.confidence)}</span>
+          <div class="muted">14일 조회 ${fmt(m.views_14d)} · 주문율 ${m.rate_14d ?? '—'}% · 판매 ${fmt(m.qty_14d)}개${m.margin_rate != null ? ' · 마진 ' + m.margin_rate + '%' : ''}${(m.promos || []).length ? ' · ' + m.promos.map(escHtml).join(', ') : ''}</div></div></div>
+        <div class="fx"><b>한 문장</b> ${escHtml(b.one_liner)}</div>
+        <div class="fx"><b>핵심 고객</b> ${escHtml(b.target)}</div>
+        <h4 class="cr-h"><i class="fa-solid fa-fish-fins" style="color:#b45309;"></i> 후킹 포인트 <span class="muted small">기대 효과 큰 순 · 클릭형 = CPC↓ / 전환형 = 구매당 비용↓</span></h4>
+        ${hooks}
+        ${(b.proof_quotes || []).length ? `<h4 class="cr-h"><i class="fa-solid fa-quote-left" style="color:#b45309;"></i> 자막에 쓸 리뷰 원문</h4>${b.proof_quotes.map(q => `<div class="snippet"><div class="snip-text">“${escHtml(q)}”</div>${copyBtn(q)}</div>`).join('')}` : ''}
+        ${(b.used_angles || []).length ? `<h4 class="cr-h"><i class="fa-solid fa-rotate" style="color:#b45309;"></i> 이미 쓴 앵글 평가</h4>${b.used_angles.map(u => `<div class="li"><div class="li-top"><b>${escHtml(u.angle)}</b><span class="chip ${u.verdict === '폐기' ? 'bad' : u.verdict === '변주해서 확대' ? 'good' : ''}">${escHtml(u.verdict)}</span></div><div>${escHtml(u.reason)}</div></div>`).join('')}` : ''}
+        ${(b.avoid || []).length ? `<h4 class="cr-h"><i class="fa-solid fa-ban down"></i> 피할 소구</h4><ul class="cr-ul">${b.avoid.map(a => `<li>${escHtml(a)}</li>`).join('')}</ul>` : ''}
+        <div class="fx"><b>상세와 맞추기</b> ${escHtml(b.landing_match)}</div>
+        <div class="fx"><b>테스트 순서</b> ${escHtml(b.test_plan)}</div>
+        <div class="muted small" style="margin-top:6px;"><i class="fa-regular fa-circle-question"></i> 신뢰도 ${escHtml(b.confidence)} — ${escHtml(b.confidence_reason)}</div>
+        ${adRows ? `<details class="raw"><summary>이 상품의 기존 소재 성과 (30일)</summary><table><thead><tr><th>소재 · 문구</th><th class="r">CTR</th><th class="r">CPC</th><th class="r">구매당</th><th class="r">ROAS</th></tr></thead><tbody>${adRows}</tbody></table></details>` : (x.ads === null ? '<div class="muted small">Meta 광고 성과를 못 받아 기존 소재는 반영되지 않았어요</div>' : '<div class="muted small">최근 30일에 이 상품으로 돌린 소재가 없어요</div>')}
+      </div>`;
+    }).join('');
+    const scopeNote = d.review_scope_missing ? `<div class="notice warn"><b><i class="fa-solid fa-key"></i> 리뷰는 아직 반영되지 않았어요.</b> 카페24 개발자센터에서 게시판 읽기 권한을 켠 뒤, 워크스페이스의 <b>카페24 연동</b> 버튼으로 한 번 재연동하면 다음 분석부터 리뷰(고객이 실제로 쓰는 말)가 훅의 근거로 들어갑니다.</div>` : '';
+    extraBoxes = scopeNote + fsBox + `<div class="box"><h3><i class="fa-solid fa-bullhorn" style="color:#b45309;"></i> 상품별 소재 제작안</h3>${cards || '<div class="muted">없음</div>'}</div>`;
   } else if (r.agent === 'strategy') {
     const na = d.new_arrivals || {}, mx = rp.matrix || [];
     const cnt = q => (na.matrix || []).filter(p => String(p.quadrant).startsWith(q)).length;
@@ -271,17 +324,17 @@ function reportHtml(r) {
       <ul>${(rp.summary || []).map(s => `<li>${escHtml(s)}</li>`).join('')}</ul>
     </div>
     <div class="tiles">${tiles}</div>
-    <div class="two">
+    ${(['detail', 'creative'].includes(r.agent) && !(rp.highlights || []).length && !(rp.warnings || []).length) ? '' : `<div class="two">
       <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 오늘의 주목</h3>${list(rp.highlights, 'up')}</div>
       <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 오늘의 주의</h3>${list(rp.warnings, 'down')}</div>
-    </div>
+    </div>`}
     ${extraBoxes}
     ${hasWeek ? `<div class="week-head"><i class="fa-regular fa-calendar"></i> 이번 주 누적 <span class="muted">${weekLabel} · 앞선 날 보고서와 합친 것. 그날 못 봤어도 여기서 확인</span></div>
     <div class="two">
       <div class="box wk-p"><h3><span class="pn p">P</span> 이번 주 주목</h3>${wlist(rp.week_highlights, 'up')}</div>
       <div class="box wk-n"><h3><span class="pn n">N</span> 이번 주 주의</h3>${wlist(rp.week_warnings, 'down')}</div>
     </div>` : ''}
-    ${(!weekActions.length && r.agent === 'detail') ? '' : `<div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 이번 주 할 일${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i, { week: rp.week?.start })).join('') : '<div class="muted">없음</div>'}<div class="muted small chk-hint">체크하면 완료로 기록되고, 다음 날 보고서의 할 일에서 빠집니다.</div></div>`}
+    ${(!weekActions.length && ['detail', 'creative'].includes(r.agent)) ? '' : `<div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 이번 주 할 일${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i, { week: rp.week?.start })).join('') : '<div class="muted">없음</div>'}<div class="muted small chk-hint">체크하면 완료로 기록되고, 다음 날 보고서의 할 일에서 빠집니다.</div></div>`}
     ${lw ? `<div class="box past-box"><h3><i class="fa-regular fa-clock" style="color:#9ca3af;"></i> 저번 주 해야 했을 일 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''}</span></h3>${(lw.actions || []).length ? lw.actions.map((x, i) => actRow(x, i, { past: true, week: lw.start })).join('') : '<div class="muted">저번 주 보고서가 없어요</div>'}</div>` : ''}
     ${rp.note ? `<div class="muted small"><i class="fa-regular fa-circle-question"></i> ${escHtml(rp.note)}</div>` : ''}
     ${dataErrors(r.data)}
@@ -307,6 +360,7 @@ function rawTable(d, agent) {
   if (!d) return '';
   if (agent === 'returns') return rawTableReturns(d);
   if (agent === 'strategy') return rawTableStrategy(d);
+  if (agent === 'creative') return `<div class="muted small">상품별 읽기 원문·리뷰는 creative_briefs 행에 저장돼 있어요. 묶음 ${escHtml(String(d.batch_id || ''))} · ${d.count || 0}개 상품</div>`;
   if (agent === 'detail') return `<div class="muted small">읽기 원문은 상세 점검 행(detail_reviews)에 저장돼 있어요. 묶음 ${escHtml(String(d.batch_id || ''))} · ${d.count || 0}개 상품</div>`;
   const rev = d.revenue || {}, pr = d.periods || {};
   const row = (label, r, p) => r ? `<tr><td>${label}</td><td class="muted">${Array.isArray(p) ? p[0] + ' ~ ' + p[1] : (p || '')}</td><td class="r">${fmt(r.revenue)}원</td><td class="r">${fmt(r.orders)}건</td></tr>` : '';

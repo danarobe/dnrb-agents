@@ -22,13 +22,13 @@ const SPECIAL_CATS = /new arrivals|best|sale|세일|size pick|autumn|summer|wint
 
 // ── 광고명 ↔ 상품명 매칭 (워크스페이스 index.html의 pa* 이식) ──
 const PA_VER = /(?<![a-z])ver/i;
-function paKey(name: string): string {
+export function paKey(name: string): string {
   let s = String(name || "").trim();
   for (;;) { const m = s.match(/^\s*(?:\([^)]*\)|\[[^\]]*\])\s*(.*)$/); if (m) s = m[1]; else break; }
   for (;;) { const m = s.match(/^(.*?)\s*(?:\([^)]*\)|\[[^\]]*\])\s*$/); if (m) s = m[1]; else break; }
   return s.trim();
 }
-function paVerTok(name: string): string | null {
+export function paVerTok(name: string): string | null {
   const m = String(name || "").match(/([가-힣]+|(?<![a-z]))ver\.?\d*/i);
   return m && PA_VER.test(m[0]) ? m[0] : null;
 }
@@ -43,9 +43,9 @@ function paJamo(s: string): string {
   }
   return out;
 }
-const paNorm = (t: string) => paJamo(String(t || "").normalize("NFC")).replace(/\s+/g, "").replace(/ver\./gi, "ver").toLowerCase();
-type PaProd = { no: number; name: string; key: string; ver: string | null; qty: number; dominant?: boolean };
-function paGroups(prods: PaProd[]) {
+export const paNorm = (t: string) => paJamo(String(t || "").normalize("NFC")).replace(/\s+/g, "").replace(/ver\./gi, "ver").toLowerCase();
+export type PaProd = { no: number; name: string; key: string; ver: string | null; qty: number; dominant?: boolean };
+export function paGroups(prods: PaProd[]) {
   const g: Record<string, { n: number; vers: string[]; noVer: number }> = {};
   for (const p of prods) { const e = (g[p.key] = g[p.key] || { n: 0, vers: [], noVer: 0 }); e.n++; if (p.ver) e.vers.push(p.ver); else e.noVer++; }
   // 기본판(ver 없음)이 여럿인 핵심명: 최근 판매량이 압도적(70%↑)인 상품을 '우세'로 표시 — 옛 상품(2 colors, 판매 0)과
@@ -59,7 +59,7 @@ function paGroups(prods: PaProd[]) {
   }
   return g;
 }
-function paPickBest(an: string, prods: PaProd[], groups: ReturnType<typeof paGroups>): PaProd | null {
+export function paPickBest(an: string, prods: PaProd[], groups: ReturnType<typeof paGroups>): PaProd | null {
   let best: PaProd | null = null;
   for (const p of prods) {
     if (!an.includes(p.key)) continue;
@@ -74,7 +74,7 @@ function paPickBest(an: string, prods: PaProd[], groups: ReturnType<typeof paGro
 }
 
 const median = (arr: number[]) => { if (!arr.length) return 0; const s = [...arr].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-const marginRate = (price: number, supply: number) => price > 0 && supply > 0 ? +(((price - supply * 1.1) / price) * 100).toFixed(1) : null;   // 워크스페이스 판매 성과와 같은 식(공급가 VAT 별도)
+export const marginRate = (price: number, supply: number) => price > 0 && supply > 0 ? +(((price - supply * 1.1) / price) * 100).toFixed(1) : null;   // 워크스페이스 판매 성과와 같은 식(공급가 VAT 별도)
 
 async function collect(D: string) {
   const { errors, safe } = safeCollector();

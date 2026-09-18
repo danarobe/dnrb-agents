@@ -30,8 +30,10 @@ const AGENTS = [
     sources: ['카페24 상세 이미지', '상품 전략·반품 보고서'],
   },
   {
-    key: 'marketing', name: '마케팅 담당', icon: 'fa-bullhorn', color: '#b45309', status: 'planned',
-    schedule: '매주 월요일', desc: '광고 성과와 재고를 보고 이번 주 밀어줄 상품과 광고 문구를 제안합니다.', sources: ['Meta 광고', '안정재고'],
+    key: 'creative', name: '광고 소재 담당', icon: 'fa-bullhorn', color: '#b45309', status: 'active', fn: 'creative-agent', onDemand: true, batch: true,
+    schedule: '매주 월요일 아침 9시 + 요청할 때',
+    desc: '판매 급상승 5개와 베스트 5개 상품의 상세페이지·리뷰·기존 광고 성과를 읽고, 어떤 후킹 포인트로 소재를 만들지(첫 3초 문구·첫 장면·본문·형식·피할 소구·테스트 순서) 제작안을 씁니다. 상품 하나만 골라 요청할 수도 있어요.',
+    sources: ['카페24 상세 이미지', '상품 후기', 'Meta 소재 성과', '반품 사유·검색 트렌드'],
   },
   {
     key: 'cs', name: '고객 응대 담당', icon: 'fa-headset', color: '#15803d', status: 'planned',
@@ -95,7 +97,8 @@ function agentCardSkeleton(a) {
       <input type="text" id="pick-${a.key}" list="pick-list-${a.key}" placeholder="상품명으로 찾기 (예: 베즈 모달)" autocomplete="off" oninput="pickSuggest('${a.key}')">
       <datalist id="pick-list-${a.key}"></datalist>
       <a class="btn ghost" href="#reports">보고서 보기</a>
-      <button class="btn primary" id="run-${a.key}" onclick="pickAndRun('${a.key}')"><i class="fa-solid fa-magnifying-glass"></i> 이 상품 점검</button>
+      ${a.batch ? `<button class="btn ghost" id="batch-${a.key}" onclick="batchRun('${a.key}')" title="급상승 5 + 베스트 5를 차례로 분석 (10~20분)"><i class="fa-solid fa-layer-group"></i> 10개 분석</button>` : ''}
+      <button class="btn primary" id="run-${a.key}" onclick="pickAndRun('${a.key}')"><i class="fa-solid fa-magnifying-glass"></i> ${a.key === 'creative' ? '이 상품 분석' : '이 상품 점검'}</button>
     </div>` : `<div class="agent-actions">
       <a class="btn ghost" href="#reports">보고서 보기</a>
       <button class="btn primary" id="run-${a.key}" onclick="agentRun('${a.key}')"><i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행</button>
@@ -126,15 +129,16 @@ supabase functions deploy sales-agent --project-ref eeffmbusaqaadeojjlnc</pre>
 async function agentRun(key, params = {}) {
   const a = agentOf(key); if (!a || !a.fn || !isAdmin()) return;
   const btn = $('run-' + key);
-  btnBusy(btn, key === 'detail' ? '읽는 중' : '분석 중');
+  const slow = key === 'detail' || key === 'creative';   // 상세 이미지를 읽는 담당자는 오래 걸린다
+  btnBusy(btn, slow ? '읽는 중' : '분석 중');
   try {
     const startedAt = Date.now();
     const d = await callFn(a.fn, { action: 'run', ...params }, { method: 'POST', body: '{}' });
     if (d.id) { toast('보고서가 도착했어요'); __reportsCache = null; location.hash = '#reports/' + d.id; return; }
     // 2단계 실행(수집 끝 → 별도 함수가 작성 중) — 새 보고서 행이 생길 때까지 10초마다 확인 (최대 4분)
-    toast(key === 'detail' ? (d.message || '상세 이미지 읽는 중 (상품당 2~4분)') : '수집 완료, 보고서 작성 중이에요 (1~2분)');
+    toast(slow ? (d.message || '상세 이미지 읽는 중 (상품당 2~4분)') : '수집 완료, 보고서 작성 중이에요 (1~2분)');
     btnBusy(btn, '작성 중');
-    for (let i = 0; i < (key === 'detail' ? 48 : 24); i++) {
+    for (let i = 0; i < (slow ? 48 : 24); i++) {
       await new Promise(r => setTimeout(r, 10000));
       const rows = await reportsLoad(true).catch(() => []);
       const fresh = rows.find(r => r.agent === key && new Date(r.created_at).getTime() > startedAt - 60000);
@@ -148,7 +152,19 @@ async function agentRun(key, params = {}) {
     toast('실패: ' + e.message);
     __reportsCache = null;
     if (location.hash.startsWith('#reports')) renderReports(); else renderHome();
-  } finally { btnIdle(btn, '<i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행'); }
+  } finally { btnIdle(btn, a.onDemand ? `<i class="fa-solid fa-magnifying-glass"></i> ${key === 'creative' ? '이 상품 분석' : '이 상품 점검'}` : '<i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행'); }
+}
+
+/* 묶음 실행(광고 소재 담당: 급상승 5 + 베스트 5) — 10~20분 걸려 기다리지 않고 알림으로 받는다 */
+async function batchRun(key) {
+  const a = agentOf(key); if (!a || !isAdmin()) return;
+  if (!confirm('급상승 5개 + 베스트 5개 상품을 차례로 분석할까요?\n10~20분 걸리고 약 2,000원 안팎이 듭니다(상품당 약 200원). 끝나면 알림이 와요.')) return;
+  const btn = $('batch-' + key); btnBusy(btn, '시작 중');
+  try {
+    const d = await callFn(a.fn, { action: 'run' }, { method: 'POST', body: '{}' });
+    toast(d.message || '분석을 시작했어요. 끝나면 알림이 와요');
+  } catch (e) { toast('실패: ' + e.message); }
+  finally { btnIdle(btn, '<i class="fa-solid fa-layer-group"></i> 10개 분석'); }
 }
 
 /* ── 상세 점검: 상품 골라 요청 (2026-09-13 사용자 결정 — 자동 실행 없음) ──

@@ -81,6 +81,18 @@
 - **기록**: `agent_questions`(마이그레이션 0009: report_id → agent_reports cascade, question/answer/tools_used[{tool,label}]/usage/asked_by·name/took_ms). 읽기·쓰기 모두 agent-ask(service_role) — db 프록시 화이트리스트 불필요. 액션: `list`(GET report_id) / `ask`(POST {report_id, question≤500자}).
 - **화면**(`js/ask.js`): `askBoxHtml(r)`을 `reportHtml` 끝(수집 숫자 보기 위)에 붙이고 `renderReports`가 `askLoad(id)` 호출. 담당자별 제안 질문 칩 3개(`ASK_SUGGEST`), 보내면 내 질문을 먼저 pending으로 그리고 답이 오면 목록 재조회. 답변은 escHtml 후 줄 단위 `<p>`, '- ' 줄은 `<ul>`. '다시 조회:' 칩으로 어떤 데이터를 봤는지 표시. 검증(2026-09-15): QA 임시 admin으로 실제 질문 4건(매출 2·반품·전략) 정상, node 스텁 DOM 렌더 확인, 테스트 문답·계정 삭제.
 
+## 3-5. 광고 소재 담당 (`supabase/functions/creative-agent`, 2026-09-18 — 사용자 기획)
+원래 구상하던 '마케팅 담당'(예산·계정 운영)은 사용자가 광고 리포트를 따로 보므로 폐기하고, **"판매 급상승 5 + 최근 베스트 5 상품의 상세페이지·리뷰를 분석해 어떤 후킹 포인트로 소재를 만들지"** 뽑는 담당자로 만들었다. 목표 = CPC·구매당 비용↓, ROAS·전환↑.
+- **근거 우선순위(프롬프트에 강제)**: ① 이 상품 광고에서 이미 검증된 앵글(기존 소재의 CTR·CPC·구매당 비용·ROAS를 계정 평균과 비교 — 잘 된 건 '변주해서 확대', 안 된 건 '폐기') ② 리뷰에서 반복되는 고객 언어(건수) ③ 상세페이지의 차별점 ④ 혜택(promos 있을 때만) ⑤ 급상승 검색 키워드(정의 특징이 상세에 있을 때만). **반품 사유·낮은 별점과 충돌하는 소구는 금지**(avoid), **광고 약속 = 상세 첫 화면 증명**(landing_match — 전환에 직결), 없는 사실·수치·리뷰 인용 금지, Meta 정책(개인 속성 단정·과장 전후 비교·의학 효능·최저가) 금지, 훅은 클릭형(CPC↓)·전환형(구매당 비용↓)을 섞되 전환형 최소 1개.
+- **상품 선정(run, 코드)**: 급상승 = 7일 10개↑·(cur+5)/(prev+5) 큰 순(매출·전략과 같은 규칙) 5개 + 베스트 = 14일 결제수량 순 5개(급상승과 중복 제외). 품절·판매중지 제외, **최근 28일에 제작안을 쓴 상품은 뒤로**(베스트가 매주 같은 5개로 굳지 않게 — 단 리뷰 없이 쓴 것은 '다룬 것'으로 안 침). `?product_no=`면 그 상품 1개.
+- **소재 유형별 효율(`formatStats`)**: 워크스페이스 meta-ads **`adperf`**(2026-09-18 신설: 최근 30일 지출 있던 광고 전부 — 꺼진 것 포함, 클릭·노출·CTR·CPC·구매당 비용·ROAS, 30분 캐시)를 받아 광고명 규칙(`_P7_다나대표_`, `_R1_할인강조_`, `릴스1`, `스토리_7`, `인스타`/`i5`, `착용컷`, `상세컷`)으로 유형을 읽어 가중 집계. 첫 실측: 계정 CTR 3.55%·CPC 458원·구매당 13,853원·ROAS 5.2 / 사진(P)은 CPC 661원·ROAS 3.53으로 열세, 다나대표 등장 CTR 4.16%·ROAS 5.5. 광고↔상품 매칭은 전략 담당의 pa* 도우미(def.ts에서 export) 재사용.
+- **흐름(pg_net `agent_call` 단계 호출, 묶음은 한 상품씩 순차 — 10개 동시 읽기는 Gemini·wsrv 120호출이 몰림)**: run → `creative_briefs` 행(seq) → prepare(같은 desc_hash의 읽기 결과를 creative_briefs·**detail_reviews**에서 재사용, `READ_VERSION` 일치할 때만) → read(장마다 Gemini) → brief(리뷰 + adcards 문구 + 반품 담당 위험 사유 + 전략 담당 급상승 키워드 → Claude opus medium, json_schema) → `advance`가 다음 상품 시작 → 다 끝나면 `agent_reports(agent=creative)` 1건(headline·summary는 코드 작성) + 알림. 앞선 묶음이 40분 안에 돌고 있으면 run은 409.
+- **상세 읽기 공용 모듈 `_shared/detailread.ts`**(detail-agent에서 분리: wsrv 조각·Gemini 읽기·mergePages·READ_PROMPT). **READ_PROMPT를 바꾸면 READ_VERSION을 올린다**(pages에 `_v` 기록 — 옛 버전은 재사용 안 함). 이 파일을 고치면 detail-agent·creative-agent 둘 다 재배포.
+- **리뷰 = 카페24 후기 게시판(board 4)**: 쇼핑몰은 알파리뷰(외부 앱)를 쓰지만 카페24 게시판에도 동기화됨(실측 1만 5천여 건). 워크스페이스 cafe24-analytics **`reviews`** 액션(`/admin/boards/4/articles?product_no=`, 100건, 비밀글·답글·삭제 제외, 본문 500자) — 권한 **`mall.read_community`** 필요(OAuth SCOPE에 추가함). ⚠ 개발자센터에서 권한을 켠 뒤 **워크스페이스 '카페24 연동' 재연동**을 해야 토큰에 반영된다 — 그 전에는 `{error:"scope_missing"}` → 제작안은 리뷰 없이(신뢰도 낮춤, 화면 상단 안내) 나오고, 재연동 뒤 자동으로 리뷰가 들어간다. Claude에는 낮은 별점 15 + 긴 리뷰 위주 60건(각 300자). 알파리뷰 위젯 API는 위젯 코드·자체 인증이 필요한 비공식 통로라 쓰지 않음, 공개 게시판 페이지는 상품 필터가 안 되고 글마다 140KB라 부적합(실측).
+- **출력(BRIEF_SCHEMA)**: one_liner·target·`hooks[3~5]{angle, goal 클릭형|전환형, hook_text ≤20자, why(숫자 근거), evidence[], format, first_scene, primary_text, headline}`·proof_quotes(리뷰 원문, 없으면 [])·used_angles{verdict 변주해서 확대|유지|폐기}·avoid·landing_match·test_plan(3일, 계정 평균 대비 기준)·confidence. 화면: 타일 4 → 소재 유형별 효율 표(초록 = 계정 평균보다 좋음) → 상품 카드(훅마다 본문·헤드라인 복사 버튼) → 질문하기(제안: "1순위 훅을 릴스 15초 콘티로").
+- **실행**: pg_cron `creative-agent-weekly`(jobid 6, `0 0 * * 1` UTC = **월요일 09:00 KST**) + 홈 카드에서 상품 검색 후 [이 상품 분석] 또는 [10개 분석](`batchRun` — 기다리지 않고 알림으로). 실측(2487 양가죽 플랫슈즈, 읽기 재사용): 75초, 입력 12K·출력 3.1K 토큰 ≈ **상품당 약 190원**, 묶음 10개 ≈ 2,000원/주.
+- DB: `creative_briefs`(0010) + RPC `creative_page_done`. service_role 전용(화면은 agent_reports만 읽음).
+
 ## 4. DB
 - `agent_actions`(마이그레이션 `0007_agent_actions.sql`, 적용 완료, 2026-09-11): **할 일 완료 체크**. agent/action_id(unique 쌍)/week_start/title·owner(스냅숏)/done/done_by/done_at. 앱이 db 프록시(admin)로 `on_conflict=agent,action_id` upsert(prefer merge-duplicates). 키 = `week_actions[].id`(에이전트 부여 `기준일YYYYMMDD-순번`; 유지 항목은 id 불변). id 없는 옛 보고서 항목은 `legacy:since:제목40자` 임시 키(다음 보고서부터 진짜 id로 바뀌어 체크가 이어지지 않음 — 2026-09-10 보고서 한정). `weekContext()`가 done=true id를 읽어 `week_actions_so_far[].done`으로 프롬프트에 넣고, 시스템 프롬프트가 **done=true는 반드시 제외**하게 한다. 화면: 번호 동그라미가 체크박스(완료 = 초록 ✓ + 취소선 + "완료 · 이름 · 시각"), 저번 주 할 일도 체크 가능. 홈 카드에 "이번 주 할 일 M/N 완료".
 - `agent_questions`(0009, 2026-09-15): 담당자에게 질문 문답 — §3-4. RLS on·정책 없음, agent-ask(service_role)만 접근.
@@ -97,4 +109,4 @@
 ## 6. 남은 일
 - 첫 보고서 2건 확인됨(2026-09-10, 입력 약 4.5K·출력 약 2K 토큰/건). 프롬프트·액션 품질 다듬기 계속.
 - 완료 체크(2026-09-11)·에이전트에게 질문하기(2026-09-15, §3-4) 완료. 담당 배정은 아직.
-- 3호 완료(2026-09-12), 3호 2단계 상세 점검 완료(2026-09-13). 4호 후보 = 마케팅(주간 광고 예산 배분·소재 테스트 계획) 또는 고객 응대 — 사용자 확인 후.
+- 3호 완료(2026-09-12), 상세 점검(2026-09-13), **광고 소재 담당(2026-09-18, §3-5 — 마케팅 담당 구상을 대체)** 완료. 남은 후보 = 고객 응대, 담당 배정 — 사용자 확인 후.

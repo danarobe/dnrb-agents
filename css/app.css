@@ -224,6 +224,19 @@ table.risk td .chip { white-space: nowrap; }
 .snippet > .muted.small { grid-column: 1 / -1; }   /* 넣을 위치는 위 한 줄, 문장은 왼쪽 전체, 복사 버튼은 오른쪽 (2026-09-18 모바일: 셋을 한 줄에 놓아 글자가 세로로 부서지던 문제) */
 .snippet .snip-text { flex: 1; font-size: .84rem; }
 
+/* ── 광고 소재 담당 (2026-09-18) ── */
+.creative-card { border-color: #fde68a; }
+.cr-h { font-size: .82rem; font-weight: 800; margin: 12px 0 4px; color: var(--ink-2); }
+.hook { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 8px; background: #fffdf7; }
+.hook-top { display: flex; gap: 8px; align-items: flex-start; }
+.hook-top .num { flex: none; width: 22px; height: 22px; border-radius: 50%; background: #b45309; color: #fff; font-weight: 800; font-size: .72rem; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.hook-text { font-size: 1rem; line-height: 1.4; }
+.hook-chips { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 4px; }
+.chip.ev { background: #fff7ed; color: #9a3412; }
+.hook-why { font-size: .82rem; color: var(--ink-2); line-height: 1.55; }
+.cr-ul { margin: 2px 0 0 18px; font-size: .84rem; line-height: 1.6; }
+td.up-good { color: var(--good); font-weight: 700; } td.down-bad { color: var(--bad); }
+
 /* ── 요청형 점검 (2026-09-13) ── */
 .agent-actions.ondemand { flex-wrap: wrap; justify-content: flex-start; }
 .agent-actions.ondemand input { flex: 1 1 100%; border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: .84rem; outline: none; }
@@ -296,6 +309,10 @@ table.risk td:first-child { min-width: 180px; }
   .box { padding: 10px 12px; }
   .focus-card { padding: 12px 12px; }
   .two { gap: 10px; }
+  .creative-card { padding: 10px 10px; }
+  .hook { padding: 8px 10px; }
+  .snippet { grid-template-columns: 1fr; }          /* 좁은 화면: 문장을 전체 폭으로, 복사 버튼은 아래 오른쪽 */
+  .snippet .btn { justify-self: end; }
   /* 표 → 세로 카드 (stackTables가 data-label을 붙인 표만). 첫 칸(상품·주차)과 마지막 칸(판단·대응·전략)은 전체 폭 */
   .tbl-wrap table.risk.stack { min-width: 0; width: 100%; }
   table.risk.stack thead { display: none; }
