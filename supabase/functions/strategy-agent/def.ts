@@ -22,8 +22,11 @@ const SPECIAL_CATS = /new arrivals|best|sale|세일|size pick|autumn|summer|wint
 
 // ── 광고명 ↔ 상품명 매칭 (워크스페이스 index.html의 pa* 이식) ──
 const PA_VER = /(?<![a-z])ver/i;
+// ⚠ 2026-09-23: 카페24 상품명 끝에 ' - Danarobe' 같은 브랜드 접미사가 붙기 시작해(SEO) 핵심명이 '클레르 블라우스 (5 colors) - Danarobe'가 되며
+//   광고가 하나도 안 붙던 사례(클레르·세러데이·플랫슈즈 '광고 0개' 오판) → 접미사를 먼저 떼고 괄호를 벗긴다. 워크스페이스 index.html paKey도 동일하게.
+const BRAND_SUFFIX = /\s*[-–—|]\s*(danarobe|dana|다나로브|다나)\s*$/i;
 export function paKey(name: string): string {
-  let s = String(name || "").trim();
+  let s = String(name || "").trim().replace(BRAND_SUFFIX, "").trim();
   for (;;) { const m = s.match(/^\s*(?:\([^)]*\)|\[[^\]]*\])\s*(.*)$/); if (m) s = m[1]; else break; }
   for (;;) { const m = s.match(/^(.*?)\s*(?:\([^)]*\)|\[[^\]]*\])\s*$/); if (m) s = m[1]; else break; }
   return s.trim();
@@ -333,6 +336,7 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 - '상세·가격 점검'(조회↑ 주문율↓): 상세페이지·가격·옵션 점검. 할인 중인데도 낮으면 상품 자체 문제일 수 있음.
 - '집중도 낮춤'(둘 다↓): 대표의 판단대로 집중도를 낮추되, '(광고 미테스트)'가 붙은 상품은 노출 부족 탓일 수 있어 "한 번 테스트 후 판단"으로 씁니다.
 - '데이터 부족'·'노출 거의 없음'은 판단을 보류하고 필요하면 한 줄만.
+- 어떤 상품의 광고 개수는 **오늘 data(top10·matrix·focus의 active_ads·own_ads)만** 근거로 씁니다. this_week.prior_days의 문장에 적힌 광고 수를 다시 쓰지 않습니다(어제 0개였어도 오늘 5개면 5개).
 - rules.ads_status가 '정상'이 아니면(광고 수집 실패) active_ads가 null이고 own_ads가 비어 있습니다. 이때는 "광고 0개"·"광고 공백"·"광고 착수" 같은 광고 유무 판단을 절대 하지 말고, headline·summary에도 광고 얘기를 넣지 않으며, 소재 분석 칸에는 '광고 정보 확인 불가(수집 실패)'라고만 씁니다.
 - 마진율이 낮은 상품(예: 35% 미만)은 밀어도 남는 게 적으니 우선순위를 낮추고, 마진 좋은 '판매 확대' 상품이 최우선입니다. 적용 중인 혜택(promos: 1+1·기간할인)과 할인가를 전략에 반영합니다.
 - matrix에는 '판매 확대'·'노출 부족'·'상세·가격 점검' 중 중요한 순으로 최대 15개만 넣고, strategy는 30자 이내 한 줄. (보고서 생성 시간 제한이 있어 짧게)
