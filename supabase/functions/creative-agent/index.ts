@@ -19,7 +19,7 @@ import { encodeBase64 } from "jsr:@std/encoding@1/base64";
 import { handleOptions, json, verifyAuthToken } from "../_shared/util.ts";
 import { addDays, callFn, isCronRequest, MODEL, notifyAdmins, num, rest, Row, seoulToday } from "../_shared/agent.ts";
 import { GEMINI_KEY, GEMINI_MODEL, geminiRead, imageMeta, MAX_IMAGES, READ_VERSION, tilePlan, TILE_W, wsrv } from "../_shared/detailread.ts";
-import { marginRate, paGroups, paKey, paNorm, PaProd, paPickBest, paVerTok } from "../strategy-agent/def.ts";
+import { marginRate, paGroups, paKey, paLooseHits, paNorm, PaProd, paPickBest, paVerTok } from "../strategy-agent/def.ts";
 
 const AGENT = "creative";
 const LABEL = "광고 소재 담당";
@@ -254,7 +254,8 @@ Deno.serve(async (req) => {
         .map(([no, name]) => ({ no, name, key: paNorm(paKey(name)), ver: paVerTok(name) ? paNorm(paVerTok(name)!) : null, qty: num(m14.get(no)?.order_qty) })).filter((p) => p.key.length >= 3);
       const groups = paGroups(allProds);
       const adsByProduct = new Map<number, AdRow[]>();
-      for (const ad of adsAll) { const b = paPickBest(paNorm(ad.ad_name), allProds, groups); if (b) (adsByProduct.get(b.no) ?? adsByProduct.set(b.no, []).get(b.no)!).push(ad); }
+      const unmatchedAdNames: string[] = [];
+      for (const ad of adsAll) { const an = paNorm(ad.ad_name); const b = paPickBest(an, allProds, groups); if (b) (adsByProduct.get(b.no) ?? adsByProduct.set(b.no, []).get(b.no)!).push(ad); else unmatchedAdNames.push(an); }
       const shared = { ads_known: !!perf, format_stats: perf ? formatStats(adsAll) : null, period: perf?.period ?? null };
       const promosOf = (no: number): string[] => { const bp = ((ben?.by_product ?? {}) as Record<string, Row[]>)[String(no)] ?? []; return bp.map((b) => `${b.name}: ${b.desc}${b.end ? ` (~${String(b.end).slice(5)})` : ""}`).slice(0, 3); };
 
@@ -271,7 +272,9 @@ Deno.serve(async (req) => {
           price: price || null, margin_rate: marginRate(price, supply), promos: promosOf(no), best_rank_14d: br?.rank ?? null,
         };
         const own = (adsByProduct.get(no) ?? []).sort((a, b) => b.spend - a.spend).slice(0, 8);
-        const ins = await rest("creative_briefs", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ batch_id: batch, seq: i, product_no: no, product_name: nameOf(no) || String(p.product_name ?? ""), report_date: D, kind, metrics, ads: shared.ads_known ? own : null, shared, status: "queued" }) });
+        // 매칭 자기 점검(2026-09-23): 정식 매칭 0개인데 광고명에 상품명이 들어 있으면 '광고 없음'이 아니라 '모름'(null)으로 — 제작안이 "기존 소재 없음"으로 오판하지 않게
+        const suspect = !own.length && paLooseHits(nameOf(no) || String(p.product_name ?? ""), unmatchedAdNames) > 0;
+        const ins = await rest("creative_briefs", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ batch_id: batch, seq: i, product_no: no, product_name: nameOf(no) || String(p.product_name ?? ""), report_date: D, kind, metrics, ads: shared.ads_known && !suspect ? own : null, shared, status: "queued" }) });
         if (!ins.ok) throw new Error(`행 생성 실패 ${ins.status}: ${(await ins.text()).slice(0, 160)}`);
         ids.push(String(((await ins.json())[0] as Row).id));
       }

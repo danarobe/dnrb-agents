@@ -285,7 +285,10 @@ function reportHtml(r) {
       ${risingChips ? '<div class="muted small">색칠된 키워드 = 우리 상품이 있는 것(숫자는 개수, 마우스를 올리면 상품명). 브랜드명은 판단에서 뺍니다.</div>' : ''}
       ${trendRows ? `<h4 style="margin-top:10px;">키워드 기반 제안</h4>${trendRows}` : ''}
     </div>`;
-    const adsWarn = d.ads_known === false ? `<div class="notice warn"><b><i class="fa-solid fa-plug-circle-xmark"></i> Meta 광고 정보를 못 받았어요.</b> 이 보고서의 광고 개수·소재 분석은 비어 있습니다. 광고가 없다는 뜻이 아니라 수집이 실패한 것이니, 광고 관련 판단은 다음 보고서에서 확인하세요.</div>` : '';
+    const ma = d.match_audit;
+    const adsWarn = d.ads_known === false ? `<div class="notice warn"><b><i class="fa-solid fa-plug-circle-xmark"></i> Meta 광고 정보를 못 받았어요.</b> 이 보고서의 광고 개수·소재 분석은 비어 있습니다. 광고가 없다는 뜻이 아니라 수집이 실패한 것이니, 광고 관련 판단은 다음 보고서에서 확인하세요.</div>`
+      : (ma && ma.status === 'suspect') ? `<div class="notice warn"><b><i class="fa-solid fa-link-slash"></i> 광고↔상품 연결이 깨진 것 같아요.</b> 활성 광고 ${fmt(ma.total_ads)}개 중 ${ma.matched_share}%만 상품에 연결됐고, 광고 이름에 상품명이 있는데 연결 0개인 상품이 ${ma.suspects.length}개입니다. 이 상품들은 '광고 정보 없음'으로 두었습니다. 상품명 표기 규칙(접미사 등)이 바뀌었는지 확인해 주세요.</div>`
+      : (ma && (ma.suspects || []).length) ? `<div class="muted small" style="margin-bottom:10px;"><i class="fa-solid fa-link-slash"></i> 광고 이름이 줄임말이라 자동 연결이 안 된 상품 ${ma.suspects.length}개(${ma.suspects.slice(0, 3).map(s => escHtml(s.name.replace(/^\s*(?:\([^)]*\)|\[[^\]]*\])\s*/g, '').slice(0, 18))).join(', ')})는 '광고 정보 없음'으로 표시했어요. 광고 이름에 상품명을 그대로 쓰면 연결됩니다.</div>` : '';
     extraBoxes = adsWarn + trendBox + `
     <div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값 기준 · 마진율 = (판매가 − 공급가×1.1) ÷ 판매가</span></h3>
       <div class="qlegend"><span class="ql"><span class="qbadge q-grow">판매 확대</span> 둘 다 높음</span> <span class="ql"><span class="qbadge q-expose">노출 부족</span> 주문율↑ 조회↓</span> <span class="ql"><span class="qbadge q-fix">상세·가격 점검</span> 조회↑ 주문율↓</span> <span class="ql"><span class="qbadge q-low">집중도 낮춤</span> 둘 다 낮음</span></div>

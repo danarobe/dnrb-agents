@@ -76,6 +76,32 @@ export function paPickBest(an: string, prods: PaProd[], groups: ReturnType<typeo
   return best;
 }
 
+// ── 매칭 자기 점검 (2026-09-23): "광고 0개"를 조용히 쓰지 않기 위한 장치 ──
+//   상품 핵심명의 앞 두 어절(예: '클레르 블라우스')이 어떤 광고명에라도 들어 있는데 정식 매칭(paPickBest)이 0개면 → 규칙이 깨진 것으로 의심.
+//   (접미사·표기 규칙이 바뀌어 매칭이 깨진 9/23 사례처럼, 원인을 몰라도 '의심'은 잡힌다.)
+export function paLooseHits(name: string, adNames: string[]): number {
+  const words = paKey(name).split(/\s+/).filter((w) => w.length >= 2).slice(0, 2);
+  if (!words.length) return 0;
+  const needle = paNorm(words.join(" "));
+  return needle.length >= 4 ? adNames.filter((n) => n.includes(needle)).length : 0;
+}
+// 매칭 결과 전체를 점검한다. unmatchedAdNames = 어떤 상품에도 안 붙은 광고명(정규화) — 형제 상품(브이넥/라운드)에 정상으로 붙은 광고는 후보에서 빠진다.
+//   suspects = 정식 매칭 0개인데 미매칭 광고명에 상품명 앞 두 어절이 들어 있는 상품(예: 광고명이 '하울 브이 니트 ops'처럼 줄임말인 경우 — 실제 누락).
+//   status: ok | suspect — 'suspect'는 체계적으로 깨진 것(매칭 비율 35% 미만 또는 의심 상품 5개 이상, 접미사 규칙 변경 같은 경우)일 때만.
+//   개별 suspects는 상태와 무관하게 그 상품의 광고 수를 null(모름)로 두고 rules에 '확인 필요'로 적는다.
+export function paMatchAudit(products: { no: number; name: string; qty: number }[], adsByProduct: Map<number, unknown[]>, totalAds: number, unmatchedAdNames: string[]) {
+  const suspects: { no: number; name: string; loose_hits: number }[] = [];
+  for (const p of products) {
+    if ((adsByProduct.get(p.no) ?? []).length) continue;
+    const hits = paLooseHits(p.name, unmatchedAdNames);
+    if (hits >= 1) suspects.push({ no: p.no, name: p.name, loose_hits: hits });
+  }
+  const matched = [...adsByProduct.values()].reduce((t, l) => t + l.length, 0);
+  const share = totalAds ? matched / totalAds : 0;
+  const status = suspects.length >= 5 || (totalAds >= 30 && share < 0.35) ? "suspect" : "ok";
+  return { status, matched_ads: matched, total_ads: totalAds, matched_share: Math.round(share * 100), suspects: suspects.slice(0, 10) };
+}
+
 const median = (arr: number[]) => { if (!arr.length) return 0; const s = [...arr].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 export const marginRate = (price: number, supply: number) => price > 0 && supply > 0 ? +(((price - supply * 1.1) / price) * 100).toFixed(1) : null;   // 워크스페이스 판매 성과와 같은 식(공급가 VAT 별도)
 
@@ -148,12 +174,19 @@ async function collect(D: string) {
     .filter((p) => p.key.length >= 3);
   const groups = paGroups(allProds);
   const adsByProduct = new Map<number, Row[]>();
+  const unmatchedAdNames: string[] = [];
   for (const ad of ((active?.ads ?? []) as Row[])) {
-    const best = paPickBest(paNorm(String(ad.ad_name ?? "")), allProds, groups);
-    if (!best) continue;
+    const an = paNorm(String(ad.ad_name ?? ""));
+    const best = paPickBest(an, allProds, groups);
+    if (!best) { unmatchedAdNames.push(an); continue; }
     (adsByProduct.get(best.no) ?? adsByProduct.set(best.no, []).get(best.no)!).push(ad);
   }
   for (const list of adsByProduct.values()) list.sort((a, b) => num(b.spend) - num(a.spend));
+  // 매칭 자기 점검 — 판매 상위 30개 기준. 의심이면 이 상품들의 광고 수를 '모름'으로 두고 보고서에 경고(2026-09-23 재발 방지)
+  const top30 = [...rows14].sort((a, b) => num(b.order_qty) - num(a.order_qty)).slice(0, 30).map((r) => ({ no: Number(r.product_no), name: String(r.product_name ?? ""), qty: num(r.order_qty) }));
+  const matchAudit = adsKnown ? paMatchAudit(top30, adsByProduct, ((active?.ads ?? []) as unknown[]).length, unmatchedAdNames) : { status: "unknown", matched_ads: 0, total_ads: 0, matched_share: 0, suspects: [] };
+  const suspectNos = new Set(matchAudit.suspects.map((s) => s.no));
+  const adCountOf = (no: number): number | null => !adsKnown ? null : suspectNos.has(no) ? null : (adsByProduct.get(no) ?? []).length;
 
   // ── 신상품 4분면 ──
   const ageOf = (no: number) => { const c = String(infoMap.get(no)?.created_date ?? "").slice(0, 10); return c ? Math.round((new Date(`${todayKst}T12:00:00Z`).getTime() - new Date(`${c}T12:00:00Z`).getTime()) / 86400000) : null; };
@@ -166,7 +199,7 @@ async function collect(D: string) {
       created: String(p.created_date ?? "").slice(0, 10) || null, age_days: ageOf(no), sold_out: String(p.sold_out ?? "") === "T",
       price, discount_price: dprice && dprice < price ? dprice : null, margin_rate: marginRate(price, supply), promos: promosOf(no),
       views_14d: num(r?.views), orders_14d: num(r?.order_count), qty_14d: num(r?.order_qty), rate_14d: num(r?.rate), qty_7d: num(r7?.order_qty), views_7d: num(r7?.views),
-      active_ads: adsKnown ? ads.length : null, ad_spend_total: adsKnown ? Math.round(ads.reduce((t, a) => t + num(a.spend), 0)) : null,
+      active_ads: adCountOf(no), ad_spend_total: adsKnown && !suspectNos.has(no) ? Math.round(ads.reduce((t, a) => t + num(a.spend), 0)) : null,
     };
   });
   const eligible = newProducts.filter((p) => (p.age_days ?? 99) >= MIN_AGE_DAYS && p.views_14d >= MIN_VIEWS);
@@ -252,12 +285,15 @@ async function collect(D: string) {
       matrix: `신상품(NEW ARRIVALS ${newNos.length}개) 중 등록 ${MIN_AGE_DAYS}일↑·14일 조회 ${MIN_VIEWS}↑인 ${eligible.length}개의 중앙값(조회 ${Math.round(medViews)}, 주문율 ${medRate}%) 기준 4분면`,
       margin: "마진율 = (판매가 − 공급가×1.1) ÷ 판매가. 낮으면 밀어도 남는 게 적음",
       ads: "since_start = 광고 시작~어제 누적, last14 = 최근 14일. 빈도(frequency) 3 이상이면 같은 사람에게 반복 노출 = 소재 피로",
-      ads_status: adsKnown ? "정상" : "⚠ Meta 활성 광고 수집 실패 — 모든 상품의 active_ads·own_ads가 비어 있는 것은 '광고 없음'이 아니라 '모름'. 광고 개수·소재·광고 착수 여부를 판단하지 말고 필요하면 '광고 정보 확인 불가'라고만 쓸 것",
+      ads_status: adsKnown && matchAudit.status === "suspect" ? `⚠ 광고↔상품 매칭이 체계적으로 깨진 것으로 의심(매칭 ${matchAudit.matched_share}%, 의심 상품 ${matchAudit.suspects.length}개). 광고 개수·광고 착수 여부를 판단하지 말고 '광고 정보 확인 필요'로만 쓸 것`
+        : adsKnown && matchAudit.suspects.length ? `정상. 단 active_ads가 null인 상품(${matchAudit.suspects.map((s) => s.name).join(", ")})은 광고명이 줄임말 등으로 달라 자동 연결이 안 된 것 — '광고 0개'가 아니라 '광고 연결 확인 필요'로 쓸 것`
+        : adsKnown ? "정상" : "⚠ Meta 활성 광고 수집 실패 — 모든 상품의 active_ads·own_ads가 비어 있는 것은 '광고 없음'이 아니라 '모름'. 광고 개수·소재·광고 착수 여부를 판단하지 말고 필요하면 '광고 정보 확인 불가'라고만 쓸 것",
     },
     ads_known: adsKnown,
+    match_audit: matchAudit,
     new_arrivals: { count: newNos.length, eligible: eligible.length, median_views_14d: Math.round(medViews), median_rate_14d: medRate, matrix },
     focus,
-    top10: top10.map((t) => ({ rank: t.rank, product_no: t.no, name: nameOf(t.no), qty_14d: num(m14.get(t.no)?.order_qty), rate_14d: num(m14.get(t.no)?.rate), active_ads: adsKnown ? (adsByProduct.get(t.no) ?? []).length : null })),
+    top10: top10.map((t) => ({ rank: t.rank, product_no: t.no, name: nameOf(t.no), qty_14d: num(m14.get(t.no)?.order_qty), rate_14d: num(m14.get(t.no)?.rate), active_ads: adCountOf(t.no) })),
     trending: trending.map((t) => ({ product_no: t.no, name: nameOf(t.no), qty_7d: t.qty7, qty_prev7d: t.prevQty })),
     benefits_active: num(ben?.active_count),
     trends: {
