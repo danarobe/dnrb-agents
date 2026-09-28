@@ -96,11 +96,11 @@ function agentCardSkeleton(a) {
     ${active && isAdmin() ? (a.onDemand ? `<div class="agent-actions ondemand">
       <input type="text" id="pick-${a.key}" list="pick-list-${a.key}" placeholder="상품명으로 찾기 (예: 베즈 모달)" autocomplete="off" oninput="pickSuggest('${a.key}')">
       <datalist id="pick-list-${a.key}"></datalist>
-      <a class="btn ghost" href="#reports">보고서 보기</a>
+      <a class="btn ghost" href="#reports/agent:${a.key}">보고서 보기</a>
       ${a.batch ? `<button class="btn ghost" id="batch-${a.key}" onclick="batchRun('${a.key}')" title="급상승 5 + 베스트 5를 차례로 분석 (10~20분)"><i class="fa-solid fa-layer-group"></i> 10개 분석</button>` : ''}
       <button class="btn primary" id="run-${a.key}" onclick="pickAndRun('${a.key}')"><i class="fa-solid fa-magnifying-glass"></i> ${a.key === 'creative' ? '이 상품 분석' : '이 상품 점검'}</button>
     </div>` : `<div class="agent-actions">
-      <a class="btn ghost" href="#reports">보고서 보기</a>
+      <a class="btn ghost" href="#reports/agent:${a.key}">보고서 보기</a>
       <button class="btn primary" id="run-${a.key}" onclick="agentRun('${a.key}')"><i class="fa-solid fa-wand-magic-sparkles"></i> 지금 실행</button>
     </div>`) : ''}
   </div>`;

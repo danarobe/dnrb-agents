@@ -35,7 +35,7 @@ button, input { font-family: inherit; font-size: inherit; }
 .top-right { display: flex; align-items: center; gap: 10px; font-size: .82rem; }
 
 /* ── 본문 ── */
-.main { max-width: 1120px; margin: 0 auto; padding: 24px 22px 40px; }
+.main { max-width: 1360px; margin: 0 auto; padding: 24px 22px 40px; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
 .page-head h1 { font-size: 1.35rem; font-weight: 800; }
 .page-head .sub { color: var(--muted); font-size: .88rem; margin-top: 2px; }
@@ -83,7 +83,7 @@ button, input { font-family: inherit; font-size: inherit; }
 .notice pre { background: rgba(255, 255, 255, .7); border-radius: 8px; padding: 8px 10px; margin-top: 8px; font-size: .78rem; overflow-x: auto; }
 
 /* ── 보고서 ── */
-.reports-layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; align-items: start; }
+.reports-layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; }
 .report-list { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; max-height: calc(100vh - 160px); overflow-y: auto; position: sticky; top: 72px; }
 .report-item { display: flex; gap: 10px; padding: 11px 14px; border-bottom: 1px solid #f3f4f6; font-size: .84rem; }
 .report-item:hover { background: #f9fafb; }
@@ -91,7 +91,7 @@ button, input { font-family: inherit; font-size: inherit; }
 .report-item .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 6px; flex: none; }
 .ri-body { display: flex; flex-direction: column; min-width: 0; }
 .ri-top { display: flex; gap: 6px; align-items: baseline; }
-.ri-line { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ri-line { color: var(--ink-2); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.4; }   /* 제목이 잘리지 않게 두 줄까지 (2026-09-28) */
 .report-item.err .ri-line { color: var(--bad); }
 .report-view { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px; min-height: 200px; }
 .rv-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; font-size: .8rem; }
@@ -187,8 +187,8 @@ table.risk td .chip { white-space: nowrap; }
 .ad-row img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; flex: none; background: #f3f4f6; }
 .ad-noimg { width: 64px; height: 64px; border-radius: 8px; background: #f3f4f6; flex: none; }
 .ad-info { min-width: 0; font-size: .78rem; }
-.ad-name { font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ad-body { color: var(--muted); font-size: .74rem; margin-top: 2px; white-space: pre-line; max-height: 3.2em; overflow: hidden; }
+.ad-name { font-weight: 700; color: var(--ink); overflow-wrap: anywhere; line-height: 1.4; }
+.ad-body { color: var(--muted); font-size: .74rem; margin-top: 2px; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .fx { font-size: .82rem; line-height: 1.55; margin-top: 8px; }
 .fx b { color: #0e7490; margin-right: 4px; }
 .fx ol { margin: 4px 0 0 18px; }
@@ -288,10 +288,47 @@ td.up-good { color: var(--good); font-weight: 700; } td.down-bad { color: var(--
 .raw { overflow-x: auto; }
 .snippet .snip-text { min-width: 0; }
 /* 표는 좁은 화면에서 글자를 세로로 부수지 않고 옆으로 스크롤 */
-.tbl-wrap table.risk { min-width: 640px; }
-table.risk td:first-child { min-width: 180px; }
+/* 표 가독성 (2026-09-28 사용자 지적 "글이 아래로 쭉 이어지고 잘린다"): 칸 폭을 내용에 맡기면 행사 칩(nowrap)이 222px를 먹고
+   '전략' 칸이 57px로 눌려 한두 글자씩 세로로 흘렀다. → 칸 비율을 고정하고(table-layout: fixed), 보고서 영역이 좁으면 카드형으로 전환(@container). */
+table.risk { table-layout: fixed; }
+table.risk td, table.risk th { overflow-wrap: anywhere; word-break: keep-all; line-height: 1.5; }
+table.risk td .chip, .li-top .chip, .focus-head .chip { white-space: normal; display: inline-block; line-height: 1.4; }
+table.t-matrix th:nth-child(1) { width: 27%; } table.t-matrix th:nth-child(2) { width: 12%; } table.t-matrix th:nth-child(3) { width: 13%; }
+table.t-matrix th:nth-child(4) { width: 11%; } table.t-matrix th:nth-child(5) { width: 14%; } table.t-matrix th:nth-child(6) { width: 23%; }
+table.t-cohort th:nth-child(1) { width: 19%; } table.t-cohort th:nth-child(2) { width: 12%; } table.t-cohort th:nth-child(3) { width: 12%; }
+table.t-cohort th:nth-child(4) { width: 13%; } table.t-cohort th:nth-child(5) { width: 13%; } table.t-cohort th:nth-child(6) { width: 31%; }
+table.t-risk th:nth-child(1) { width: 46%; } table.t-risk th:nth-child(2) { width: 16%; } table.t-risk th:nth-child(3) { width: 38%; }
+table.t-format th:nth-child(1) { width: 36%; }
+table.risk .r { white-space: normal; }
 .qlegend .ql { white-space: nowrap; }
 .raw table { min-width: 480px; }
+
+
+/* 보고서 영역(.report-view) 폭 기준으로 표 ↔ 카드 전환 — 화면 폭이 아니라 실제 보고서 칸 폭을 본다(목록이 옆에 있으면 PC에서도 좁다) */
+.report-view { container-type: inline-size; container-name: rv; }
+@container rv (max-width: 860px) {
+  /* 표 → 세로 카드 (stackTables가 data-label을 붙인 표만). 첫 칸(상품·주차)과 마지막 칸(판단·대응·전략)은 전체 폭 */
+  .tbl-wrap table.risk.stack { min-width: 0; width: 100%; }
+  table.risk.stack thead { display: none; }
+  table.risk.stack tbody tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+  table.risk.stack td { display: block; border: 0; padding: 0; text-align: left; white-space: normal; min-width: 0; }
+  table.risk.stack td.r { text-align: left; }
+  table.risk.stack td::before { content: attr(data-label); display: block; font-size: .68rem; color: var(--muted); font-weight: 700; margin-bottom: 1px; }
+  table.risk.stack td:first-child, table.risk.stack td:last-child { grid-column: 1 / -1; }
+  table.risk.stack tr:has(> td:nth-child(3):last-child) td:nth-child(2) { grid-column: 1 / -1; }   /* 3칸짜리(상품·판정·대응)는 전부 한 줄씩 */
+  table.risk.stack td:first-child::before { display: none; }
+  table.risk.stack td:first-child b { font-size: .9rem; }
+  table.risk.stack td .muted { white-space: normal; }
+  table.risk.stack td .chip { white-space: normal; display: inline-block; line-height: 1.4; }
+}
+
+/* 카드형일 때도 보고서 칸이 어느 정도 넓으면(노트북) 숫자 칸을 4열로 — 2열이면 빈 공간이 많고 세로로 길어진다 */
+@container rv (min-width: 560px) and (max-width: 860px) {
+  table.risk.stack tbody tr { grid-template-columns: repeat(4, 1fr); }
+  table.t-format.stack td:last-child { grid-column: auto; }
+}
+@container rv (max-width: 559px) { table.t-format.stack td:last-child { grid-column: auto; } }
+@container rv (min-width: 620px) { .tiles { grid-template-columns: repeat(4, 1fr); } }
 
 /* ── 모바일 ── */
 @media (max-width: 800px) {
@@ -313,19 +350,6 @@ table.risk td:first-child { min-width: 180px; }
   .hook { padding: 8px 10px; }
   .snippet { grid-template-columns: 1fr; }          /* 좁은 화면: 문장을 전체 폭으로, 복사 버튼은 아래 오른쪽 */
   .snippet .btn { justify-self: end; }
-  /* 표 → 세로 카드 (stackTables가 data-label을 붙인 표만). 첫 칸(상품·주차)과 마지막 칸(판단·대응·전략)은 전체 폭 */
-  .tbl-wrap table.risk.stack { min-width: 0; width: 100%; }
-  table.risk.stack thead { display: none; }
-  table.risk.stack tbody tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
-  table.risk.stack td { display: block; border: 0; padding: 0; text-align: left; white-space: normal; min-width: 0; }
-  table.risk.stack td.r { text-align: left; }
-  table.risk.stack td::before { content: attr(data-label); display: block; font-size: .68rem; color: var(--muted); font-weight: 700; margin-bottom: 1px; }
-  table.risk.stack td:first-child, table.risk.stack td:last-child { grid-column: 1 / -1; }
-  table.risk.stack tr:has(> td:nth-child(3):last-child) td:nth-child(2) { grid-column: 1 / -1; }   /* 3칸짜리(상품·판정·대응)는 전부 한 줄씩 */
-  table.risk.stack td:first-child::before { display: none; }
-  table.risk.stack td:first-child b { font-size: .9rem; }
-  table.risk.stack td .muted { white-space: normal; }
-  table.risk.stack td .chip { white-space: normal; display: inline-block; line-height: 1.4; }
 }
 @media (max-width: 480px) {
   .logo b { display: none; }

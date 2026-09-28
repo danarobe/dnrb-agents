@@ -5,10 +5,17 @@
 ────────────────────────────────────────── */
 let __reportsCache = null;
 const reportsState = { filter: '' };
-function reportsFilter(k) { reportsState.filter = k; renderReports(location.hash.split('/')[1]); }
+function reportsFilter(k) { reportsState.filter = k; if (k) location.hash = '#reports/agent:' + k; else if (location.hash !== '#reports') location.hash = '#reports'; else renderReports(); }
 async function reportsLoad(force) {
   if (__reportsCache && !force) return __reportsCache;
-  const rows = await dbProxy('agent_reports?select=id,agent,report_date,trigger,status,report,data,error,model,created_at&order=created_at.desc&limit=60') || [];
+  const SEL = 'agent_reports?select=id,agent,report_date,trigger,status,report,data,error,model,created_at&order=created_at.desc';
+  const rare = AGENTS.filter(a => a.status === 'active' && a.onDemand).map(a => a.key);
+  const [recent, rareRows] = await Promise.all([
+    dbProxy(SEL + '&limit=60'),
+    rare.length ? dbProxy(SEL + `&agent=in.(${rare.join(',')})&limit=20`).catch(() => []) : [],
+  ]);
+  const byId = new Map([...(recent || []), ...(rareRows || [])].map(r => [r.id, r]));
+  const rows = [...byId.values()].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
   // 같은 날을 여러 번 실행했으면 최신 것만 보여준다 (재실행으로 목록이 어지러워지는 것 방지, 2026-09-11)
   const seen = new Set();
   __reportsCache = rows.filter(r => { const k = r.agent + '|' + r.report_date; if (seen.has(k)) return false; seen.add(k); return true; });
@@ -70,10 +77,18 @@ async function renderReports(id) {
   let rows;
   try { [rows] = await Promise.all([reportsLoad(), actionsLoad()]); }
   catch (e) { $('report-list').innerHTML = `<div class="muted pad">불러오기 실패: ${escHtml(e.message)}</div>`; return; }
-  const cur = rows.find(r => r.id === id) || rows[0];
-  // 담당자 필터 — 보고 있는 보고서의 담당자 또는 '전체'
+  // #reports/agent:<key> (담당자 카드의 '보고서 보기', 2026-09-28): 그 담당자로 필터 + 그 담당자의 최신 보고서
+  let wantAgent = '';
+  if (!id) reportsState.filter = '';   // 메뉴의 '보고서'(#reports)는 항상 전체 목록
+  if (id && String(id).startsWith('agent:')) { wantAgent = decodeURIComponent(String(id).slice(6)); reportsState.filter = agentOf(wantAgent) ? wantAgent : ''; id = ''; }
+  const byIdRow = id ? rows.find(r => r.id === id) : null;
+  if (byIdRow && reportsState.filter && byIdRow.agent !== reportsState.filter) reportsState.filter = byIdRow.agent;   // 다른 담당자 보고서를 직접 열면 필터를 맞춘다
   const filterAgent = reportsState.filter;
   const shown = filterAgent ? rows.filter(r => r.agent === filterAgent) : rows;
+  const cur = byIdRow || shown[0] || null;   // 필터가 있으면 그 담당자 것 중 최신 (예전엔 전체 최신 rows[0]이 떠서 다른 담당자 보고서가 보였음)
+  const runAgent = agentOf(filterAgent) && !agentOf(filterAgent).onDemand ? filterAgent : (filterAgent ? '' : 'sales');
+  const ha = document.querySelector('.head-actions');
+  if (ha) ha.innerHTML = runAgent ? `<button class="btn primary" id="run-${runAgent}" onclick="agentRun('${runAgent}')"><i class="fa-solid fa-wand-magic-sparkles"></i> ${escHtml(agentOf(runAgent).name)} 지금 실행</button>` : '';
   $('report-filter').innerHTML = [['', '전체'], ...AGENTS.filter(a => a.status === 'active').map(a => [a.key, a.name])]
     .map(([k, label]) => `<button class="chip-btn ${filterAgent === k ? 'on' : ''}" onclick="reportsFilter('${k}')">${label}</button>`).join('');
   $('report-list').innerHTML = shown.length ? shown.map(r => {
@@ -84,8 +99,8 @@ async function renderReports(id) {
         <span class="ri-top"><b>${dateShort(r.report_date)}</b> <span class="muted">${a.short || a.name} · ${r.trigger === 'cron' ? '자동' : '수동'}</span></span>
         <span class="ri-line">${r.status === 'error' ? '보고서 실패' : escHtml(r.report?.headline || a.name)}</span>
       </span></a>`;
-  }).join('') : `<div class="muted pad">아직 보고서가 없어요. 매일 아침 8시에 자동으로 도착하고, <b>지금 실행</b>으로 바로 만들 수도 있어요.</div>`;
-  $('report-view').innerHTML = cur ? reportHtml(cur) : '';
+  }).join('') : `<div class="muted pad">${filterAgent ? escHtml(agentOf(filterAgent)?.name || '') + '의 보고서가 아직 없어요.' : '아직 보고서가 없어요. 매일 아침 8시에 자동으로 도착하고, <b>지금 실행</b>으로 바로 만들 수도 있어요.'}</div>`;
+  $('report-view').innerHTML = cur ? reportHtml(cur) : '<div class="muted pad">왼쪽에서 보고서를 고르세요.</div>';
   stackTables($('report-view'));
   if (cur && cur.status === 'ok' && cur.report && typeof askLoad === 'function') askLoad(cur.id);   // 담당자에게 질문 (2026-09-15)
   if (cur && window.innerWidth <= 800) $('report-view').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -135,7 +150,7 @@ function reportHtml(r) {
         <td class="r"><b>${pr(x.return_rate)}</b>${raw.ret != null ? `<div class="muted">${fmt(raw.ret)}건</div>` : ''}</td><td>${escHtml(x.verdict)}</td></tr>`;
     }).join('');
     const cohortBox = cohortRows ? `<div class="box"><h3><i class="fa-regular fa-calendar-check" style="color:#4f46e5;"></i> 결제 주차별 취소·반품률 <span class="muted small">그 주에 결제된 주문 중 지금까지 취소·반품된 비율 · 성숙 = 14일 이상 경과</span></h3>
-      <div class="tbl-wrap"><table class="risk stack"><thead><tr><th>결제 주(월~일)</th><th>상태</th><th class="r">결제</th><th class="r">취소율</th><th class="r">반품률</th><th>판단</th></tr></thead><tbody>${cohortRows}</tbody></table></div>
+      <div class="tbl-wrap"><table class="risk stack t-cohort"><thead><tr><th>결제 주(월~일)</th><th>상태</th><th class="r">결제</th><th class="r">취소율</th><th class="r">반품률</th><th>판단</th></tr></thead><tbody>${cohortRows}</tbody></table></div>
       <div class="muted small chk-hint">취소가 다음 주에 일어나도 결제한 주로 돌아갑니다. 집계 중인 주는 앞으로 더 올라갑니다.</div></div>` : '';
     const lvColor = { '위험': 'down', '주의': 'warn' };
     const riskRows = (rp.risk_products || []).map(x => `<tr><td><b>${escHtml(x.name)}</b><div class="muted">${escHtml(x.cause)}</div></td><td class="r"><b class="${lvColor[x.level] || ''}">${escHtml(x.level)}</b><div class="muted">${x.rate_14d}% · ${fmt(x.delivered_14d)}개</div></td><td>${escHtml(x.fix)}</td></tr>`).join('');
@@ -143,7 +158,7 @@ function reportHtml(r) {
     const watchRows = (rp.watch_review || []).map(x => `<div class="li"><div class="li-top"><b>${escHtml(x.name)}</b><span class="chip ${x.verdict === '개선' ? 'good' : x.verdict === '악화' ? 'bad' : ''}">${escHtml(x.verdict)}</span></div><div>${escHtml(x.detail)}</div></div>`).join('');
     extraBoxes = cohortBox + `
     <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 위험·주의 상품 <span class="muted small">14일 창 · 순반품률 20%↑ 위험, 10~20% 주의</span></h3>
-      ${riskRows ? `<div class="tbl-wrap"><table class="risk stack"><thead><tr><th>상품 · 원인 추정</th><th class="r">판정</th><th>대응</th></tr></thead><tbody>${riskRows}</tbody></table></div>` : '<div class="muted">위험·주의 상품이 없어요</div>'}
+      ${riskRows ? `<div class="tbl-wrap"><table class="risk stack t-risk"><thead><tr><th>상품 · 원인 추정</th><th class="r">판정</th><th>대응</th></tr></thead><tbody>${riskRows}</tbody></table></div>` : '<div class="muted">위험·주의 상품이 없어요</div>'}
     </div>
     <div class="box"><h3><i class="fa-solid fa-star" style="color:#b45309;"></i> 관리 상품 점검 <span class="muted small">워크스페이스 반품 관리에서 지정한 상품</span></h3>${watchRows || '<div class="muted">관리 상품이 없어요</div>'}</div>`;
   } else if (r.agent === 'detail') {
@@ -196,7 +211,7 @@ function reportHtml(r) {
         <td class="r ${cmp(s.ctr, acc?.ctr, false)}">${s.ctr ?? '—'}%</td><td class="r ${cmp(s.cpc, acc?.cpc, true)}">${won(s.cpc)}</td>
         <td class="r ${cmp(s.cost_per_purchase, acc?.cost_per_purchase, true)}">${won(s.cost_per_purchase)}</td><td class="r ${cmp(s.roas, acc?.roas, false)}">${s.roas ?? '—'}</td></tr>`).join('');
     const fsBox = fsRows ? `<div class="box"><h3><i class="fa-solid fa-ranking-star" style="color:#b45309;"></i> 소재 유형별 효율 <span class="muted small">최근 30일 · 광고명 규칙으로 읽은 유형 · 초록 = 계정 평균보다 좋음</span></h3>
-      <div class="tbl-wrap"><table class="risk stack"><thead><tr><th>유형</th><th class="r">CTR</th><th class="r">CPC</th><th class="r">구매당 비용</th><th class="r">ROAS</th></tr></thead><tbody>${fsRows}</tbody></table></div>
+      <div class="tbl-wrap"><table class="risk stack t-format"><thead><tr><th>유형</th><th class="r">CTR</th><th class="r">CPC</th><th class="r">구매당 비용</th><th class="r">ROAS</th></tr></thead><tbody>${fsRows}</tbody></table></div>
       <div class="muted small chk-hint">계정 평균: CTR ${acc?.ctr ?? '—'}% · CPC ${won(acc?.cpc)} · 구매당 ${won(acc?.cost_per_purchase)} · ROAS ${acc?.roas ?? '—'}. 꺼진 소재도 포함(실패한 유형도 근거).</div></div>` : '';
     const copyBtn = t => `<button class="btn ghost sm" onclick="copyText(this)" data-text="${escHtml(t)}"><i class="fa-regular fa-copy"></i> 복사</button>`;
     const cards = bs.map(x => {
@@ -292,7 +307,7 @@ function reportHtml(r) {
     extraBoxes = adsWarn + trendBox + `
     <div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값 기준 · 마진율 = (판매가 − 공급가×1.1) ÷ 판매가</span></h3>
       <div class="qlegend"><span class="ql"><span class="qbadge q-grow">판매 확대</span> 둘 다 높음</span> <span class="ql"><span class="qbadge q-expose">노출 부족</span> 주문율↑ 조회↓</span> <span class="ql"><span class="qbadge q-fix">상세·가격 점검</span> 조회↑ 주문율↓</span> <span class="ql"><span class="qbadge q-low">집중도 낮춤</span> 둘 다 낮음</span></div>
-      ${mxRows ? `<div class="tbl-wrap"><table class="risk stack"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div>` : '<div class="muted">판정할 신상품이 없어요</div>'}
+      ${mxRows ? `<div class="tbl-wrap"><table class="risk stack t-matrix"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div>` : '<div class="muted">판정할 신상품이 없어요</div>'}
     </div>
     <div class="box"><h3><i class="fa-solid fa-bullseye" style="color:#0891b2;"></i> 집중 상품 <span class="muted small">급상승 3 + 판매 TOP10 순환 3 · 광고 소재 분석</span></h3>${focusCards || '<div class="muted">없음</div>'}</div>`;
   } else {

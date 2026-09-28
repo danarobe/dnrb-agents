@@ -11,7 +11,7 @@
 //     productinfo(+with_discount 후보만 — 91개 전부는 62초) · benefits(by_product) · activeads · adcards
 //   광고↔상품 매칭 = 워크스페이스 판매 성과 'ON 광고' 규칙(pa*)을 그대로 이식(핵심명·ver 토큰·자모 비교).
 // ═══════════════════════════════════════════════
-import { addDays, callFn, COMMON_RULES, dow, LLMImage, num, reportSchema, rest, Row, safeCollector, AgentDef } from "../_shared/agent.ts";
+import { addDays, callFn, findByName, COMMON_RULES, dow, LLMImage, num, reportSchema, rest, Row, safeCollector, AgentDef } from "../_shared/agent.ts";
 import { matchKeyword, NAVER_CATS, naverCategoryRanks, risingKeywords, seoulWeather } from "../_shared/trends.ts";
 
 const AGENT = "strategy";
@@ -350,17 +350,18 @@ function images(data: Row): LLMImage[] {
 // Claude 판단에 숫자·판정을 코드가 붙인다
 function postProcess(report: Row, data: Row): Row {
   const matrix = (((data.new_arrivals ?? {}) as Row).matrix ?? []) as Row[];
-  const byName = new Map(matrix.map((p) => [String(p.name), p]));
+  // 이름이 조금 달라도 같은 상품을 찾고(findByName), 끝내 못 찾은 행은 0으로 채우지 않고 뺀다 — 표시 이름은 데이터의 정식 이름
   const mt = ((report.matrix ?? []) as Row[]).map((x) => {
-    const p = byName.get(String(x.name)) ?? {};
-    return { name: x.name, strategy: x.strategy, quadrant: p.quadrant ?? "", views_14d: num(p.views_14d), rate_14d: p.rate_14d ?? null, qty_14d: num(p.qty_14d), margin_rate: p.margin_rate ?? null, discount_price: p.discount_price ?? null, price: num(p.price), promos: p.promos ?? [], age_days: p.age_days ?? null, active_ads: p.active_ads ?? null, sold_out: !!p.sold_out, product_no: p.product_no ?? null };
-  });
+    const p = findByName(matrix, x.name);
+    if (!p) return null;
+    return { name: p.name, strategy: x.strategy, quadrant: p.quadrant ?? "", views_14d: num(p.views_14d), rate_14d: p.rate_14d ?? null, qty_14d: num(p.qty_14d), margin_rate: p.margin_rate ?? null, discount_price: p.discount_price ?? null, price: num(p.price), promos: p.promos ?? [], age_days: p.age_days ?? null, active_ads: p.active_ads ?? null, sold_out: !!p.sold_out, product_no: p.product_no ?? null };
+  }).filter((x): x is NonNullable<typeof x> => !!x);
   const focus = (data.focus ?? []) as Row[];
-  const fByName = new Map(focus.map((f) => [String(f.name), f]));
   const fc = ((report.focus ?? []) as Row[]).map((x) => {
-    const f = fByName.get(String(x.name)) ?? {};
-    return { ...x, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
-  });
+    const f = findByName(focus, x.name);
+    if (!f) return null;
+    return { ...x, name: f.name, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
+  }).filter((x): x is NonNullable<typeof x> => !!x);
   return { ...report, matrix: mt, focus: fc };
 }
 

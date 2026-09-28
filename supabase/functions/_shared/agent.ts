@@ -43,6 +43,27 @@ export function mondayOf(ymd: string): string {
 export const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 export const pct = (a: number, b: number) => b > 0 ? Math.round((a - b) / b * 1000) / 10 : null;
 
+// ── 이름으로 행 찾기 (2026-09-28): Claude가 상품명을 쓸 때 끝의 '(3 colors)'를 빼거나 띄어쓰기를 바꾸는 경우가 있어
+//   '글자까지 같은 이름'으로만 찾으면 숫자가 0으로 채워졌다(전략 보고서 4분면 표 9행 실사례). 단계적으로 느슨하게 찾는다:
+//   ① 완전 일치 ② 공백·대소문자·브랜드 접미사 무시 ③ 한쪽이 다른 쪽의 앞부분 ④ 앞뒤 괄호를 벗긴 핵심명 일치(후보가 하나일 때만).
+const nameNorm = (s: unknown) => String(s ?? "").normalize("NFC").replace(/\s*[-–—|]\s*(danarobe|dana|다나로브|다나)\s*$/i, "").replace(/\s+/g, "").toLowerCase();
+const nameCore = (s: unknown) => {
+  let t = String(s ?? "").normalize("NFC").replace(/\s*[-–—|]\s*(danarobe|dana|다나로브|다나)\s*$/i, "").trim();
+  for (;;) { const m = t.match(/^\s*(?:\([^)]*\)|\[[^\]]*\])\s*(.*)$/); if (m) t = m[1]; else break; }
+  for (;;) { const m = t.match(/^(.*?)\s*(?:\([^)]*\)|\[[^\]]*\])\s*$/); if (m) t = m[1]; else break; }
+  return t.replace(/\s+/g, "").toLowerCase();
+};
+export function findByName<T extends Row>(rows: T[], name: unknown, field = "name"): T | null {
+  const raw = String(name ?? "");
+  const exact = rows.find((r) => String(r[field]) === raw); if (exact) return exact;
+  const n = nameNorm(raw); if (!n) return null;
+  const same = rows.filter((r) => nameNorm(r[field]) === n); if (same.length) return same[0];
+  const pre = rows.filter((r) => { const x = nameNorm(r[field]); return x.startsWith(n) || n.startsWith(x); }); if (pre.length === 1) return pre[0];
+  const c = nameCore(raw); if (c.length < 3) return null;
+  const core = rows.filter((r) => nameCore(r[field]) === c); if (core.length === 1) return core[0];
+  return pre.length ? pre.sort((a, b) => Math.abs(nameNorm(a[field]).length - n.length) - Math.abs(nameNorm(b[field]).length - n.length))[0] : null;
+}
+
 // ── Supabase PostgREST (service_role) ──
 export const rest = (path: string, init: RequestInit = {}) =>
   fetch(`${SB_URL}/rest/v1/${path}`, {

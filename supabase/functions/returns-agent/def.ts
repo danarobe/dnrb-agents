@@ -11,7 +11,7 @@
 //   기준일을 3일 더 물리는 이유: 반품 신청은 배송완료 후 0~5일에 걸쳐 들어와서(당일 51%·3일 90%),
 //   어제 기준으로 보면 실제의 절반 이하로 나온다 (워크스페이스 반품 관리 메뉴의 '오늘−4일' 규칙과 동일).
 // ═══════════════════════════════════════════════
-import { addDays, callFn, COMMON_RULES, dow, num, reportSchema, rest, Row, safeCollector, AgentDef } from "../_shared/agent.ts";
+import { findByName, addDays, callFn, COMMON_RULES, dow, num, reportSchema, rest, Row, safeCollector, AgentDef } from "../_shared/agent.ts";
 
 const AGENT = "returns";
 const RISK_AT = 20, WARN_AT = 10, MIN_QTY = 10;
@@ -231,7 +231,7 @@ function postProcess(report: Row, data: Row): Row {
     return { week: x.week, verdict: x.verdict, maturity: w.maturity ?? "", paid: num(w.paid), cancel_rate: w.cancel_rate ?? null, return_rate: w.return_rate ?? null };
   });
   const risk = ((((data.top_sellers_return ?? {}) as Row).risk_products ?? []) as Row[]);
-  const byName = new Map(risk.map((p) => [String(p.name), p]));
+  const byName = { get: (n: string) => findByName(risk, n) ?? undefined };   // 이름이 조금 달라도 같은 상품 찾기(2026-09-28)
   const riskProducts = ((report.risk_products ?? []) as Row[]).map((x) => {
     const p = byName.get(String(x.name));
     const w14 = (p?.win14 ?? {}) as Row;
