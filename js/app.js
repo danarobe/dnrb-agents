@@ -34,6 +34,7 @@ async function submitLogin(ev) {
   btnBusy(btn, '로그인 중');
   try {
     await authLogin($('login-id').value.trim(), $('login-pw').value);
+    await loadAccess();
     renderShell();
   } catch (e) { msg.textContent = e.message; }
   finally { btnIdle(btn, '로그인'); }
@@ -42,6 +43,7 @@ async function submitLogin(ev) {
 window.addEventListener('hashchange', () => { if (SESSION) route(); });
 document.addEventListener('DOMContentLoaded', async () => {
   await loadSession();   // #sso= 코드 교환이 있으면 서버 왕복 1회
+  await loadAccess();    // 관리자가 아니면 허용 목록 확인
   if (!location.hash) history.replaceState(null, '', '#home');
   renderShell();
 });

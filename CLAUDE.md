@@ -12,6 +12,7 @@
 
 ## 1. 워크스페이스와의 관계 (반드시 이해할 것)
 - **계정·로그인 = 워크스페이스 `auth` 함수.** 이 앱의 로그인 화면은 `auth` `login`을 그대로 호출한다(비밀번호 동일). 워크스페이스 메뉴 "AI 에이전트"는 `auth sso_issue`로 받은 **60초 일회용 코드**를 `#sso=코드` 해시로 넘기고, `js/api.js loadSession()`이 해시를 지운 뒤 `auth sso_redeem`으로 정식 토큰(7일)과 바꿔 `localStorage dnrb_agents_session`에 저장한다. **토큰 자체를 주소에 싣지 않는다**(2026-09-10 보안 검토: 공용 PC 브라우저 기록 노출) — 코드는 api_cache(`sso:<code>`)에 있다가 교환 즉시 삭제.
+- **사용 권한 = 관리자 + 허용 목록(2026-09-28)**: 표 `agent_users`(워크스페이스 migrations/0023, 직원 관리 화면의 'AI 에이전트 접근 허용' 칩으로 관리). 서버는 `_shared/agent.ts`의 **`canUseAgents(me)`**(admin이거나 agent_users에 있으면 true)로 검사 — serveAgent·agent-ask·detail-agent·creative-agent 공통. `notifyAdmins` 수신자 = 관리자 전원 + `agent_users.notify=true` 직원. 화면은 `js/api.js`의 `isAdmin()`이 `AGENT_OK`(로그인·SSO 직후 `loadAccess()`가 본인 행 조회)까지 포함하므로 허용 직원도 관리자와 같은 화면을 본다. 첫 허용: 김도희(마케터). **_shared/agent.ts를 고치면 7개 함수 전부 재배포.**
 - **데이터 읽기 = 워크스페이스 `db` 프록시 함수.** `agent_reports` 테이블은 그쪽 화이트리스트에 `admin`으로 등록돼 있다(2026-09-10). 새 테이블을 만들면 **워크스페이스 저장소의 `supabase/functions/db/index.ts` TABLE_ROLES에 추가하고 db 함수를 재배포**해야 한다.
 - **에이전트가 쓰는 데이터 함수(cafe24-analytics / cafe24-claims / meta-ads)는 워크스페이스 저장소 소속.** 세 함수는 `x-agent-secret`(secret `AGENT_SECRET`) 헤더를 admin으로 인정한다. 다른 액션을 열어야 하면 그쪽 코드를 고친다.
 - **`_shared/util.ts`는 워크스페이스 것의 복사본.** 그쪽이 바뀌면 여기도 맞춰 복사(특히 verifyAuthToken 역할 정규화).

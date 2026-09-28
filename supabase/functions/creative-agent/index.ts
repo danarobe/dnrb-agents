@@ -17,7 +17,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { encodeBase64 } from "jsr:@std/encoding@1/base64";
 import { handleOptions, json, verifyAuthToken } from "../_shared/util.ts";
-import { addDays, callFn, isCronRequest, MODEL, notifyAdmins, num, rest, Row, seoulToday } from "../_shared/agent.ts";
+import { addDays, callFn, isCronRequest, MODEL, notifyAdmins, num, rest, Row, seoulToday, canUseAgents } from "../_shared/agent.ts";
 import { GEMINI_KEY, GEMINI_MODEL, geminiRead, imageMeta, MAX_IMAGES, READ_VERSION, tilePlan, TILE_W, wsrv } from "../_shared/detailread.ts";
 import { marginRate, paGroups, paKey, paLooseHits, paNorm, PaProd, paPickBest, paVerTok } from "../strategy-agent/def.ts";
 
@@ -197,7 +197,7 @@ Deno.serve(async (req) => {
   const action = url.searchParams.get("action") ?? "status";
   const viaCron = isCronRequest(req);
   const me = viaCron ? null : await verifyAuthToken(req);
-  if (!viaCron && (!me || me.role !== "admin")) return json({ error: "접근 권한이 없습니다" }, 403);
+  if (!viaCron && !(await canUseAgents(me))) return json({ error: "접근 권한이 없습니다" }, 403);
 
   try {
     if (action === "status") {

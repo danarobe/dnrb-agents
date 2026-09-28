@@ -11,7 +11,7 @@
 // ═══════════════════════════════════════════════
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { handleOptions, json, verifyAuthToken } from "../_shared/util.ts";
-import { addDays, AgentDef, callFn, COMMON_RULES, MODEL, num, rest, Row, seoulToday } from "../_shared/agent.ts";
+import { addDays, AgentDef, callFn, COMMON_RULES, MODEL, num, rest, Row, seoulToday, canUseAgents } from "../_shared/agent.ts";
 import { DEF as SALES } from "../sales-agent/def.ts";
 import { DEF as RETURNS } from "../returns-agent/def.ts";
 import { DEF as STRATEGY } from "../strategy-agent/def.ts";
@@ -156,7 +156,7 @@ Deno.serve(async (req) => {
   const opt = handleOptions(req);
   if (opt) return opt;
   const me = await verifyAuthToken(req);
-  if (!me || me.role !== "admin") return json({ error: "접근 권한이 없습니다" }, 403);
+  if (!(await canUseAgents(me))) return json({ error: "접근 권한이 없습니다" }, 403);
   const url = new URL(req.url);
   const action = url.searchParams.get("action") ?? "list";
   try {

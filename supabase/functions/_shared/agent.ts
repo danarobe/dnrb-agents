@@ -240,9 +240,21 @@ export async function saveRow(row: Row): Promise<Row> {
   return (await res.json())[0];
 }
 
+// 에이전트 앱 사용 권한 (2026-09-28 사용자 요청): 관리자 + 허용 목록(agent_users — 워크스페이스 직원 관리에서 지정).
+export async function canUseAgents(me: { id: string; role: string } | null): Promise<boolean> {
+  if (!me) return false;
+  if (me.role === "admin") return true;
+  const r = await rest(`agent_users?user_id=eq.${encodeURIComponent(me.id)}&select=user_id`);
+  return r.ok && ((await r.json()) as unknown[]).length > 0;
+}
+
 export async function notifyAdmins(label: string, D: string, headline: string): Promise<{ saved: number; pushed: number }> {
+  // 수신자 = 관리자 전원 + 허용 목록 중 알림을 켠 직원 (2026-09-28)
   const ures = await rest("app_users?role=eq.admin&select=id");
-  const ids: string[] = ures.ok ? ((await ures.json()) as { id: string }[]).map((u) => u.id) : [];
+  const admins: string[] = ures.ok ? ((await ures.json()) as { id: string }[]).map((u) => u.id) : [];
+  const ares = await rest("agent_users?notify=eq.true&select=user_id");
+  const extra: string[] = ares.ok ? ((await ares.json()) as { user_id: string }[]).map((u) => u.user_id) : [];
+  const ids: string[] = [...new Set([...admins, ...extra])];
   if (!ids.length) return { saved: 0, pushed: 0 };
   const msg = `[${D.slice(5).replace("-", "/")} ${label} 리포트] ${headline}`.slice(0, 200);
   await rest("notifications", {
@@ -289,7 +301,7 @@ export function serveAgent(def: AgentDef) {
     const action = url.searchParams.get("action") ?? "status";
     const viaCron = !!CRON_SECRET && req.headers.get("x-cron-secret") === CRON_SECRET;
     const me = viaCron ? null : await verifyAuthToken(req);
-    if (!viaCron && (!me || me.role !== "admin")) return json({ error: "접근 권한이 없습니다" }, 403);
+    if (!viaCron && !(await canUseAgents(me))) return json({ error: "접근 권한이 없습니다" }, 403);
 
     try {
       if (action === "status") {

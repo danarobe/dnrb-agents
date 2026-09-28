@@ -8,7 +8,15 @@ const SESSION_KEY = 'dnrb_agents_session';
 let SESSION = null;
 
 const $ = id => document.getElementById(id);
-const isAdmin = () => SESSION?.role === 'admin';
+// 이 앱을 쓸 수 있는 사람 = 관리자 + 허용 목록(agent_users, 워크스페이스 직원 관리에서 지정 — 2026-09-28). 서버가 같은 목록으로 강제한다.
+// (이름은 isAdmin 그대로 — 화면 곳곳의 '볼 수 있는가' 검사에 쓰인다)
+let AGENT_OK = false;
+const isAdmin = () => SESSION?.role === 'admin' || AGENT_OK;
+async function loadAccess() {
+  AGENT_OK = false;
+  if (!SESSION || SESSION.role === 'admin') return;
+  try { const rows = await dbProxy(`agent_users?user_id=eq.${encodeURIComponent(SESSION.id)}&select=user_id`); AGENT_OK = Array.isArray(rows) && rows.length > 0; } catch { AGENT_OK = false; }
+}
 const ROLE_LABEL = { admin: '관리자', staff: 'MD', marketer: '마케터', cs: 'CS팀', logistics: '물류팀' };
 
 async function loadSession() {
