@@ -46,7 +46,10 @@ function paJamo(s: string): string {
   }
   return out;
 }
-export const paNorm = (t: string) => paJamo(String(t || "").normalize("NFC")).replace(/\s+/g, "").replace(/ver\./gi, "ver").toLowerCase();
+// 광고명 줄임말 → 상품명 표기 (2026-09-30, 워크스페이스 index.html PA_ALIASES와 동일): '하울 브이 니트 ops' = 원피스 — 광고 0개 오판 방지
+const PA_ALIASES: [RegExp, string][] = [[/(?<![a-z])ops(?![a-z])/gi, "원피스"]];
+const paAlias = (t: string) => PA_ALIASES.reduce((s, [re, to]) => s.replace(re, to), t);
+export const paNorm = (t: string) => paJamo(paAlias(String(t || "").normalize("NFC"))).replace(/\s+/g, "").replace(/ver\./gi, "ver").toLowerCase();
 export type PaProd = { no: number; name: string; key: string; ver: string | null; qty: number; dominant?: boolean };
 export function paGroups(prods: PaProd[]) {
   const g: Record<string, { n: number; vers: string[]; noVer: number }> = {};
