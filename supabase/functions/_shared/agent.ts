@@ -313,6 +313,8 @@ export interface AgentDef {
   postProcess?: (report: Row, data: Row) => Row;
   effort?: "low" | "medium" | "high";   // 기본 medium
   images?: (data: Row) => LLMImage[];    // 선택: Claude가 봐야 할 이미지(광고 소재 썸네일 등, 최대 12장)
+  // 선택: 담당자 전용 추가 액션(관리자 또는 x-cron-secret). 예: strategy-agent의 'trends'(데이터랩 순위표를 낮에 받아 저장, 2026-10-11)
+  actions?: Record<string, (url: URL, req: Request) => Promise<Response>>;
 }
 export function serveAgent(def: AgentDef) {
   Deno.serve(async (req) => {
@@ -372,6 +374,7 @@ export function serveAgent(def: AgentDef) {
         }
       }
 
+      if (def.actions && def.actions[action]) return await def.actions[action](url, req);
       return json({ error: "알 수 없는 action" }, 400);
     } catch (e) {
       return json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, 500);

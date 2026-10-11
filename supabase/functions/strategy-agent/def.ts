@@ -13,6 +13,7 @@
 // ═══════════════════════════════════════════════
 import { addDays, callFn, findByName, COMMON_RULES, dow, LLMImage, num, reportSchema, rest, Row, safeCollector, AgentDef } from "../_shared/agent.ts";
 import { matchKeyword, NAVER_CATS, naverCategoryRanks, risingKeywords, seoulWeather } from "../_shared/trends.ts";
+import { json } from "../_shared/util.ts";
 
 const AGENT = "strategy";
 const NEW_CAT = 33;                 // NEW ARRIVALS
@@ -107,6 +108,76 @@ export function paMatchAudit(products: { no: number; name: string; qty: number }
 
 const median = (arr: number[]) => { if (!arr.length) return 0; const s = [...arr].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 export const marginRate = (price: number, supply: number) => price > 0 && supply > 0 ? +(((price - supply * 1.1) / price) * 100).toFixed(1) : null;   // 워크스페이스 판매 성과와 같은 식(공급가 VAT 별도)
+
+// ── 데이터랩 순위표 저장본 (trend_ranks) ──
+type RankMap = Map<string, number>;
+const rankRow = (m: RankMap) => Object.fromEntries([...m.entries()]);
+const rowRank = (o: unknown): RankMap => new Map(Object.entries((o ?? {}) as Record<string, number>).map(([k, v]) => [k, Number(v)]));
+async function readRanks(days: string[]): Promise<Map<string, Map<string, RankMap>>> {   // day → cid → ranks
+  const out = new Map<string, Map<string, RankMap>>();
+  if (!days.length) return out;
+  const r = await rest(`trend_ranks?day=in.(${days.join(",")})&gender=eq.f&n=gt.0&select=day,cid,ranks`);
+  for (const x of (r.ok ? (await r.json()) as Row[] : [])) {
+    const d = String(x.day); if (!out.has(d)) out.set(d, new Map());
+    out.get(d)!.set(String(x.cid), rowRank(x.ranks));
+  }
+  return out;
+}
+async function saveRanks(day: string, cid: string, m: RankMap) {
+  await rest("trend_ranks?on_conflict=day,cid,gender", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ day, cid, gender: "f", ranks: rankRow(m), n: m.size, fetched_at: new Date().toISOString() }) });
+}
+// 하루치를 실시간으로 받아 저장. 네이버가 아직 공개 전이면(빈 목록) 저장하지 않고 pending
+async function fetchAndStoreDay(day: string): Promise<{ day: string; stored: string[]; pending: boolean; errors: string[] }> {
+  const stored: string[] = [], errors: string[] = []; let pending = false;
+  for (const cid of Object.keys(NAVER_CATS)) {
+    try {
+      const m = await naverCategoryRanks(cid, day);
+      if (!m.size) { pending = true; continue; }
+      await saveRanks(day, cid, m); stored.push(NAVER_CATS[cid]);
+    } catch (e) { errors.push(`${NAVER_CATS[cid]}: ${String((e as Error)?.message ?? e).slice(0, 80)}`); }
+  }
+  return { day, stored, pending, errors };
+}
+// 보고서용: 저장본에서 가장 최근 날(D → D-1 → D-2)과 그 7일 전을 고른다. 저장본이 없으면 실시간(빈 목록이면 하루 전으로).
+async function loadTrendRanks(D: string, safe: <T>(label: string, f: () => Promise<T>) => Promise<T | null>) {
+  const cids = Object.keys(NAVER_CATS);
+  const want = [0, 1, 2].map((i) => addDays(D, -i));
+  const stored = await readRanks([...want, ...want.map((d) => addDays(d, -7))]).catch(() => new Map<string, Map<string, RankMap>>());
+  const complete = (d: string) => cids.every((c) => (stored.get(d)?.get(c)?.size ?? 0) > 0);
+  let curDay = want.find(complete) ?? "";
+  if (!curDay) {
+    // 저장본 없음 → 실시간 (D가 비어 있으면 D-1)
+    for (const d of want.slice(0, 2)) {
+      const got = await fetchAndStoreDay(d).catch(() => null);
+      if (got && got.stored.length === cids.length) { curDay = d; break; }
+    }
+    if (curDay) Object.assign(stored, await readRanks([curDay, addDays(curDay, -7)]));
+  }
+  const prevDay = curDay ? addDays(curDay, -7) : addDays(D, -7);
+  if (curDay && !complete(prevDay)) {   // 7일 전 저장본이 없으면 그날만 실시간으로 채운다(오래된 날은 공개돼 있음)
+    await safe("네이버 데이터랩(7일 전 보충)", () => fetchAndStoreDay(prevDay));
+    const again = await readRanks([prevDay]).catch(() => new Map()); for (const [k, v] of again) stored.set(k, v);
+  }
+  const pairs: ({ cid: string; cur: RankMap; prev: RankMap } | null)[] = [];
+  for (const cid of cids) {
+    const cur = stored.get(curDay)?.get(cid), prev = stored.get(prevDay)?.get(cid);
+    pairs.push(await safe(`네이버 데이터랩(${NAVER_CATS[cid]})`, async () => {
+      if (!cur || !cur.size) throw new Error(curDay ? "저장본 없음" : "아직 공개 전(빈 목록) — 낮 수집 후 다음 보고서에 반영");
+      return { cid, cur, prev: prev ?? new Map<string, number>() };
+    }));
+  }
+  return { curDay: curDay || D, prevDay, pairs };
+}
+// 액션 trends: 낮에 cron(12:30·15:30·19:30 KST)이 호출 — 어제(또는 ?day=) 순위표를 받아 저장. 이미 있으면 건너뜀(idempotent).
+async function trendsAction(url: URL): Promise<Response> {
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("day") ?? "") ? url.searchParams.get("day")! : addDays(seoulTodayKst(), -1);
+  const have = await readRanks([day]);
+  if (!url.searchParams.get("force") && Object.keys(NAVER_CATS).every((c) => (have.get(day)?.get(c)?.size ?? 0) > 0)) return json({ ok: true, day, skipped: "이미 저장됨" });
+  const r = await fetchAndStoreDay(day);
+  return json({ ok: !r.errors.length, ...r });
+}
+const seoulTodayKst = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 
 async function collect(D: string) {
   const { errors, safe } = safeCollector();
@@ -237,11 +308,12 @@ async function collect(D: string) {
     return { no, cat, own, peers, refAds };
   });
   // ── 트렌드(네이버 데이터랩 순위표: 어제 vs 7일 전) — ⚠ 다른 요청과 겹치면 데이터랩 응답이 멈춰(엣지 실측) **혼자 먼저** 순차로 받는다 (약 5초) ──
-  const prevDay = addDays(D, -7);
-  const rankPairs: ({ cid: string; cur: Map<string, number>; prev: Map<string, number> } | null)[] = [];
-  for (const cid of Object.keys(NAVER_CATS)) {
-    rankPairs.push(await safe(`네이버 데이터랩(${NAVER_CATS[cid]})`, async () => ({ cid, cur: await naverCategoryRanks(cid, D), prev: await naverCategoryRanks(cid, prevDay) })));
-  }
+  // ⚠ 2026-10-11: 네이버는 '어제' 순위표를 아침 08:30에는 아직 공개하지 않는다(빈 목록 → 0건, 이어지는 요청은 시간 초과; 실측 24회 중 22회 실패,
+  //   낮·저녁 실행은 성공). → 낮에 cron이 `trends` 액션으로 받아 trend_ranks에 저장해 두고, 여기서는 **저장본 중 가장 최근 날(D, 없으면 D-1·D-2)**을 쓴다.
+  //   저장본이 전혀 없을 때만 실시간으로 받되, 빈 목록이면 하루 전으로 물러난다. 비교 기준(cur·prev 날짜)은 trends.basis에 그대로 적는다.
+  const tr = await loadTrendRanks(D, safe);
+  const prevDay = tr.prevDay;
+  const rankPairs = tr.pairs;
   // 광고 카드 + 날씨는 병렬
   const [cards, weather] = await Promise.all([
     adIds.size ? safe("광고 소재 카드", () => callFn("meta-ads", { action: "adcards", ad_ids: [...adIds].slice(0, 60).join(","), start_date: cur14[0], end_date: cur14[1] })) : Promise.resolve(null),
@@ -300,7 +372,7 @@ async function collect(D: string) {
     trending: trending.map((t) => ({ product_no: t.no, name: nameOf(t.no), qty_7d: t.qty7, qty_prev7d: t.prevQty })),
     benefits_active: num(ben?.active_count),
     trends: {
-      basis: `네이버 데이터랩 쇼핑인사이트 '분야별 인기 검색어'(여성) — 기준일 ${D} 상위 100 vs 7일 전(${prevDay}). new = 100위 안 새 진입, up = 15계단 이상 상승. our_products = 이름·카테고리로 찾은 우리 상품(14일 판매량 순)`,
+      basis: `네이버 데이터랩 쇼핑인사이트 '분야별 인기 검색어'(여성) — ${tr.curDay} 상위 100 vs 7일 전(${prevDay})${tr.curDay !== D ? ` (네이버 공개 지연으로 ${D} 대신 ${tr.curDay} 기준)` : ""}. new = 100위 안 새 진입, up = 15계단 이상 상승. our_products = 이름·카테고리로 찾은 우리 상품(14일 판매량 순)`,
       naver: trendCats,
       weather: weather ?? null,
       not_available: ["우리 몰 내부 검색어(카페24 통로 없음)", "무신사·지그재그·에이블리(공개 통로 없음)"],
@@ -443,4 +515,4 @@ const SCHEMA = reportSchema({
 });
 
 // effort low (2026-09-13): 생각 토큰을 줄여 생성 시간 단축 — 작성 단계는 벽시계 150초 안에 끝나야 함(546 실사례). 판단 규칙은 프롬프트에 다 있어 low로 충분.
-export const DEF: AgentDef = { agent: AGENT, label: "상품 전략 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, images, effort: "low" };
+export const DEF: AgentDef = { agent: AGENT, label: "상품 전략 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, images, effort: "low", actions: { trends: trendsAction } };
