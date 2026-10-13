@@ -109,7 +109,7 @@ async function runTool(name: string, input: Row, yesterday: string): Promise<{ l
   }
   if (name === "return_watch") {
     const end = ymd(input.end_date, addDays(yesterday, -3));
-    const b = await callFn("cafe24-analytics", { action: "returnwatch", end_date: end, top: "30", risk: "20", min_qty: "10" }) as { products?: Row[] };
+    const b = await callFn("cafe24-analytics", { action: "returnwatch", end_date: end, top: "30", risk: "15", min_qty: "10" }) as { products?: Row[] };
     const q = norm(String(input.query ?? ""));
     const win = (p: Row, d: number) => { const w = ((p.windows ?? {}) as Record<string, Row>)[String(d)] ?? {}; return { delivered: num(w.del), returned: num(w.ret), rate: w.rate ?? null }; };
     const rows = (b.products ?? []).filter((p) => !q || norm(String(p.product_name ?? "")).includes(q)).slice(0, q ? 15 : 12)
