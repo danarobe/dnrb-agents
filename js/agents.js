@@ -135,10 +135,10 @@ async function agentRun(key, params = {}) {
     const startedAt = Date.now();
     const d = await callFn(a.fn, { action: 'run', ...params }, { method: 'POST', body: '{}' });
     if (d.id) { toast('보고서가 도착했어요'); __reportsCache = null; location.hash = '#reports/' + d.id; return; }
-    // 2단계 실행(수집 끝 → 별도 함수가 작성 중) — 새 보고서 행이 생길 때까지 10초마다 확인 (최대 4분)
-    toast(slow ? (d.message || '상세 이미지 읽는 중 (상품당 2~4분)') : '수집 완료, 보고서 작성 중이에요 (1~2분)');
+    // 2단계 실행(수집 끝 → 별도 함수가 작성 중) — 새 보고서 행이 생길 때까지 10초마다 확인 (최대 6분: 출력 잘림 자동 재시도 한 번까지 품음, 2026-10-13)
+    toast(slow ? (d.message || '상세 이미지 읽는 중 (상품당 2~4분)') : '수집 완료, 보고서 작성 중이에요 (보통 1~2분)');
     btnBusy(btn, '작성 중');
-    for (let i = 0; i < (slow ? 48 : 24); i++) {
+    for (let i = 0; i < (slow ? 48 : 36); i++) {
       await new Promise(r => setTimeout(r, 10000));
       const rows = await reportsLoad(true).catch(() => []);
       const fresh = rows.find(r => r.agent === key && new Date(r.created_at).getTime() > startedAt - 60000);

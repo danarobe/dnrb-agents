@@ -214,7 +214,16 @@ export const COMMON_RULES = `
 
 // ── Claude 호출 ──
 export type LLMImage = { url: string; label: string };
-export async function writeReport(system: string, schema: unknown, data: unknown, week: unknown, effort: "low" | "medium" | "high" = "medium", images: LLMImage[] = [])
+// 출력 잘림(2026-10-13): 반품 담당 보고서가 한 달에 3번(9/20·10/4·10/11) max_tokens 8000에 걸려 JSON이 끊김("Unterminated string in JSON").
+//   평소 출력이 5.3~7.9K 토큰이라 상한에 가깝다. 상한을 올리면 생성 시간이 벽시계 150초를 넘기므로(약 70토큰/초) 대신
+//   ① stop_reason이 max_tokens면 OutputTruncated로 명확히 던지고 ② writeStage가 같은 수집 데이터로 **한 번 자동 재시도**(새 worker, effort low + 짧게 쓰라는 지시).
+export class OutputTruncated extends Error {}
+export const isTruncationError = (e: unknown) =>
+  e instanceof OutputTruncated || /Unterminated string in JSON|Unexpected end of JSON|max_tokens/.test(String((e as Error)?.message ?? e));
+const COMPACT_HINT = `\n\n[중요] 앞선 시도에서 출력이 너무 길어 중간에 잘렸습니다. 이번에는 반드시 짧게 씁니다: detail·why·cause·fix는 모두 한 문장(40자 이내), summary 3줄, highlights·warnings 각 4개 이내, week_highlights·week_warnings 각 5개 이내, week_actions 5개 이내. 표 항목은 꼭 필요한 것만.`;
+export const DEFAULT_MAX_TOKENS = 8000;
+export async function writeReport(system: string, schema: unknown, data: unknown, week: unknown, effort: "low" | "medium" | "high" = "medium", images: LLMImage[] = [],
+  opts: { maxTokens?: number; compact?: boolean } = {})
   : Promise<{ report: Row; usage: unknown; model: string }> {
   if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY 미설정 — Supabase secrets에 Claude API 키를 넣고 함수를 재배포하세요");
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
@@ -240,16 +249,18 @@ export async function writeReport(system: string, schema: unknown, data: unknown
   }
   content.push({
     type: "text",
-    text: `아래는 기준일(어제)까지의 수집 데이터와 이번 주 앞선 날들의 보고 항목입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(data)}\n\n[this_week]\n${JSON.stringify(week)}`,
+    text: `아래는 기준일(어제)까지의 수집 데이터와 이번 주 앞선 날들의 보고 항목입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(data)}\n\n[this_week]\n${JSON.stringify(week)}${opts.compact ? COMPACT_HINT : ""}`,
   });
+  const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
   const res = await client.messages.create({
     model: MODEL,
-    max_tokens: 8000,
+    max_tokens: maxTokens,
     system,
     output_config: { effort, format: { type: "json_schema", schema } },
     messages: [{ role: "user", content }],
   } as Parameters<typeof client.messages.create>[0]);
   if (res.stop_reason === "refusal") throw new Error("Claude가 응답을 거부했습니다");
+  if (res.stop_reason === "max_tokens") throw new OutputTruncated(`출력이 너무 길어 잘림 (상한 ${maxTokens} 토큰, 출력 ${(res.usage as Row | undefined)?.output_tokens ?? "?"} 토큰)`);
   const text = res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
   return { report: JSON.parse(text), usage: res.usage, model: res.model };
 }
@@ -356,6 +367,9 @@ export function serveAgent(def: AgentDef) {
         try {
           data = await def.collect(D);
           const key = `agentrun:${def.agent}:${D}:${crypto.randomUUID()}`;
+          // 작성 단계가 중간에 죽어(546 등) 못 지운 옛 수집 데이터 정리 — 하루 지난 것만 (재시도 중인 것은 몇 분 안에 끝남)
+          await rest(`api_cache?cache_key=like.agentrun:*&created_at=lt.${encodeURIComponent(new Date(Date.now() - 86400000).toISOString())}`,
+            { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => {});
           const put = await rest(`api_cache?on_conflict=cache_key`, {
             method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
             body: JSON.stringify({ cache_key: key, payload: { data, trigger, created_by: me?.id ?? null }, created_at: new Date().toISOString() }),
@@ -383,29 +397,41 @@ export function serveAgent(def: AgentDef) {
 }
 
 // ── 2단계 작성 (agent-write 함수가 호출): api_cache에 저장된 수집 데이터로 Claude 리포트 작성·저장·알림 ──
-export async function writeStage(def: AgentDef, D: string, key: string): Promise<Response> {
-  const got = await rest(`api_cache?cache_key=eq.${encodeURIComponent(key)}&select=payload`);
+//   출력 잘림이면 **한 번 자동 재시도**(2026-10-13): 수집 데이터를 지우지 않고 payload.retry를 1로 올린 뒤 agent_dispatch_write를 다시 불러
+//   새 worker가 effort low + 짧게 쓰라는 지시로 다시 쓴다. 사용자가 확인·재실행해야 하는 설계를 피하기 위함(원칙). 두 번째도 실패하면 error 행.
+//   opts.maxTokens는 점검용(agent-write의 x-test-max-tokens 헤더) — 일부러 잘리게 해 재시도 경로를 확인할 때만.
+export async function writeStage(def: AgentDef, D: string, key: string, opts: { maxTokens?: number } = {}): Promise<Response> {
+  const keyQ = `api_cache?cache_key=eq.${encodeURIComponent(key)}`;
+  const got = await rest(`${keyQ}&select=payload`);
   const row = got.ok ? ((await got.json())[0] ?? null) : null;
   if (!row) return json({ error: "수집 데이터를 찾을 수 없습니다 (key)" }, 400);
-  await rest(`api_cache?cache_key=eq.${encodeURIComponent(key)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
-  const payload = row.payload as { data: Row; trigger: string; created_by: string | null };
-  const trigger = payload.trigger, data = payload.data, createdBy = payload.created_by;
+  const dropCache = () => rest(keyQ, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => {});
+  const payload = row.payload as { data: Row; trigger: string; created_by: string | null; retry?: number };
+  const trigger = payload.trigger, data = payload.data, createdBy = payload.created_by, retry = num(payload.retry);
   const t0 = Date.now();
   try {
     const wc = await weekContext(def.agent, D);
     const llmData = def.forLLM ? def.forLLM(data) : data;
     const { report: written0, usage, model } = await writeReport(def.system, def.schema, llmData,
-      { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far }, def.effort ?? "medium",
-      def.images ? def.images(data) : []);
+      { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far }, retry > 0 ? "low" : (def.effort ?? "medium"),
+      def.images ? def.images(data) : [], { maxTokens: opts.maxTokens, compact: retry > 0 });
     const written = def.postProcess ? def.postProcess(written0, data) : written0;
     const report = { ...written, week: wc.week, last_week: wc.last_week };
-    const saved = await saveRow({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage, created_by: createdBy });
+    const saved = await saveRow({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage: { ...(usage as Row), retry }, created_by: createdBy });
+    await dropCache();
     const notified = await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 }));
-    return json({ ok: true, id: saved.id, report_date: D, report, notified, write_ms: Date.now() - t0 });
+    return json({ ok: true, id: saved.id, report_date: D, report, notified, retry, write_ms: Date.now() - t0 });
   } catch (e) {
     const msg = String((e as Error)?.message ?? e).slice(0, 500);
-    await saveRow({ agent: def.agent, report_date: D, trigger, status: "error", data, error: msg, created_by: createdBy }).catch(() => {});
-    return json({ error: msg, report_date: D, write_ms: Date.now() - t0 }, 500);
+    if (isTruncationError(e) && retry < 1) {
+      const upd = await rest(keyQ, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ payload: { ...payload, retry: retry + 1 } }) });
+      const re = upd.ok ? await rest("rpc/agent_dispatch_write", { method: "POST", body: JSON.stringify({ p_agent: def.agent, p_date: D, p_key: key }) }) : upd;
+      if (re.ok) return json({ retrying: true, retry: retry + 1, error: msg, report_date: D, write_ms: Date.now() - t0 }, 202);
+    }
+    await dropCache();
+    const finalMsg = (retry > 0 ? `(짧게 다시 쓰기 ${retry}회 재시도 후에도 실패) ` : "") + msg;
+    await saveRow({ agent: def.agent, report_date: D, trigger, status: "error", data, error: finalMsg, created_by: createdBy }).catch(() => {});
+    return json({ error: finalMsg, report_date: D, write_ms: Date.now() - t0 }, 500);
   }
 }
 export const isCronRequest = (req: Request) => !!CRON_SECRET && req.headers.get("x-cron-secret") === CRON_SECRET;

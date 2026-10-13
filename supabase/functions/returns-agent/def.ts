@@ -158,7 +158,7 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 취소·�
 - risk_products(구조화 표)에는 위험·주의 상품을 순반품률 높은 순으로 넣고, 각각 원인 추정(사유·옵션 근거)과 한 줄 대응을 씁니다. 보류 상품은 넣지 않습니다.
 - watch_review에는 관리 상품 전부를 넣고 개선/유지/악화를 판정합니다 (7일·14일·30일 창의 흐름으로).
 - cohort_table에는 cohorts.weeks의 week 값과 한 줄 판단만 씁니다(숫자는 코드가 채웁니다). risk_products도 name·원인·대응만.
-- summary는 4줄 이내, 각 항목 detail은 두 문장 이내로 짧게 씁니다 (보고서 생성 시간 제한이 있습니다).
+- summary는 4줄 이내, 각 항목 detail은 두 문장 이내로 짧게 씁니다 (보고서 생성 시간 제한이 있습니다). 주간 항목(week_highlights·week_warnings)은 각 6개 이내, watch_review의 detail은 한 문장.
 - highlights는 좋은 신호(반품 줄어든 상품, 잘 팔리면서 반품 낮은 상품, 개선된 관리 상품), warnings는 나쁜 신호입니다.
 - actions는 오늘 실행할 구체적인 것 2~3개.
 ${COMMON_RULES}`;
@@ -200,7 +200,7 @@ const SCHEMA = reportSchema({
         properties: {
           name: { type: "string" },
           verdict: { type: "string", enum: ["개선", "유지", "악화"] },
-          detail: { type: "string", description: "7/14/30일 흐름과 판단 근거 한두 문장" },
+          detail: { type: "string", description: "7/14/30일 흐름과 판단 근거 한 문장, 50자 이내" },
         },
         required: ["name", "verdict", "detail"], additionalProperties: false,
       },

@@ -21,6 +21,8 @@ Deno.serve(async (req) => {
   const def = DEFS[url.searchParams.get("agent") ?? ""];
   const D = url.searchParams.get("date") ?? "", key = url.searchParams.get("key") ?? "";
   if (!def || !/^\d{4}-\d{2}-\d{2}$/.test(D) || !key.startsWith("agentrun:")) return json({ error: "agent, date, key 필수" }, 400);
-  try { return await writeStage(def, D, key); }
+  // 점검용(2026-10-13): x-test-max-tokens 헤더로 출력 상한을 일부러 낮춰 '잘림 → 자동 재시도' 경로를 확인한다. cron 비밀 없이는 못 쓴다.
+  const testMax = Number(req.headers.get("x-test-max-tokens") ?? 0);
+  try { return await writeStage(def, D, key, { maxTokens: testMax > 0 ? testMax : undefined }); }
   catch (e) { return json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, 500); }
 });
