@@ -197,12 +197,12 @@ function reportHtml(r) {
     // 광고 소재 담당 (2026-09-18): 상품별 후킹 포인트·제작안. 숫자·리뷰 인용은 서버가 모은 것만, 문구는 복사 버튼으로.
     const bs = rp.briefs || [], fs = d.format_stats, acc = fs?.account;
     const okb = bs.filter(x => x.status === 'ok' && x.brief);
-    const hooksAll = okb.flatMap(x => x.brief.hooks || []);
+    const hooksAll = okb.flatMap(x => x.brief.plans || x.brief.hooks || []);   // v2 제작안(plans) 또는 v1 훅(hooks)
     const won = v => v == null ? '—' : Math.round(v).toLocaleString('ko-KR') + '원';
     const rvOk = okb.filter(x => x.review_status === 'ok').length;
     tiles = [
       tile('분석 상품', `${okb.length}개`, `급상승 ${okb.filter(x => x.kind === 'surge').length} · 베스트 ${okb.filter(x => x.kind === 'best').length}${okb.some(x => x.kind === 'manual') ? ' · 직접 고름 ' + okb.filter(x => x.kind === 'manual').length : ''}`),
-      tile('후킹 포인트', `${hooksAll.length}개`, `전환형 ${hooksAll.filter(h => h.goal === '전환형').length} · 클릭형 ${hooksAll.filter(h => h.goal === '클릭형').length}`),
+      tile(okb.some(x => x.brief.plans) ? '소재 제작안' : '후킹 포인트', `${hooksAll.length}개`, `전환형 ${hooksAll.filter(h => h.goal === '전환형').length} · 클릭형 ${hooksAll.filter(h => h.goal === '클릭형').length}`),
       tile('리뷰 반영', d.review_scope_missing ? '권한 대기' : `${rvOk}/${okb.length}`, d.review_scope_missing ? '카페24 재연동 후 자동 반영' : `리뷰 ${fmt(okb.reduce((t, x) => t + (x.review_count || 0), 0))}건 읽음`),
       tile('계정 평균 (30일)', acc ? `CTR ${acc.ctr ?? '—'}%` : '—', acc ? `CPC ${won(acc.cpc)} · 구매당 ${won(acc.cost_per_purchase)} · ROAS ${acc.roas ?? '—'}` : 'Meta 성과를 못 받았어요'),
     ].join('');
@@ -218,6 +218,59 @@ function reportHtml(r) {
       if (x.status !== 'ok' || !x.brief) return `<div class="focus-card"><b>${escHtml(x.product_name)}</b><div class="notice err" style="margin-top:8px;">제작안 실패: ${escHtml(x.error || '원인 미상')}</div></div>`;
       const b = x.brief, m = x.metrics || {};
       const rvChip = x.review_status === 'ok' ? `<span class="chip good">리뷰 ${fmt(x.review_count)}건${x.rating_avg ? ' · ★' + x.rating_avg : ''}</span>` : x.review_status === 'scope_missing' ? '<span class="chip">리뷰 권한 대기</span>' : '<span class="chip">리뷰 없음</span>';
+      const head = `<div class="focus-head"><div><b>${escHtml(x.product_name)}</b> <span class="chip ${x.kind === 'surge' ? 'new' : ''}">${escHtml(m.why || '')}</span> ${rvChip} <span class="chip">신뢰도 ${escHtml(b.confidence)}</span>
+          <div class="muted">14일 조회 ${fmt(m.views_14d)} · 주문율 ${m.rate_14d ?? '—'}% · 판매 ${fmt(m.qty_14d)}개${m.margin_rate != null ? ' · 마진 ' + m.margin_rate + '%' : ''}${(m.promos || []).length ? ' · ' + m.promos.map(escHtml).join(', ') : ''}</div></div></div>
+        <div class="fx"><b>한 문장</b> ${escHtml(b.one_liner)}</div>
+        <div class="fx"><b>핵심 고객</b> ${escHtml(b.target)}</div>`;
+      const adRows = (x.ads || []).slice(0, 4).map(a => `<tr><td><b>${escHtml(a.name || a.ad_name || '')}</b>${a.body ? `<div class="muted">${escHtml(String(a.body).slice(0, 90))}</div>` : ''}</td><td class="r">${a.ctr ?? '—'}%</td><td class="r">${won(a.cpc)}</td><td class="r">${won(a.cost_per_purchase)}</td><td class="r">${a.roas ?? '—'}</td></tr>`).join('');
+      const tail = `${(b.proof_quotes || []).length ? `<h4 class="cr-h"><i class="fa-solid fa-quote-left" style="color:#b45309;"></i> 자막에 쓸 리뷰 원문 <span class="muted small">실구매 후기 그대로 — 원문 대조 완료</span></h4>${b.proof_quotes.map(q => `<div class="snippet"><div class="snip-text">“${escHtml(q)}”</div>${copyBtn(q)}</div>`).join('')}` : ''}
+        ${(b.used_angles || []).length ? `<h4 class="cr-h"><i class="fa-solid fa-rotate" style="color:#b45309;"></i> 이미 쓴 앵글 평가</h4>${b.used_angles.map(u => `<div class="li"><div class="li-top"><b>${escHtml(u.angle)}</b><span class="chip ${u.verdict === '폐기' ? 'bad' : u.verdict === '변주해서 확대' ? 'good' : ''}">${escHtml(u.verdict)}</span></div><div>${escHtml(u.reason)}</div></div>`).join('')}` : ''}
+        ${(b.avoid || []).length ? `<h4 class="cr-h"><i class="fa-solid fa-ban down"></i> 피할 소구</h4><ul class="cr-ul">${b.avoid.map(a => `<li>${escHtml(a)}</li>`).join('')}</ul>` : ''}
+        <div class="fx"><b>상세와 맞추기</b> ${escHtml(b.landing_match)}</div>
+        <div class="fx"><b>테스트 순서</b> ${escHtml(b.test_plan)}</div>
+        <div class="muted small" style="margin-top:6px;"><i class="fa-regular fa-circle-question"></i> 신뢰도 ${escHtml(b.confidence)} — ${escHtml(b.confidence_reason)}${(b.quote_check?.dropped || []).length ? ` · 원문과 다른 리뷰 인용 ${b.quote_check.dropped.length}개는 지웠어요` : ''}</div>
+        ${adRows ? `<details class="raw"><summary>이 상품의 기존 소재 성과 (30일)</summary><table><thead><tr><th>소재 · 문구</th><th class="r">CTR</th><th class="r">CPC</th><th class="r">구매당</th><th class="r">ROAS</th></tr></thead><tbody>${adRows}</tbody></table></details>` : (x.ads === null ? '<div class="muted small">Meta 광고 성과를 못 받아 기존 소재는 반영되지 않았어요</div>' : '<div class="muted small">최근 30일에 이 상품으로 돌린 소재가 없어요</div>')}`;
+
+      if (b.plans) {
+        // v2 제작안(2026-10-13 사용자 요청): 근거판(사는 이유·망설임) → 제작안마다 ① 0~3초 멈춤 → ② 3~10초 유지·실구매 후기 증명 → ③ 전환 포인트 3단 흐름. 1순위는 펼치고 나머지는 접어 한눈에.
+        const ins = b.insight || {};
+        const insRow = (chip, title, sub) => `<div class="ins-row">${chip}<div><b>${title}</b>${sub ? `<div class="ins-sub">${sub}</div>` : ''}</div></div>`;
+        const insight = `<div class="insight-grid">
+          <div class="ins"><h5><i class="fa-solid fa-heart" style="color:#be123c;"></i> 왜 사나 <span class="muted small">${x.review_status === 'ok' ? `리뷰 ${fmt(x.review_count)}건 중 언급 수` : '상세·광고 근거'}</span></h5>
+            ${(ins.buy_reasons || []).map(r => insRow(`<span class="chip ${r.count ? 'good' : ''}">${r.count ? r.count + '건' : escHtml(r.source || '')}</span>`, escHtml(r.point), r.quote ? `<span class="ins-q">“${escHtml(r.quote)}”</span>` : (r.count ? escHtml(r.source || '') : ''))).join('') || '<div class="muted small">없음</div>'}</div>
+          <div class="ins"><h5><i class="fa-solid fa-circle-question" style="color:#b45309;"></i> 왜 망설이나 → 광고에서 답하기</h5>
+            ${(ins.hesitations || []).map(h => insRow(`<span class="chip warn">${h.count ? h.count + '건' : escHtml(h.source || '')}</span>`, escHtml(h.worry), `<i class="fa-solid fa-arrow-turn-down-right muted"></i> ${escHtml(h.answer)}${h.count ? ` <span class="muted">(${escHtml(h.source || '')})</span>` : ''}`)).join('') || '<div class="muted small">없음</div>'}</div>
+        </div>
+        ${ins.detail_promise ? `<div class="fx"><b>상세가 앞세우는 것</b> ${escHtml(ins.detail_promise)}</div>` : ''}`;
+        const planBody = (p) => {
+          const h = p.hook || {}, ho = p.hold || {}, c = p.convert || {}, cp = p.copy || {};
+          return `<div class="steps">
+            <div class="step s1"><div class="st-label">① 0~3초 · 멈추게</div><div class="st-head">${escHtml(h.headline)}</div><div class="st-sub"><b>첫 장면</b> ${escHtml(h.scene)}</div><div class="st-why">${escHtml(h.why_stop)}</div></div>
+            <div class="step s2"><div class="st-label">② 3~10초 · 붙잡고 증명</div><div class="st-sub"><b>장치</b> ${escHtml(ho.device)}</div>${ho.proof_quote ? `<div class="st-quote">“${escHtml(ho.proof_quote)}”<div class="muted small">실구매 후기${ho.proof_rating ? ' · ★' + ho.proof_rating : ''} · 원문 그대로</div></div>` : '<div class="st-sub muted">리뷰 인용 없음 — 상세의 사실로 증명</div>'}<div class="st-sub"><b>보여줄 것</b> ${escHtml(ho.visual)}</div></div>
+            <div class="step s3"><div class="st-label">③ 전환 포인트</div><div class="st-head">${escHtml(c.point)}</div><div class="st-sub"><b>근거</b> ${escHtml(c.evidence)}</div><div class="st-cta"><i class="fa-solid fa-arrow-right"></i> ${escHtml(c.cta)}</div></div>
+          </div>
+          <div class="plan-copy">
+            <div class="snippet"><div class="muted small">광고 본문 <span class="muted">(훅 → 후기 → 살 이유 → 행동)</span></div><div class="snip-text" style="white-space:pre-line;">${escHtml(cp.primary_text)}</div>${copyBtn(cp.primary_text)}</div>
+            <div class="snippet"><div class="muted small">헤드라인</div><div class="snip-text">${escHtml(cp.headline)}</div>${copyBtn(cp.headline)}</div>
+          </div>
+          <div class="fx"><b>왜 전환되나</b> ${escHtml(p.rationale)}</div>
+          <div class="fx"><b>형식</b> ${escHtml(p.format)}</div>
+          <div class="fx"><b>기대 효과</b> ${escHtml(p.expected)}</div>`;
+        };
+        const planHead = (p, i) => `<span class="num">${i + 1}</span><b class="plan-title">${escHtml(p.title)}</b><span class="chip ${p.goal === '전환형' ? 'good' : 'new'}">${escHtml(p.goal)}</span><span class="chip">${escHtml(p.angle)}</span>${(p.evidence || []).map(e => `<span class="chip ev">${escHtml(e)}</span>`).join('')}`;
+        const plans = (b.plans || []).map((p, i) => i === 0
+          ? `<div class="plan plan-first"><div class="plan-head">${planHead(p, i)}<span class="chip first">1순위</span></div>${planBody(p)}</div>`
+          : `<details class="plan"><summary><div class="plan-head">${planHead(p, i)}</div><div class="plan-sum muted">“${escHtml(p.hook?.headline || '')}” → ${escHtml(p.convert?.point || '')}</div></summary>${planBody(p)}</details>`).join('');
+        return `<div class="focus-card creative-card">${head}
+          <h4 class="cr-h"><i class="fa-solid fa-magnifying-glass-chart" style="color:#b45309;"></i> 근거판 <span class="muted small">리뷰(실구매 평가)와 상세페이지를 함께 본 것</span></h4>
+          ${insight}
+          <h4 class="cr-h"><i class="fa-solid fa-film" style="color:#b45309;"></i> 소재 제작안 <span class="muted small">기대 효과 큰 순 · 전환형 = 구매당 비용↓ / 클릭형 = CPC↓ · 2순위부터는 눌러서 펼치기</span></h4>
+          ${plans}
+          ${tail}
+        </div>`;
+      }
+
+      // v1 제작안(2026-10-13 이전 보고서): 훅 목록
       const hooks = (b.hooks || []).map((h, i) => `<div class="hook">
           <div class="hook-top"><span class="num">${i + 1}</span><b class="hook-text">${escHtml(h.hook_text)}</b></div>
           <div class="hook-chips"><span class="chip ${h.goal === '전환형' ? 'good' : 'new'}">${escHtml(h.goal)}</span><span class="chip">${escHtml(h.angle)}</span>${(h.evidence || []).map(e => `<span class="chip ev">${escHtml(e)}</span>`).join('')}</div>
@@ -227,21 +280,10 @@ function reportHtml(r) {
           <div class="snippet"><div class="muted small">광고 본문</div><div class="snip-text" style="white-space:pre-line;">${escHtml(h.primary_text)}</div>${copyBtn(h.primary_text)}</div>
           <div class="snippet"><div class="muted small">헤드라인</div><div class="snip-text">${escHtml(h.headline)}</div>${copyBtn(h.headline)}</div>
         </div>`).join('');
-      const adRows = (x.ads || []).slice(0, 4).map(a => `<tr><td><b>${escHtml(a.name || a.ad_name || '')}</b>${a.body ? `<div class="muted">${escHtml(String(a.body).slice(0, 90))}</div>` : ''}</td><td class="r">${a.ctr ?? '—'}%</td><td class="r">${won(a.cpc)}</td><td class="r">${won(a.cost_per_purchase)}</td><td class="r">${a.roas ?? '—'}</td></tr>`).join('');
-      return `<div class="focus-card creative-card">
-        <div class="focus-head"><div><b>${escHtml(x.product_name)}</b> <span class="chip ${x.kind === 'surge' ? 'new' : ''}">${escHtml(m.why || '')}</span> ${rvChip} <span class="chip">신뢰도 ${escHtml(b.confidence)}</span>
-          <div class="muted">14일 조회 ${fmt(m.views_14d)} · 주문율 ${m.rate_14d ?? '—'}% · 판매 ${fmt(m.qty_14d)}개${m.margin_rate != null ? ' · 마진 ' + m.margin_rate + '%' : ''}${(m.promos || []).length ? ' · ' + m.promos.map(escHtml).join(', ') : ''}</div></div></div>
-        <div class="fx"><b>한 문장</b> ${escHtml(b.one_liner)}</div>
-        <div class="fx"><b>핵심 고객</b> ${escHtml(b.target)}</div>
+      return `<div class="focus-card creative-card">${head}
         <h4 class="cr-h"><i class="fa-solid fa-fish-fins" style="color:#b45309;"></i> 후킹 포인트 <span class="muted small">기대 효과 큰 순 · 클릭형 = CPC↓ / 전환형 = 구매당 비용↓</span></h4>
         ${hooks}
-        ${(b.proof_quotes || []).length ? `<h4 class="cr-h"><i class="fa-solid fa-quote-left" style="color:#b45309;"></i> 자막에 쓸 리뷰 원문</h4>${b.proof_quotes.map(q => `<div class="snippet"><div class="snip-text">“${escHtml(q)}”</div>${copyBtn(q)}</div>`).join('')}` : ''}
-        ${(b.used_angles || []).length ? `<h4 class="cr-h"><i class="fa-solid fa-rotate" style="color:#b45309;"></i> 이미 쓴 앵글 평가</h4>${b.used_angles.map(u => `<div class="li"><div class="li-top"><b>${escHtml(u.angle)}</b><span class="chip ${u.verdict === '폐기' ? 'bad' : u.verdict === '변주해서 확대' ? 'good' : ''}">${escHtml(u.verdict)}</span></div><div>${escHtml(u.reason)}</div></div>`).join('')}` : ''}
-        ${(b.avoid || []).length ? `<h4 class="cr-h"><i class="fa-solid fa-ban down"></i> 피할 소구</h4><ul class="cr-ul">${b.avoid.map(a => `<li>${escHtml(a)}</li>`).join('')}</ul>` : ''}
-        <div class="fx"><b>상세와 맞추기</b> ${escHtml(b.landing_match)}</div>
-        <div class="fx"><b>테스트 순서</b> ${escHtml(b.test_plan)}</div>
-        <div class="muted small" style="margin-top:6px;"><i class="fa-regular fa-circle-question"></i> 신뢰도 ${escHtml(b.confidence)} — ${escHtml(b.confidence_reason)}</div>
-        ${adRows ? `<details class="raw"><summary>이 상품의 기존 소재 성과 (30일)</summary><table><thead><tr><th>소재 · 문구</th><th class="r">CTR</th><th class="r">CPC</th><th class="r">구매당</th><th class="r">ROAS</th></tr></thead><tbody>${adRows}</tbody></table></details>` : (x.ads === null ? '<div class="muted small">Meta 광고 성과를 못 받아 기존 소재는 반영되지 않았어요</div>' : '<div class="muted small">최근 30일에 이 상품으로 돌린 소재가 없어요</div>')}
+        ${tail}
       </div>`;
     }).join('');
     const scopeNote = d.review_scope_missing ? `<div class="notice warn"><b><i class="fa-solid fa-key"></i> 리뷰는 아직 반영되지 않았어요.</b> 카페24 개발자센터에서 게시판 읽기 권한을 켠 뒤, 워크스페이스의 <b>카페24 연동</b> 버튼으로 한 번 재연동하면 다음 분석부터 리뷰(고객이 실제로 쓰는 말)가 훅의 근거로 들어갑니다.</div>` : '';

@@ -62,56 +62,168 @@ function formatStats(ads: AdRow[]) {
   return { account, styles, note: "최근 30일, 지출이 있었던 광고 전체(꺼진 것 포함). 광고명 규칙으로 유형을 읽은 것이라 한 광고가 여러 유형에 걸칠 수 있음" };
 }
 
-// ── Claude 제작안 ──
+// ── 리뷰 주제별 집계 (2026-10-13, 사용자 요청 "리뷰는 내돈내산 실평가라 다른 고객이 가장 믿는 근거") ──
+//   Claude가 세는 대신 코드가 센다: 주제별로 '언급한 리뷰 수'와 그중 낮은 별점(≤3) 수, 짧은 원문 예시. 제작안의 "n건 중 m건" 숫자 근거.
+const THEMES: [string, RegExp][] = [
+  ["핏·사이즈", /핏|사이즈|정사이즈|넉넉|루즈|타이트|딱 ?맞|크게|작게|커요|작아요|77|66|55|88|여유/],
+  ["체형 커버", /커버|배|팔뚝|팔 ?뱃살|등살|날씬|슬림|라인|부해|통통/],
+  ["소재·촉감", /소재|촉감|부드|보들|부들|까슬|하늘|실크|면 ?100|모달|니트|원단|재질|광택/],
+  ["두께·보온·시원", /두껍|얇|따뜻|보온|시원|통풍|덥|춥|가을|겨울|여름|봄/],
+  ["비침", /비치|비침|속이|이너/],
+  ["길이·기장", /기장|길이|길어|짧아|무릎|발목|엉덩이/],
+  ["색상", /색상|색감|컬러|화면|사진이랑|사진과|실물|톤/],
+  ["편안함·활동", /편하|편안|활동|움직|신축|스판|답답/],
+  ["무게·가벼움", /가볍|무겁|무게/],
+  ["구김·보풀·관리", /구김|구겨|보풀|세탁|빨래|관리|다림/],
+  ["가격·가성비", /가격|가성비|저렴|비싸|할인|가격대/],
+  ["배송·포장", /배송|포장|빨리|택배/],
+  ["재구매·추천", /재구매|또 ?샀|또 ?구매|색깔별|추천|두 ?개|하나 ?더/],
+  ["칭찬·반응", /칭찬|예쁘다고|물어|어디서 ?샀|반응/],
+  ["코디·활용", /코디|데일리|어디에나|출근|여행|모임|결혼식|하객/],
+  ["품질·마감", /마감|불량|실밥|튼튼|퀄리티|품질|지퍼|단추/],
+  ["냄새·이염", /냄새|이염|물빠짐/],
+  ["임산부·체형 변화", /임산부|임신|출산|주차/],
+];
+function reviewThemes(list: Row[]) {
+  const clip = (t: string) => t.replace(/\s+/g, " ").trim().slice(0, 60);
+  const out = THEMES.map(([theme, re]) => {
+    const hit = list.filter((r) => re.test(String(r.text ?? "")));
+    const low = hit.filter((r) => num(r.rating) > 0 && num(r.rating) <= 3);
+    const samples = [...low.slice(0, 1), ...hit.filter((r) => !low.includes(r)).sort((a, b) => String(b.text).length - String(a.text).length).slice(0, 2)].map((r) => ({ rating: r.rating, text: clip(String(r.text ?? "")) }));
+    return { theme, mentions: hit.length, low_rating: low.length, samples };
+  }).filter((t) => t.mentions > 0).sort((a, b) => b.mentions - a.mentions);
+  return { total: list.length, note: "주제별 '언급한 리뷰 수'(한 리뷰가 여러 주제에 들어갈 수 있음) · low_rating = 그중 별점 3 이하. samples는 원문 앞 60자", themes: out };
+}
+// ── 리뷰 인용 검증: 제작안의 인용문이 실제 리뷰 원문에 있는지 코드가 대조해, 없는 인용은 지운다(지어낸 후기 차단) ──
+const qNorm = (t: unknown) => String(t ?? "").normalize("NFC").replace(/[\s"“”'‘’.,!?~…()\[\]·-]/g, "").toLowerCase();
+function verifyQuotes(brief: Row, list: Row[]): Row {
+  const texts = list.map((r) => qNorm(r.text));
+  const ok = (q: unknown) => { const n = qNorm(q); return n.length >= 4 && texts.some((t) => t.includes(n)); };
+  let checked = 0, dropped: string[] = [];
+  const plans = ((brief.plans ?? []) as Row[]).map((p) => {
+    const hold = { ...((p.hold ?? {}) as Row) };
+    if (hold.proof_quote) { checked++; if (!ok(hold.proof_quote)) { dropped.push(String(hold.proof_quote)); hold.proof_quote = ""; hold.proof_rating = 0; } }
+    return { ...p, hold };
+  });
+  const quotes = ((brief.proof_quotes ?? []) as unknown[]).filter((q) => { checked++; const k = ok(q); if (!k) dropped.push(String(q)); return k; });
+  const insight = { ...((brief.insight ?? {}) as Row) };
+  insight.buy_reasons = ((insight.buy_reasons ?? []) as Row[]).map((r) => { if (!r.quote) return r; checked++; if (ok(r.quote)) return r; dropped.push(String(r.quote)); return { ...r, quote: "" }; });
+  return { ...brief, insight, plans, proof_quotes: quotes, quote_check: { checked, dropped } };
+}
+
+// ── Claude 제작안 (v2, 2026-10-13 — 사용자 요청: "흥미 유발(후킹·3초 이상 시청) → 구매 전환 포인트" 논리 구조, 상세 소구점 + 리뷰 근거) ──
+const EVIDENCE = { type: "array", items: { type: "string", enum: ["기존 광고 성과", "리뷰", "상세페이지", "혜택", "검색 트렌드"] } };
 const BRIEF_SCHEMA = {
   type: "object",
   properties: {
     one_liner: { type: "string", description: "이 상품을 한 문장으로: 누가·언제·왜 사는지 (50자 이내)" },
     target: { type: "string", description: "핵심 고객과 구매 상황 (리뷰·상세 근거, 60자 이내)" },
-    hooks: {
+    insight: {
+      type: "object",
+      description: "제작안의 근거판. 리뷰(review_themes의 숫자)와 상세페이지(pages)를 함께 보고 정리",
+      properties: {
+        buy_reasons: {
+          type: "array", description: "고객이 실제로 사는 이유, 강한 순 최대 4개. review_themes의 mentions 숫자를 count에 그대로",
+          items: { type: "object", properties: {
+            point: { type: "string", description: "이유 한 줄 (고객이 쓰는 말로, 30자 이내)" },
+            count: { type: "integer", description: "이 이유를 말한 리뷰 수 (review_themes.mentions). 리뷰 근거가 아니면 0" },
+            source: { type: "string", enum: ["리뷰", "상세페이지", "기존 광고 성과", "리뷰+상세페이지"] },
+            quote: { type: "string", description: "대표 리뷰 원문 한 토막(40자 이내, 원문 그대로). 없으면 빈 문자열" },
+          }, required: ["point", "count", "source", "quote"], additionalProperties: false },
+        },
+        hesitations: {
+          type: "array", description: "사기 전에 망설이는 이유(낮은 별점 리뷰·반품 사유·상세에 빠진 정보) 최대 4개와 광고에서 선제적으로 답하는 법",
+          items: { type: "object", properties: {
+            worry: { type: "string", description: "망설임 한 줄 (30자 이내)" },
+            answer: { type: "string", description: "광고·상세에서 어떻게 답하나 — 사실에 근거해 기대치를 맞추는 문장(40자 이내). 답할 근거가 없으면 '광고에서 다루지 않기'" },
+            source: { type: "string", enum: ["낮은 별점 리뷰", "반품 사유", "상세 공백", "리뷰"] },
+            count: { type: "integer", description: "근거 리뷰 수(있으면), 없으면 0" },
+          }, required: ["worry", "answer", "source", "count"], additionalProperties: false },
+        },
+        detail_promise: { type: "string", description: "상세페이지가 가장 앞세우는 소구 한 줄 (pages의 texts·features 근거, 40자 이내)" },
+      },
+      required: ["buy_reasons", "hesitations", "detail_promise"], additionalProperties: false,
+    },
+    plans: {
       type: "array",
+      description: "소재 제작안 3개(최대 4개), 기대 효과 큰 순. 1번이 가장 전환 효과가 클 것으로 판단한 안. 전환형 최소 1개, 클릭형 최소 1개. 각 안은 '0~3초 멈춤 → 3~10초 유지·증명 → 전환 포인트·행동' 세 단계를 반드시 하나의 흐름으로",
       items: {
         type: "object",
         properties: {
+          title: { type: "string", description: "제작안 이름 (예: '아랫배 커버 실후기 릴스', 16자 이내)" },
+          goal: { type: "string", enum: ["클릭형", "전환형"], description: "클릭형 = 스크롤을 멈추게 해 CPC를 낮추는 안 / 전환형 = 살 이유를 분명히 해 구매당 비용을 낮추는 안" },
           angle: { type: "string", enum: ["문제 해결", "고객 후기·사회적 증거", "혜택·가성비", "디테일·품질", "상황·코디", "비교·반전"] },
-          goal: { type: "string", enum: ["클릭형", "전환형"], description: "클릭형 = 스크롤을 멈추게 해 CPC를 낮추는 훅 / 전환형 = 살 이유를 분명히 해 구매당 비용을 낮추는 훅" },
-          hook_text: { type: "string", description: "첫 3초 자막 또는 이미지 첫 줄. 20자 이내, 메시지 하나, 고객이 쓰는 말" },
-          why: { type: "string", description: "이 훅을 고른 근거 — 숫자 포함(리뷰 n건 중 m건 언급, 기존 소재 CTR·ROAS, 상세 문구 등)" },
-          evidence: { type: "array", items: { type: "string", enum: ["기존 광고 성과", "리뷰", "상세페이지", "혜택", "검색 트렌드"] } },
-          format: { type: "string", description: "추천 형식 — 릴스/사진/캐러셀/스토리 + 컷 종류. shared.format_stats 근거가 있으면 반영" },
-          first_scene: { type: "string", description: "첫 장면 연출 한 줄 (무엇을 어떻게 보여줄지)" },
-          primary_text: { type: "string", description: "광고 본문 2~3줄. 첫 줄에 훅, 마지막 줄에 혜택·행동 유도" },
-          headline: { type: "string", description: "헤드라인 25자 이내" },
+          hook: {
+            type: "object", description: "① 0~3초: 스크롤을 멈추게 하는 후킹 헤드라인",
+            properties: {
+              headline: { type: "string", description: "첫 3초 자막 또는 이미지 첫 줄. 20자 이내, 메시지 하나, 고객이 쓰는 말. 리뷰 표현을 따옴표로 그대로 써도 좋음" },
+              scene: { type: "string", description: "첫 장면 연출 한 줄 — 무엇을 어떻게 보여줄지(40자 이내)" },
+              why_stop: { type: "string", description: "왜 멈추게 되나 — 심리(공감·궁금증·반전·숫자)와 근거(리뷰 n건, 기존 소재 CTR 등) 한 문장" },
+            }, required: ["headline", "scene", "why_stop"], additionalProperties: false,
+          },
+          hold: {
+            type: "object", description: "② 3~10초: 이탈하지 않고 보게 하는 장치 + 실구매 후기로 증명",
+            properties: {
+              device: { type: "string", description: "계속 보게 하는 장치 한 줄 — 예: 궁금증 열어두기, 전후 반전, 실측 공개, 실구매 자막 연속 (40자 이내)" },
+              proof_quote: { type: "string", description: "이 안을 뒷받침하는 리뷰 원문 한 토막(40자 이내, 글자 그대로 — 코드가 원문과 대조해 없는 인용은 지움). 리뷰가 없으면 빈 문자열" },
+              proof_rating: { type: "integer", description: "그 리뷰의 별점 1~5 (인용이 없으면 0)" },
+              visual: { type: "string", description: "이 구간에 보여줄 것 — 착용컷/디테일컷/실측표/리뷰 캡처 등 (40자 이내)" },
+            }, required: ["device", "proof_quote", "proof_rating", "visual"], additionalProperties: false,
+          },
+          convert: {
+            type: "object", description: "③ 전환 포인트: 지금 사야 할 이유를 분명히 제시",
+            properties: {
+              point: { type: "string", description: "살 이유 한 줄(30자 이내) — 상세 소구점·리뷰·혜택 중 가장 강한 것" },
+              evidence: { type: "string", description: "그 이유의 근거 — 상세 문구·실측·리뷰 수·혜택 중 사실만 (50자 이내)" },
+              cta: { type: "string", description: "행동 유도 한 줄 (20자 이내). 혜택은 metrics.promos에 있을 때만" },
+            }, required: ["point", "evidence", "cta"], additionalProperties: false,
+          },
+          copy: {
+            type: "object", description: "바로 쓸 광고 문안 — 본문은 '훅 → 증거(후기) → 살 이유 → 행동' 순서",
+            properties: {
+              primary_text: { type: "string", description: "광고 본문 3~4줄. 1줄 훅, 2줄 실구매 후기 인용 또는 사실 근거, 3줄 살 이유, 4줄 행동 유도" },
+              headline: { type: "string", description: "광고 헤드라인 25자 이내" },
+            }, required: ["primary_text", "headline"], additionalProperties: false,
+          },
+          evidence: { ...EVIDENCE, description: "이 안이 기대는 근거 종류" },
+          format: { type: "string", description: "추천 형식 — 릴스/사진/캐러셀/스토리 + 컷 종류. shared.format_stats 근거가 있으면 수치와 함께" },
+          expected: { type: "string", description: "기대 효과 한 줄 — 어떤 지표가 왜 좋아질지, 계정 평균(shared.format_stats.account)과 비교 (50자 이내)" },
+          rationale: { type: "string", description: "왜 이 조합이 구매 전환을 일으키나 — 고객 심리 + 데이터 근거 두 문장" },
         },
-        required: ["angle", "goal", "hook_text", "why", "evidence", "format", "first_scene", "primary_text", "headline"], additionalProperties: false,
+        required: ["title", "goal", "angle", "hook", "hold", "convert", "copy", "evidence", "format", "expected", "rationale"], additionalProperties: false,
       },
-      description: "후킹 포인트 3~5개, 기대 효과가 큰 순. 전환형을 최소 1개, 클릭형을 최소 1개 포함",
     },
-    proof_quotes: { type: "array", items: { type: "string" }, description: "소재 자막·이미지에 그대로 쓸 수 있는 리뷰 원문 인용(40자 이내, 원문 그대로). 리뷰가 없으면 빈 배열" },
+    proof_quotes: { type: "array", items: { type: "string" }, description: "소재 자막·이미지에 그대로 쓸 수 있는 리뷰 원문 인용(40자 이내, 글자 그대로) 최대 6개. 리뷰가 없으면 빈 배열" },
     used_angles: { type: "array", items: { type: "object", properties: { angle: { type: "string", description: "이미 돌린 소재의 소구(광고 문구·이름에서 읽은 것)" }, verdict: { type: "string", enum: ["변주해서 확대", "유지", "폐기"] }, reason: { type: "string" } }, required: ["angle", "verdict", "reason"], additionalProperties: false }, description: "이 상품에 이미 쓴 앵글 평가(ads가 없으면 빈 배열). 최대 4개" },
     avoid: { type: "array", items: { type: "string" }, description: "피해야 할 소구와 이유 — 반품 사유·부정 리뷰와 충돌, 상세에 근거 없음, Meta 정책 위험. 최대 4개" },
-    landing_match: { type: "string", description: "광고 훅이 약속한 것을 상세 첫 화면이 바로 증명하는지, 맞추려면 상세에서 무엇을 앞으로 올려야 하는지 (전환율에 직결)" },
-    test_plan: { type: "string", description: "먼저 테스트할 훅 2~3개와 3일 뒤 판단 기준(CTR·CPC·구매당 비용을 shared.format_stats.account 평균과 비교)" },
+    landing_match: { type: "string", description: "광고가 약속한 것을 상세 첫 화면이 바로 증명하는지, 맞추려면 상세에서 무엇을 앞으로 올려야 하는지 (전환율에 직결)" },
+    test_plan: { type: "string", description: "먼저 테스트할 제작안 2~3개와 3일 뒤 판단 기준(CTR·CPC·구매당 비용을 shared.format_stats.account 평균과 비교)" },
     confidence: { type: "string", enum: ["상", "중", "하"], description: "근거 양에 따른 신뢰도" },
     confidence_reason: { type: "string" },
   },
-  required: ["one_liner", "target", "hooks", "proof_quotes", "used_angles", "avoid", "landing_match", "test_plan", "confidence", "confidence_reason"], additionalProperties: false,
+  required: ["one_liner", "target", "insight", "plans", "proof_quotes", "used_angles", "avoid", "landing_match", "test_plan", "confidence", "confidence_reason"], additionalProperties: false,
 };
-const BRIEF_SYSTEM = `당신은 온라인 여성 패션 쇼핑몰 '다나로브(DNRB)'의 광고 소재 담당자입니다. 상품 하나의 상세페이지(pages)·리뷰(reviews)·기존 광고 성과(ads)·판매 지표(metrics)를 읽고, Meta(인스타·페이스북) 광고 소재를 어떤 후킹 포인트로 만들지 제작안을 씁니다.
+const BRIEF_SYSTEM = `당신은 온라인 여성 패션 쇼핑몰 '다나로브(DNRB)'의 광고 소재 담당자입니다. 상품 하나의 상세페이지(pages)·리뷰(reviews, review_themes)·기존 광고 성과(ads)·판매 지표(metrics)를 읽고, Meta(인스타·페이스북) 광고 소재 제작안을 씁니다.
 목표는 분명합니다: **CPC와 구매당 비용은 낮게, ROAS와 전환은 높게.** 독자는 광고 소재를 직접 만드는 팀(비개발자). 쉬운 한국어로 짧고 구체적으로.
 
-성과를 좌우하는 원칙:
-1. CPC는 첫 3초(릴스)·첫 줄(이미지)이 정합니다. 훅 하나에 메시지 하나, 구체적인 상황·숫자, 고객이 실제로 쓰는 말(리뷰 표현)을 씁니다. "예쁜 가을 신상" 같은 누구나 쓰는 말은 금지.
-2. 근거 우선순위: ① 이 상품 광고에서 이미 검증된 앵글(ads의 CTR·CPC·ROAS가 shared.format_stats.account 평균보다 좋은 소재의 문구) → 버리지 말고 변주 ② 리뷰에서 여러 번 반복되는 표현(몇 건인지 셉니다) ③ 상세페이지에만 있는 차별점 ④ 혜택(1+1·할인 — metrics.promos에 있을 때만) ⑤ 급상승 검색 키워드(rising_keywords) — 그 키워드를 정의하는 특징이 pages의 features·texts에 실제로 있을 때만.
+제작안의 구조 (대표가 정한 틀 — 모든 안이 이 흐름을 하나의 이야기로 가져야 합니다):
+① 0~3초 멈춤(hook): 스크롤을 멈추게 하는 후킹 헤드라인. 메시지 하나, 구체적인 상황·숫자, 고객이 실제로 쓰는 말. "예쁜 가을 신상" 같은 누구나 쓰는 말은 금지.
+② 3~10초 유지·증명(hold): 이탈하지 않고 계속 보게 하는 장치(궁금증 열어두기·반전·실측 공개 등) + **실구매 고객의 리뷰 원문**으로 증명. 리뷰는 돈 주고 사서 입은 사람의 평가라 판매자의 말보다 훨씬 믿음이 갑니다 — 판매자 톤("최고의 핏감")이 아니라 "내돈내산" 생생한 말투를 그대로 살립니다.
+③ 전환 포인트(convert): 지금 사야 할 이유를 분명히 — 상세페이지의 소구점(실측·소재·디자인 차별점)과 리뷰에서 반복된 만족 이유, 혜택(있을 때만) 중 가장 강한 것 하나 + 행동 유도.
+copy.primary_text는 이 세 단계를 '훅 → 후기 인용(또는 사실 근거) → 살 이유 → 행동' 순서로 3~4줄에 담습니다.
+
+근거를 다루는 원칙:
+1. **insight를 먼저 씁니다**: review_themes(코드가 주제별로 센 리뷰 수)와 pages를 함께 보고 '사는 이유'(buy_reasons, count는 review_themes.mentions 숫자 그대로)와 '망설이는 이유'(hesitations — 낮은 별점 리뷰·return_reasons·상세에 빠진 정보)를 정리합니다. 제작안의 훅과 전환 포인트는 여기서 나와야 합니다.
+2. 근거 우선순위: ① 이 상품 광고에서 이미 검증된 앵글(ads의 CTR·CPC·ROAS가 shared.format_stats.account 평균보다 좋은 소재의 문구) → 버리지 말고 변주 ② 리뷰에서 여러 번 반복되는 표현(review_themes 숫자로) ③ 상세페이지에만 있는 차별점 ④ 혜택(1+1·할인 — metrics.promos에 있을 때만) ⑤ 급상승 검색 키워드(rising_keywords) — 그 키워드를 정의하는 특징이 pages의 features·texts에 실제로 있을 때만.
 3. 구매당 비용과 ROAS는 '광고가 약속한 것 = 상세 첫 화면이 증명하는 것'일 때 좋아집니다. 훅이 상세에 없는 내용을 약속하면 클릭만 사고 전환은 안 됩니다 → landing_match에 씁니다.
-4. 반품·부정 신호와 충돌하는 소구는 금지: return_reasons나 낮은 별점 리뷰에 '크다/길다/비친다'가 많으면 '딱 맞는 핏' 같은 훅을 쓰지 않습니다. 오히려 기대치를 맞추는 문구(예: "넉넉한 루즈핏")가 반품을 줄여 실질 ROAS를 올립니다 → avoid에 씁니다.
+4. 망설임은 피하지 말고 선제적으로 답합니다: 낮은 별점·반품 사유에 '크다/비친다'가 있으면 그것과 충돌하는 소구("딱 맞는 핏")는 금지(avoid)하고, 대신 기대치를 맞추는 사실("넉넉한 루즈핏", "이너 한 장이면 충분")을 넣어 반품을 줄입니다 — 반품이 줄면 실질 ROAS가 오릅니다.
 5. 이미 쓴 앵글(ads의 문구·이름)과 똑같은 제안은 하지 않습니다. 잘 된 앵글은 '변주해서 확대', 성과 나쁜 앵글은 '폐기'로 used_angles에 평가합니다.
 6. 형식 추천은 shared.format_stats(소재 유형별 CTR·CPC·구매당 비용·ROAS)에 근거를 둡니다. 근거가 없으면 없다고 씁니다.
-7. hooks는 클릭형(스크롤 멈춤)과 전환형(살 이유)을 섞습니다. 전환형 최소 1개.
+7. plans는 3개(최대 4개), 기대 효과 큰 순. 1번이 가장 전환 효과가 클 안. 전환형·클릭형 각각 최소 1개. rationale에 '왜 이 조합이 전환을 일으키나'를 고객 심리 + 데이터로 두 문장.
 
 절대 규칙:
-- 없는 사실을 만들지 않습니다. 소재·기능·수치·리뷰 인용은 pages·reviews·metrics에 있는 것만. 리뷰 인용(proof_quotes)은 원문 그대로이며 reviews가 없으면 빈 배열입니다.
-- reviews.status가 'ok'가 아니면(권한 대기·없음) 리뷰 근거를 지어내지 말고 confidence를 낮추며 confidence_reason에 "리뷰 미반영"을 밝힙니다.
+- 없는 사실을 만들지 않습니다. 소재·기능·수치·리뷰 인용은 pages·reviews·metrics에 있는 것만. **리뷰 인용(proof_quote·quote·proof_quotes)은 원문 글자 그대로**입니다(코드가 원문과 대조해 다르면 지웁니다 — 요약·의역 금지). reviews가 없으면 빈 문자열·빈 배열.
+- reviews.status가 'ok'가 아니면(권한 대기·없음) 리뷰 근거를 지어내지 말고 confidence를 낮추며 confidence_reason에 "리뷰 미반영"을 밝힙니다. 그때 hold.proof_quote는 빈 문자열, 증명은 상세의 사실(실측·소재)로 합니다.
 - ads가 비어 있으면 '기존 광고 성과' 근거를 쓰지 않습니다(광고가 없다는 뜻일 수도, 수집이 안 된 것일 수도 있음).
 - Meta 광고 정책: 개인 속성을 단정하는 문구("살찐 당신", "나이 들어 보이는 당신") 금지, 과장된 전후 비교·의학적 효능·"최저가/1위" 같은 검증 불가 표현 금지.
 - 가격·혜택 숫자는 metrics에 있는 것만 씁니다.
@@ -121,7 +233,7 @@ async function claudeBrief(context: Row): Promise<{ brief: Row; usage: unknown }
   if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY 미설정");
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   const res = await client.messages.create({
-    model: MODEL, max_tokens: 6000, system: BRIEF_SYSTEM,
+    model: MODEL, max_tokens: 7000, system: BRIEF_SYSTEM,   // v2 제작안(3단 구조·insight)은 출력이 커서 6000→7000 (2026-10-13)
     output_config: { effort: "medium", format: { type: "json_schema", schema: BRIEF_SCHEMA } },
     messages: [{ role: "user", content: `광고 소재 제작안을 쓸 상품 자료입니다.\n${JSON.stringify(context)}` }],
   } as Parameters<typeof client.messages.create>[0]);
@@ -172,13 +284,19 @@ async function summarize(batch: string) {
   const scopeMissing = rows.some((x) => (x.reviews as Row)?.status === "scope_missing");
   const surge = oks.filter((x) => x.kind === "surge").length, best = oks.filter((x) => x.kind === "best").length;
   const headline = oks.length
-    ? (rows.length === 1 ? `소재 제작안: ${short(oks[0].product_name)} 훅 ${(((oks[0].brief as Row).hooks ?? []) as unknown[]).length}개` : `소재 제작안 ${oks.length}개 상품 (급상승 ${surge} · 베스트 ${best})`)
+    ? (rows.length === 1 ? `소재 제작안: ${short(oks[0].product_name)} ${(((oks[0].brief as Row).plans ?? (oks[0].brief as Row).hooks ?? []) as unknown[]).length}안` : `소재 제작안 ${oks.length}개 상품 (급상승 ${surge} · 베스트 ${best})`)
     : `소재 제작안 실패 ${rows.length}건`;
   const shared = (rows[0].shared ?? {}) as Row;
   const report = {
     headline, mood: "neutral",
     summary: [
-      ...oks.slice(0, 5).map((x) => { const h = ((((x.brief as Row).hooks ?? []) as Row[])[0] ?? {}) as Row; return `${short(x.product_name)} — 1순위 훅 "${h.hook_text ?? ""}" (${h.angle ?? ""}·${h.goal ?? ""})`; }),
+      ...oks.slice(0, 5).map((x) => {
+        const b = x.brief as Row;
+        const p = (((b.plans ?? []) as Row[])[0] ?? null) as Row | null;
+        if (p) return `${short(x.product_name)} — 1순위 "${(p.hook as Row)?.headline ?? ""}" → ${(p.convert as Row)?.point ?? ""} (${p.goal ?? ""})`;
+        const h = (((b.hooks ?? []) as Row[])[0] ?? {}) as Row;   // v1 제작안(2026-10-13 이전)
+        return `${short(x.product_name)} — 1순위 훅 "${h.hook_text ?? ""}" (${h.angle ?? ""}·${h.goal ?? ""})`;
+      }),
       scopeMissing ? "리뷰는 아직 반영되지 않았습니다 (카페24 게시판 읽기 권한 재연동 대기) — 상세페이지·광고 성과·반품 사유만으로 작성" : `리뷰 반영 ${reviewOk}/${oks.length}개 상품`,
     ],
     briefs: rows.map((x) => ({
@@ -367,13 +485,15 @@ Deno.serve(async (req) => {
           product_name: row.product_name, selected_because: (row.metrics as Row)?.why, metrics: row.metrics,
           pages: ordered,
           reviews: { status: reviews.status, count: reviews.count, rating_avg: reviews.rating_avg ?? null, low_rating: low.map((r) => ({ rating: r.rating, text: String(r.text).slice(0, 300) })), others: rest_.map((r) => ({ rating: r.rating, text: String(r.text).slice(0, 300) })) },
+          review_themes: rvList.length ? reviewThemes(rvList) : null,   // 코드가 센 주제별 리뷰 수 (2026-10-13)
           ads: (row.ads === null) ? null : adsWithCopy,
           shared: row.shared, ...side,
         };
-        const { brief, usage } = await claudeBrief(context);
+        const { brief: brief0, usage } = await claudeBrief(context);
+        const brief = verifyQuotes(brief0, rvList);   // 리뷰 인용은 원문에 있는 것만 남긴다 (2026-10-13)
         await patchRow(id, { status: "ok", brief, usage, error: null, ads: row.ads === null ? null : adsWithCopy, reviews: { status: reviews.status, count: reviews.count, rating_avg: reviews.rating_avg ?? null } });
         await advance(String(row.batch_id));
-        return json({ ok: true, hooks: ((brief.hooks ?? []) as unknown[]).length });
+        return json({ ok: true, plans: ((brief.plans ?? []) as unknown[]).length, quote_check: brief.quote_check });
       } catch (e) { await fail(row, `작성 실패: ${String((e as Error)?.message ?? e)}`); return json({ ok: false, error: String(e) }); }
     }
 
