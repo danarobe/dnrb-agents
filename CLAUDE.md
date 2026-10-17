@@ -39,6 +39,7 @@
 - **보고서 공통 필드(`reportSchema`)**: `colleague_notes[{from, took}]`(동료 것을 어떻게 반영했나, 없으면 빈 배열 — 억지 금지) · `handoffs[{to, product, ask, why}]`(동료에게 넘기는 요청 최대 3). 저장 시 `report.colleagues_seen`(읽은 보고서 목록)·`report.handoffs_received`(받은 요청)도 붙이고, `resolveProductNos`가 데이터 안의 {name|product_name, product_no|no} 쌍에서 `findByName`으로 `handoffs[].product_no`를 채운다(화면 버튼용). 규칙은 `COMMON_RULES` 끝 '동료와 함께 일하기'(받은 요청엔 반드시 답하기·출처 밝히기) + 담당자별 `AgentDef.colleagueRules`(각 def.ts의 `COLLEAGUE_RULES` — writeStage가 system 끝에 붙임).
 - **화면(`reports.js teamBox`)**: 헤드라인·타일 아래 '팀 협업' 상자 3열 — 동료에게서 가져온 것 / 받은 요청 / 동료에게 넘기는 요청. 상세 점검·광고 소재 담당에게 넘기는 요청은 `handoffRun`으로 바로 실행(product_no 있으면 `detailRun`·`agentRun('creative')`, 없으면 담당자 카드로 가서 상품명을 채움). 자동 담당자에게 넘긴 요청은 다음 아침 보고서가 답한다(사람이 할 일 없음).
 - 원칙 유지: 제안만(자동 실행 없음), 요청형 담당자는 버튼으로만 실행, 동료 숫자는 출처를 밝혀 인용.
+- **홈 조직도(`agents.js orgChartHtml/orgChartStatus`, 2026-10-17 사용자 요청 "사무실 부서처럼 한눈에")**: 담당자 화면 맨 위 '매출 성장팀 사무실' — 대표(모든 보고서 수신·큰 결정) → 아침 보고 줄(매출 08:00 → 반품 08:15 → 전략 08:30, 화살표에 주고받는 것) → 다리(소재·상세 점검 요청) → 요청형 줄(광고 소재·상세 점검). 책상마다 시간·할 일·'동료에게서 읽는 것'(`ORG_DESKS`) + 실제 최신 보고서로 채우는 상태(오늘 보고 완료 = report_date가 어제·ok / 동료 반영 n·받은 요청 n·넘긴 요청 n). 760px 이하 세로 배치(화살표 아래 방향).
 
 ## 3. 매출 분석 담당 (`supabase/functions/sales-agent`, 에이전트 1호)
 - **흐름**: run → ① `collect(D)` — 워크스페이스 함수를 `x-agent-secret`으로 admin 호출(실측 약 10초) → ② Claude `claude-opus-5`(effort medium, `output_config.format` json_schema 구조화 응답, `npm:@anthropic-ai/sdk`) → ③ `agent_reports` 저장 + 관리자 전원 `notifications`(link_menu agents) + 웹 푸시(VAPID) → 응답 `{id, report, notified}`.

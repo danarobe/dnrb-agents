@@ -50,6 +50,7 @@ async function renderHome() {
       <div><h1>담당자</h1><p class="sub">쇼핑몰 매출을 키우기 위한 AI 담당자들입니다. 각자 정해진 시간에 데이터를 보고 보고서를 씁니다.</p></div>
     </div>
     <div id="setup-notice"></div>
+    ${orgChartHtml()}
     <div class="cards" id="agent-cards">${AGENTS.map(agentCardSkeleton).join('')}</div>`;
   renderSetupNotice();
   // 최신 보고서 1건씩 (현재는 sales만 데이터가 있음)
@@ -59,6 +60,7 @@ async function renderHome() {
   }
   try {
     const [rows] = await Promise.all([reportsLoad(), actionsLoad()]);
+    orgChartStatus(rows);
     AGENTS.forEach(a => {
       const el = $('card-last-' + a.key); if (!el) return;
       const r = rows.find(x => x.agent === a.key);
@@ -78,6 +80,55 @@ async function renderHome() {
   } catch (e) {
     AGENTS.forEach(a => { const el = $('card-last-' + a.key); if (el) el.innerHTML = `<span class="muted">불러오기 실패: ${escHtml(e.message)}</span>`; });
   }
+}
+
+/* ── 사무실 조직도 (2026-10-17 사용자 요청: "설계한 순서와 관계도를 맨 위에 한눈에, 실제 사무실 부서처럼") ──
+   아침 줄: 매출(08:00) → 반품(08:15) → 전략(08:30)이 앞사람 보고서를 읽고 답한다. 요청형 줄: 광고 소재(월 09:00·요청)·상세 점검(요청)은 동료가 넘긴 요청을 받는다.
+   대표는 맨 위에서 모든 보고서를 받는다. 상태(오늘 보고 완료·넘긴 요청 수)는 orgChartStatus가 실제 보고서로 채운다. */
+const ORG_DESKS = {
+  sales:    { time: '08:00', duty: '어제 실적 보고', reads: '어제 전략·반품·소재 보고서를 읽고 매출 증대 방안' },
+  returns:  { time: '08:15', duty: '취소·반품 감시', reads: '오늘 매출 보고서의 급등 상품 반품률에 답함' },
+  strategy: { time: '08:30', duty: '어떤 상품에 힘을 실을지', reads: '오늘 매출·반품을 합쳐 집중 상품·4분면 전략' },
+  creative: { time: '월 09:00 · 요청', duty: '광고 소재 제작안', reads: '전략의 소재 컨셉 + 동료 요청 → [요청] 제작안' },
+  detail:   { time: '요청할 때', duty: '상세페이지 점검', reads: '전략·반품이 넘긴 상품을 점검' },
+};
+function orgDesk(key) {
+  const a = agentOf(key), d = ORG_DESKS[key];
+  return `<div class="desk" id="desk-${key}" style="--c:${a.color};">
+    <div class="desk-top"><span class="agent-icon sm" style="background:${a.color}1a;color:${a.color};"><i class="fa-solid ${a.icon}"></i></span><div><b>${escHtml(a.name)}</b><div class="desk-time"><i class="fa-regular fa-clock"></i> ${escHtml(d.time)}</div></div></div>
+    <div class="desk-duty">${escHtml(d.duty)}</div>
+    <div class="desk-reads"><i class="fa-solid fa-people-arrows"></i> ${escHtml(d.reads)}</div>
+    <div class="desk-status" id="desk-status-${key}"></div>
+  </div>`;
+}
+const orgArrow = (label, cls = '') => `<div class="org-arrow ${cls}"><span class="org-arrow-line"></span><span class="org-arrow-label">${escHtml(label)}</span></div>`;
+function orgChartHtml() {
+  return `<div class="org">
+    <div class="org-head"><b><i class="fa-solid fa-building"></i> 매출 성장팀 사무실</b><span class="muted small">매일 아침 같은 순서로 일하고, 앞사람 보고서를 읽은 뒤 자기 보고서를 씁니다. 서로 확인할 것은 요청으로 넘기고, 다음 보고서에서 답합니다.</span></div>
+    <div class="org-ceo"><span class="agent-icon sm" style="background:#1f2937;color:#fff;"><i class="fa-solid fa-user-tie"></i></span><div><b>대표</b><div class="muted small">모든 보고서를 받고, 큰 결정(예산·가격·판매 중단)은 직접 합니다. 담당자는 제안만 합니다.</div></div></div>
+    <div class="org-row-label"><span class="chip new">아침 보고 줄</span> <span class="muted small">08:00 → 08:15 → 08:30, 앞사람 보고서를 읽고 답하며 이어집니다</span></div>
+    <div class="org-row morning">
+      ${orgDesk('sales')}${orgArrow('급등 상품 → 반품률 확인 요청')}${orgDesk('returns')}${orgArrow('반품 위험·안전 상품 → 전략 반영')}${orgDesk('strategy')}
+    </div>
+    <div class="org-bridge"><div class="org-bridge-line"></div><div class="org-bridge-label"><i class="fa-solid fa-arrow-turn-down"></i> 소재 제작안 요청 · 상세 점검 요청 (버튼으로 바로 실행)</div><div class="org-bridge-back"><i class="fa-solid fa-arrow-turn-up"></i> 다음 날 매출 담당이 전략·소재의 결과를 확인</div></div>
+    <div class="org-row-label"><span class="chip">요청형 줄</span> <span class="muted small">동료가 넘긴 상품을 받아 일합니다</span></div>
+    <div class="org-row ondemand">
+      ${orgDesk('creative')}${orgDesk('detail')}
+    </div>
+  </div>`;
+}
+function orgChartStatus(rows) {
+  const today = (() => { const d = new Date(Date.now() - 86400000); return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d); })();   // 오늘 아침 보고서의 기준일 = 어제
+  Object.keys(ORG_DESKS).forEach(key => {
+    const el = $('desk-status-' + key); if (!el) return;
+    const r = rows.find(x => x.agent === key);
+    if (!r) { el.innerHTML = '<span class="muted small">보고서 없음</span>'; return; }
+    const done = r.status === 'ok' && r.report_date === today;
+    const rp = r.report || {};
+    const give = (rp.handoffs || []).length, got = (rp.handoffs_received || []).length, took = (rp.colleague_notes || []).length;
+    el.innerHTML = `<a href="#reports/${r.id}" class="desk-badge ${done ? 'done' : (r.status === 'error' ? 'err' : '')}"><i class="fa-solid ${done ? 'fa-circle-check' : r.status === 'error' ? 'fa-triangle-exclamation' : 'fa-file-lines'}"></i> ${done ? '오늘 보고 완료' : r.status === 'error' ? dateShort(r.report_date) + ' 실패' : dateShort(r.report_date) + ' 보고서'}</a>
+      ${(took || got || give) ? `<span class="desk-team muted small">${took ? `동료 반영 ${took}` : ''}${got ? ` · 받은 요청 ${got}` : ''}${give ? ` · 넘긴 요청 ${give}` : ''}</span>` : ''}`;
+  });
 }
 
 function agentCardSkeleton(a) {
