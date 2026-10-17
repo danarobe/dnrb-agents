@@ -92,6 +92,95 @@ export function safeCollector() {
 }
 
 // ── 주간 문맥: 이번 주 앞선 날들의 주목·주의·할 일 + 완료 체크 + 저번 주 할 일 ──
+// ── 동료 보고서 문맥 (2026-10-17, 사용자 요청 "에이전트끼리 유기적으로") ──
+//   각 담당자는 보고서를 쓰기 전에 다른 담당자들의 최근 보고서 요약(colleagues)과 자기에게 온 요청(handoffs_to_me)을 받는다.
+//   아침 순서가 매출(08:00) → 반품(08:15) → 전략(08:30)이라 반품은 오늘 매출 보고서를, 전략은 오늘 매출·반품 보고서를, 매출은 어제 전략·반품을 본다.
+//   보고서에는 colleague_notes(동료 것을 어떻게 반영했나)와 handoffs(동료에게 넘기는 요청)가 생기고, 다음 보고서가 그 요청에 답한다.
+export const AGENT_LABELS: Record<string, string> = { sales: "매출 분석 담당", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", creative: "광고 소재 담당", detail: "상세페이지 점검 담당" };
+export const COLLEAGUE_TARGETS = Object.values(AGENT_LABELS);
+const clip = (v: unknown, n: number) => String(v ?? "").slice(0, n);
+// 담당자별로 다른 담당이 알아야 할 핵심만 줄인다 (입력 토큰 절약 — 보고서 전체는 수천 토큰)
+function colleagueDigest(agent: string, rp: Row): Row {
+  const titles = (arr: unknown, n: number) => ((arr ?? []) as Row[]).slice(0, n).map((x) => ({ title: clip(x.title, 60), detail: clip(x.detail, 90) }));
+  const base: Row = {
+    headline: rp.headline, summary: ((rp.summary ?? []) as unknown[]).slice(0, 4),
+    highlights: titles(rp.highlights, 5), warnings: titles(rp.warnings, 5),
+    actions: ((rp.actions ?? []) as Row[]).slice(0, 4).map((a) => `${a.owner ?? ""}: ${clip(a.title, 60)}`),
+  };
+  if (agent === "returns") {
+    base.cohort = ((rp.cohort_table ?? []) as Row[]).slice(0, 3).map((w) => ({ week: w.week, maturity: w.maturity, cancel_rate: w.cancel_rate, return_rate: w.return_rate, verdict: w.verdict }));
+    base.risk_products = ((rp.risk_products ?? []) as Row[]).slice(0, 8).map((p) => ({ name: p.name, level: p.level, rate_14d: p.rate_14d, delivered_14d: p.delivered_14d, cause: clip(p.cause, 50) }));
+    base.watch_review = ((rp.watch_review ?? []) as Row[]).slice(0, 8).map((w) => `${w.name}: ${w.verdict}`);
+  }
+  if (agent === "strategy") {
+    base.matrix = ((rp.matrix ?? []) as Row[]).slice(0, 8).map((m) => ({ name: m.name, quadrant: m.quadrant, rate_14d: m.rate_14d, views_14d: m.views_14d, active_ads: m.active_ads }));
+    base.focus = ((rp.focus ?? []) as Row[]).slice(0, 6).map((f) => ({ name: f.name, why: clip(f.why, 40), plan: clip(f.plan, 70), detail_focus: clip(f.detail_focus, 60) }));
+    base.trend_actions = ((rp.trend_actions ?? []) as Row[]).slice(0, 3).map((t) => ({ keyword: t.keyword, our_products: t.our_products, suggestion: clip(t.suggestion, 50) }));
+    base.weather_plan = clip(rp.weather_plan, 100);
+  }
+  if (agent === "creative") {
+    base.briefs = ((rp.briefs ?? []) as Row[]).filter((b) => b.status === "ok" && b.brief).slice(0, 8).map((b) => {
+      const br = b.brief as Row; const p = (((br.plans ?? []) as Row[])[0] ?? null) as Row | null; const h = (((br.hooks ?? []) as Row[])[0] ?? null) as Row | null;
+      return { name: b.product_name, kind: b.kind, top_plan: p ? `${(p.hook as Row)?.headline ?? ""} → ${(p.convert as Row)?.point ?? ""}` : (h?.hook_text ?? ""), landing_match: clip(br.landing_match, 90), avoid: ((br.avoid ?? []) as unknown[]).slice(0, 2).map((a) => clip(a, 50)) };
+    });
+  }
+  if (agent === "detail") {
+    base.reviews = ((rp.reviews ?? []) as Row[]).filter((x) => x.status === "ok").slice(0, 8).map((x) => { const rv = (x.review ?? {}) as Row; return { name: x.product_name, score: rv.score, verdict: clip(rv.verdict, 80), top_priority: clip((rv.top_priority as Row)?.what, 80) }; });
+  }
+  return base;
+}
+export async function colleagueContext(me: string, D: string) {
+  const r = await rest(`agent_reports?agent=neq.${me}&status=eq.ok&report_date=gte.${addDays(D, -7)}&select=agent,report_date,report,created_at&order=created_at.desc&limit=40`);
+  const rows: Row[] = r.ok ? await r.json() : [];
+  const latest = new Map<string, Row>();
+  const seenDay = new Set<string>();
+  const handoffsToMe: Row[] = [];
+  const myLabel = AGENT_LABELS[me] ?? me;
+  for (const row of rows) {
+    const agent = String(row.agent), date = String(row.report_date), rp = (row.report ?? {}) as Row;
+    if (!latest.has(agent)) latest.set(agent, row);
+    const k = `${agent}|${date}`;
+    if (seenDay.has(k)) continue;   // 같은 날 재실행은 최신 것만
+    seenDay.add(k);
+    if (date >= addDays(D, -3)) for (const h of ((rp.handoffs ?? []) as Row[])) if (String(h.to) === myLabel) handoffsToMe.push({ from: AGENT_LABELS[agent] ?? agent, report_date: date, product: h.product ?? "", ask: h.ask, why: h.why });
+  }
+  const colleagues = [...latest.entries()].map(([agent, row]) => {
+    const date = String(row.report_date);
+    const age = Math.round((new Date(`${D}T00:00:00Z`).getTime() - new Date(`${date}T00:00:00Z`).getTime()) / 86400000);
+    return { agent: AGENT_LABELS[agent] ?? agent, report_date: date, is_today: date === D, age_days: age, ...colleagueDigest(agent, (row.report ?? {}) as Row) };
+  });
+  return { colleagues, handoffs_to_me: handoffsToMe.slice(0, 6), seen: colleagues.map((c) => ({ agent: c.agent, report_date: c.report_date })) };
+}
+// handoffs의 상품명을 수집 데이터 안의 상품 번호로 맞춘다 (화면의 '지금 점검·분석' 버튼용) — 데이터 어디든 {name, product_no|no} 쌍을 모아 findByName
+export function resolveProductNos(report: Row, data: Row): Row {
+  const pairs: Row[] = [];
+  const walk = (v: unknown, depth: number) => {
+    if (depth > 5 || !v || typeof v !== "object") return;
+    if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1); return; }
+    const o = v as Row;
+    const no = o.product_no ?? o.no, nm = o.name ?? o.product_name;
+    if (nm && Number(no) > 0) pairs.push({ name: String(nm), no: Number(no) });
+    for (const x of Object.values(o)) walk(x, depth + 1);
+  };
+  walk(data, 0);
+  // 마지막 수단: Claude가 상품명의 한 어절을 빼고 쓴 경우('새틴 블라썸 스트링 스커트' → '새틴 블라썸 스커트', 실사례) — 핵심명 2글자 조각의 겹침 비율 75%↑, 후보가 하나일 때만
+  const bigrams = (t: string) => { const c = t.replace(/\s+/g, ""); const out = new Set<string>(); for (let i = 0; i + 1 < c.length; i++) out.add(c.slice(i, i + 2)); return out; };
+  const strip = (t: unknown) => String(t ?? "").normalize("NFC").replace(/\([^)]*\)|\[[^\]]*\]/g, " ").toLowerCase();
+  const loose = (name: string): Row | null => {
+    const q = bigrams(strip(name)); if (q.size < 4) return null;
+    const scored = pairs.map((p) => { const c = bigrams(strip(p.name)); let hit = 0; for (const g of q) if (c.has(g)) hit++; return { p, score: hit / q.size }; }).filter((x) => x.score >= 0.75).sort((a, b) => b.score - a.score);
+    if (!scored.length) return null;
+    const top = scored[0]; const sameNo = scored.filter((x) => x.score === top.score).every((x) => x.p.no === top.p.no);
+    return sameNo ? top.p : null;
+  };
+  const handoffs = ((report.handoffs ?? []) as Row[]).map((h) => {
+    if (!h.product) return h;
+    const hit = findByName(pairs, h.product) ?? loose(String(h.product));
+    return hit ? { ...h, product_no: hit.no } : h;
+  });
+  return { ...report, handoffs };
+}
+
 export async function weekContext(agent: string, D: string) {
   const wStart = mondayOf(D);
   const lwStart = addDays(wStart, -7), lwEnd = addDays(wStart, -1);
@@ -185,9 +274,24 @@ export function reportSchema(opts: { highlights: string; warnings: string; actio
         },
         description: "이번 주 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since 그대로)하고 오늘 새 제안을 더한다. done=true는 뺀다. 중요한 순, 최대 6개",
       },
+      colleague_notes: {
+        type: "array",
+        items: { type: "object", properties: { from: { type: "string", enum: COLLEAGUE_TARGETS }, took: { type: "string", description: "그 담당 보고서의 무엇을 내 판단에 어떻게 반영했나 (70자 이내, 숫자 포함)" } }, required: ["from", "took"], additionalProperties: false },
+        description: "동료 보고서(colleagues)에서 가져와 판단에 반영한 것. 반영할 게 없으면 빈 배열(억지로 만들지 않음). 나에게 온 요청(handoffs_to_me)에 답했으면 여기에 '요청에 답함: …'으로 적는다. 최대 4개",
+      },
+      handoffs: {
+        type: "array",
+        items: { type: "object", properties: {
+          to: { type: "string", enum: COLLEAGUE_TARGETS, description: "받을 담당자 (자기 자신 제외)" },
+          product: { type: "string", description: "관련 상품명 — 데이터에 있는 그대로. 특정 상품이 아니면 빈 문자열" },
+          ask: { type: "string", description: "확인·실행을 요청하는 한 줄 (40자 이내)" },
+          why: { type: "string", description: "왜 필요한지 — 내 데이터의 숫자 근거 (70자 이내)" },
+        }, required: ["to", "product", "ask", "why"], additionalProperties: false },
+        description: "내 데이터로는 알 수 없지만 동료가 확인·실행해야 할 것. 최대 3개, 없으면 빈 배열",
+      },
       ...extraProps,
     },
-    required: ["headline", "mood", "summary", "highlights", "warnings", "actions", "note", "week_highlights", "week_warnings", "week_actions", ...Object.keys(extraProps)],
+    required: ["headline", "mood", "summary", "highlights", "warnings", "actions", "note", "week_highlights", "week_warnings", "week_actions", "colleague_notes", "handoffs", ...Object.keys(extraProps)],
     additionalProperties: false,
   };
 }
@@ -210,7 +314,14 @@ export const COMMON_RULES = `
 - 주의 항목 중 이미 해소된 것은 week_warnings에서 뺍니다.
 - week_actions는 this_week.week_actions_so_far(이번 주 지금까지의 할 일, done = 사람이 완료 체크한 것)에서 done=false인 항목을 id·since 그대로 유지하고 오늘의 새 제안을 더합니다. **done=true인 항목은 완료된 것이니 반드시 뺍니다.** 지난 일이거나 의미가 없어진 것도 뺍니다. 새 항목의 id는 '기준일YYYYMMDD-순번'. 중요한 순으로 최대 6개.
 - prior_days가 비어 있으면(주 첫날) 주간 항목은 오늘 것과 같고 status는 전부 "new".
-- actions(오늘 새로 제안하는 것)는 주간 항목과 별개로 그대로 씁니다.`;
+- actions(오늘 새로 제안하는 것)는 주간 항목과 별개로 그대로 씁니다.
+
+동료와 함께 일하기 (colleagues = 다른 담당자들의 최근 보고서 요약, is_today=true면 오늘 아침 같은 기준일 것 / handoffs_to_me = 동료가 나에게 넘긴 요청):
+- 보고서를 쓰기 전에 colleagues를 읽고 내 판단과 맞물리는 것을 찾습니다. 같은 상품을 동료가 다르게 봤으면(예: 매출 담당은 급상승, 반품 담당은 위험) 두 신호를 **합쳐서** 판단하고 그 사실을 문장에 씁니다 ("매출은 늘지만 반품 담당 기준 반품률 18%라 소재 확대 전 사이즈 안내부터").
+- colleague_notes에 동료 보고서의 무엇을 어떻게 반영했는지 적습니다. 반영할 게 없으면 빈 배열 — 억지로 만들지 않습니다.
+- handoffs_to_me에 요청이 있으면 **반드시 답합니다**: 확인 결과를 highlights·warnings·summary 중 알맞은 곳에 넣고 colleague_notes에 "요청에 답함: …"을 적습니다. 내 데이터에 없으면 "확인 불가(이유)"라고 답합니다.
+- handoffs로 동료에게 넘깁니다(최대 3개): 급상승·주목 상품의 반품률 확인 → 취소·반품 감시 담당 / 조회 많고 주문율 낮은 상품의 상세 점검 → 상세페이지 점검 담당 / 밀어줄 상품의 소재 제작안 → 광고 소재 담당 / 반품 위험·광고 효율이 좋은 상품을 전략에 반영 → 상품 전략 담당 / 매출 흐름 확인 → 매출 분석 담당. 상품명은 데이터에 있는 그대로.
+- 동료의 숫자를 내 숫자처럼 다시 쓰지 않습니다. 인용할 때는 "반품 담당 보고서 기준"처럼 출처를 밝힙니다.`;
 
 // ── Claude 호출 ──
 export type LLMImage = { url: string; label: string };
@@ -249,7 +360,7 @@ export async function writeReport(system: string, schema: unknown, data: unknown
   }
   content.push({
     type: "text",
-    text: `아래는 기준일(어제)까지의 수집 데이터와 이번 주 앞선 날들의 보고 항목입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(data)}\n\n[this_week]\n${JSON.stringify(week)}${opts.compact ? COMPACT_HINT : ""}`,
+    text: `아래는 기준일(어제)까지의 수집 데이터, 이번 주 앞선 날들의 보고 항목(this_week), 동료 담당자들의 최근 보고서 요약(colleagues)과 나에게 온 요청(handoffs_to_me)입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(data)}\n\n[this_week · colleagues]\n${JSON.stringify(week)}${opts.compact ? COMPACT_HINT : ""}`,
   });
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
   const res = await client.messages.create({
@@ -323,6 +434,7 @@ export interface AgentDef {
   // 선택: Claude 응답에 숫자 채워 넣기(Claude가 숫자를 다시 쓰지 않게 해 출력 토큰·시간 절약)
   postProcess?: (report: Row, data: Row) => Row;
   effort?: "low" | "medium" | "high";   // 기본 medium
+  colleagueRules?: string;               // 선택: 동료 보고서를 어떻게 쓸지 담당자별 규칙 (2026-10-17) — system 끝에 붙는다
   images?: (data: Row) => LLMImage[];    // 선택: Claude가 봐야 할 이미지(광고 소재 썸네일 등, 최대 12장)
   // 선택: 담당자 전용 추가 액션(관리자 또는 x-cron-secret). 예: strategy-agent의 'trends'(데이터랩 순위표를 낮에 받아 저장, 2026-10-11)
   actions?: Record<string, (url: URL, req: Request) => Promise<Response>>;
@@ -410,13 +522,14 @@ export async function writeStage(def: AgentDef, D: string, key: string, opts: { 
   const trigger = payload.trigger, data = payload.data, createdBy = payload.created_by, retry = num(payload.retry);
   const t0 = Date.now();
   try {
-    const wc = await weekContext(def.agent, D);
+    const [wc, cc] = await Promise.all([weekContext(def.agent, D), colleagueContext(def.agent, D)]);
     const llmData = def.forLLM ? def.forLLM(data) : data;
-    const { report: written0, usage, model } = await writeReport(def.system, def.schema, llmData,
-      { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far }, retry > 0 ? "low" : (def.effort ?? "medium"),
+    const system = def.colleagueRules ? `${def.system}\n\n이 담당자의 협업 규칙:\n${def.colleagueRules}` : def.system;
+    const { report: written0, usage, model } = await writeReport(system, def.schema, llmData,
+      { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far, colleagues: cc.colleagues, handoffs_to_me: cc.handoffs_to_me }, retry > 0 ? "low" : (def.effort ?? "medium"),
       def.images ? def.images(data) : [], { maxTokens: opts.maxTokens, compact: retry > 0 });
-    const written = def.postProcess ? def.postProcess(written0, data) : written0;
-    const report = { ...written, week: wc.week, last_week: wc.last_week };
+    const written = resolveProductNos(def.postProcess ? def.postProcess(written0, data) : written0, data);
+    const report = { ...written, week: wc.week, last_week: wc.last_week, colleagues_seen: cc.seen, handoffs_received: cc.handoffs_to_me };
     const saved = await saveRow({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage: { ...(usage as Row), retry }, created_by: createdBy });
     await dropCache();
     const notified = await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 }));

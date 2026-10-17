@@ -390,3 +390,13 @@ table.risk .r { white-space: normal; }
 .st-cta { margin-top: 6px; font-weight: 800; color: #047857; }
 .plan-copy { margin-top: 6px; }
 @container rv (max-width: 760px) { .steps { grid-template-columns: 1fr; } }
+
+/* ── 팀 협업 칸 (2026-10-17) ── */
+.team-box { border-color: #a5f3fc; }
+.team-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.team-grid > * { min-width: 0; }
+.team-grid h5 { font-size: .78rem; font-weight: 800; color: var(--ink-2); margin: 0 0 4px; }
+.team-row { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; padding: 6px 0; border-top: 1px dashed #f3f4f6; font-size: .83rem; line-height: 1.5; }
+.team-row:first-of-type { border-top: 0; }
+.team-row .btn { margin-top: 4px; }
+.chip.team { white-space: normal; }

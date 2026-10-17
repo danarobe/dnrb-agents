@@ -140,4 +140,9 @@ const SCHEMA = reportSchema({
   actions: "오늘 당장 실행할 구체적 액션 정확히 3개",
 });
 
-export const DEF: AgentDef = { agent: AGENT, label: "매출 분석 담당", system: SYSTEM, schema: SCHEMA, collect };
+// 동료 보고서 활용 규칙 (2026-10-17) — 매출 담당은 아침 첫 순서라 어제 전략·반품·광고 소재 보고서를 본다
+const COLLEAGUE_RULES = `- 상품 전략 담당 보고서의 '판매 확대'·'노출 부족' 상품과 집중 상품(focus)이 어제 실제로 팔렸는지(top_yesterday·surge·summary 데이터)를 확인해, 전략이 매출로 이어지는지 highlights/warnings에 씁니다. 이어지지 않으면 왜인지 추측(노출·가격·소재)과 함께 전략 담당에게 handoff.
+- 광고 소재 담당 제작안이 있는 상품은 그 뒤 매출·광고 효율이 움직였는지 확인합니다.
+- 반품 담당이 위험·주의로 꼽은 상품이 급증 TOP이나 어제 TOP에 있으면 "매출은 늘지만 반품 위험"으로 함께 쓰고, 소재·예산 확대 전에 원인 해결을 권합니다.
+- actions 3개 중 적어도 하나는 동료 보고서와 내 매출 데이터를 합쳐 '앞으로 매출을 더 키울 방안'이어야 합니다(예: 반품 낮고 급상승인 상품에 예산 집중, 조회 많고 안 팔리는 상품은 상세 점검 요청).`;
+export const DEF: AgentDef = { agent: AGENT, label: "매출 분석 담당", system: SYSTEM, schema: SCHEMA, collect, colleagueRules: COLLEAGUE_RULES };

@@ -219,6 +219,7 @@ copy.primary_text는 이 세 단계를 '훅 → 후기 인용(또는 사실 근�
 4. 망설임은 피하지 말고 선제적으로 답합니다: 낮은 별점·반품 사유에 '크다/비친다'가 있으면 그것과 충돌하는 소구("딱 맞는 핏")는 금지(avoid)하고, 대신 기대치를 맞추는 사실("넉넉한 루즈핏", "이너 한 장이면 충분")을 넣어 반품을 줄입니다 — 반품이 줄면 실질 ROAS가 오릅니다.
 5. 이미 쓴 앵글(ads의 문구·이름)과 똑같은 제안은 하지 않습니다. 잘 된 앵글은 '변주해서 확대', 성과 나쁜 앵글은 '폐기'로 used_angles에 평가합니다.
 6. 형식 추천은 shared.format_stats(소재 유형별 CTR·CPC·구매당 비용·ROAS)에 근거를 둡니다. 근거가 없으면 없다고 씁니다.
+7-1. 동료 담당자 자료가 있으면 씁니다: strategy_suggestion(상품 전략 담당이 이 상품에 쓴 소재 컨셉·상세 강조점)은 같은 방향으로 가되 똑같이 반복하지 말고 리뷰 근거로 구체화하고, colleague_handoffs(동료가 광고 소재 담당에게 넘긴 요청)가 있으면 그 요청에 맞는 제작안을 반드시 하나 포함해 title 앞에 '[요청]'을 붙입니다. return_reasons(반품 담당)의 사유는 avoid·hesitations에 반영합니다.
 7. plans는 3개(최대 4개), 기대 효과 큰 순. 1번이 가장 전환 효과가 클 안. 전환형·클릭형 각각 최소 1개. rationale에 '왜 이 조합이 전환을 일으키나'를 고객 심리 + 데이터로 두 문장.
 
 절대 규칙:
@@ -243,7 +244,7 @@ async function claudeBrief(context: Row): Promise<{ brief: Row; usage: unknown }
 }
 
 // ── 다른 담당자 보고서에서 이 상품의 반품 사유·급상승 키워드 ──
-async function sideContext(no: number): Promise<Row> {
+async function sideContext(no: number, name = ""): Promise<Row> {
   const out: Row = {};
   const latest = async (agent: string) => { const r = await rest(`agent_reports?agent=eq.${agent}&status=eq.ok&select=data&order=created_at.desc&limit=1`); return r.ok ? ((await r.json())[0] ?? null) : null; };
   const rt = await latest("returns");
@@ -254,10 +255,26 @@ async function sideContext(no: number): Promise<Row> {
   }
   const st = await latest("strategy");
   if (st) {
+    // 전략 담당이 이 상품에 쓴 제안(소재 컨셉·상세 강조) — 같은 방향으로 가되 중복 제안은 피하게 (2026-10-17)
+    const strp = await rest(`agent_reports?agent=eq.strategy&status=eq.ok&select=report&order=created_at.desc&limit=1`);
+    const srp = strp.ok ? (((await strp.json())[0] ?? {}) as Row).report as Row | undefined : undefined;
+    const fr = ((srp?.focus ?? []) as Row[]).find((f) => Number((f as Row).product_no) === no) ?? null;
+    if (fr) out.strategy_suggestion = { driver: fr.driver, creative_plan: fr.creative_plan, detail_focus: fr.detail_focus, plan: fr.plan };
     const rising: string[] = [];
     for (const c of (((((st.data as Row).trends ?? {}) as Row).naver ?? []) as Row[])) for (const r of ((c.rising ?? []) as Row[])) if (((r.our_products ?? []) as Row[]).some((p) => Number(p.no) === no)) rising.push(String(r.keyword));
     if (rising.length) out.rising_keywords = rising.slice(0, 5);
   }
+  // 동료 담당자들이 이 상품에 대해 광고 소재 담당에게 넘긴 요청 (최근 7일, handoffs.to = 광고 소재 담당) — 2026-10-17
+  try {
+    const hr = await rest(`agent_reports?agent=in.(sales,returns,strategy)&status=eq.ok&created_at=gte.${new Date(Date.now() - 7 * 86400000).toISOString()}&select=agent,report_date,report&order=created_at.desc&limit=30`);
+    const rows: Row[] = hr.ok ? await hr.json() : [];
+    const asks: Row[] = [];
+    for (const r of rows) for (const h of ((((r.report ?? {}) as Row).handoffs ?? []) as Row[])) {
+      if (String(h.to) !== LABEL) continue;
+      if (Number(h.product_no) === no || (h.product && paNorm(paKey(String(h.product))) === paNorm(paKey(name)))) asks.push({ from: String(r.agent), report_date: r.report_date, ask: h.ask, why: h.why });
+    }
+    if (asks.length) out.colleague_handoffs = asks.slice(0, 4);
+  } catch { /* 없으면 생략 */ }
   return out;
 }
 
@@ -476,7 +493,7 @@ Deno.serve(async (req) => {
           const cmap = new Map((((cards?.ads ?? []) as Row[])).map((c) => [String(c.ad_id), c]));
           adsWithCopy = own.map((a) => { const c = cmap.get(String(a.ad_id)); return { name: a.ad_name, is_video: c ? !!c.is_video : undefined, body: c ? String(c.body ?? "").slice(0, 200) : undefined, title: c ? String(c.title ?? "").slice(0, 80) : undefined, spend: a.spend, ctr: a.ctr, cpc: a.cpc, purchases: a.purchases, cost_per_purchase: a.cost_per_purchase, roas: a.roas }; });
         }
-        const side = await sideContext(no);
+        const side = await sideContext(no, String(row.product_name ?? ""));
         // Claude에 보내는 리뷰: 긴 것·낮은 별점을 고루 (최대 60개, 각 300자)
         const rvList = ((reviews.reviews ?? []) as Row[]);
         const low = rvList.filter((r) => num(r.rating) > 0 && num(r.rating) <= 3).slice(0, 15);

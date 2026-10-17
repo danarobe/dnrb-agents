@@ -388,6 +388,7 @@ function reportHtml(r) {
       <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 오늘의 주목</h3>${list(rp.highlights, 'up')}</div>
       <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 오늘의 주의</h3>${list(rp.warnings, 'down')}</div>
     </div>`}
+    ${teamBox(rp)}
     ${extraBoxes}
     ${hasWeek ? `<div class="week-head"><i class="fa-regular fa-calendar"></i> 이번 주 누적 <span class="muted">${weekLabel} · 앞선 날 보고서와 합친 것. 그날 못 봤어도 여기서 확인</span></div>
     <div class="two">
@@ -467,6 +468,42 @@ function rawTableStrategy(d) {
     <table><thead><tr><th>#</th><th>상품</th><th class="r">판매</th><th class="r">주문율</th><th class="r">활성 광고</th></tr></thead><tbody>${top}</tbody></table>`;
 }
 
+/* ── 팀 협업 칸 (2026-10-17): 동료 보고서에서 가져온 것 · 받은 요청 · 동료에게 넘기는 요청 ──
+   handoffs[].to 가 상세 점검·광고 소재 담당이고 상품 번호가 맞춰져 있으면 바로 실행 버튼, 아니면 담당자 카드로 가서 상품을 고르게. */
+const TEAM_KEY = { '매출 분석 담당': 'sales', '취소·반품 감시 담당': 'returns', '상품 전략 담당': 'strategy', '광고 소재 담당': 'creative', '상세페이지 점검 담당': 'detail' };
+function teamChip(label) { const k = TEAM_KEY[label], a = k && agentOf(k); return a ? `<span class="chip team" style="color:${a.color};background:${a.color}1a;"><i class="fa-solid ${a.icon}"></i> ${escHtml(label)}</span>` : `<span class="chip">${escHtml(label || '')}</span>`; }
+function teamBox(rp) {
+  const notes = rp.colleague_notes || [], got = rp.handoffs_received || [], give = rp.handoffs || [], seen = rp.colleagues_seen || [];
+  if (!notes.length && !got.length && !give.length && !seen.length) return '';
+  const md = d => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
+  const runBtn = h => {
+    const k = TEAM_KEY[h.to]; if (!['detail', 'creative'].includes(k) || !isAdmin()) return '';
+    const label = k === 'detail' ? '지금 점검' : '제작안 만들기';
+    return `<button class="btn ghost sm" onclick="handoffRun('${k}', ${Number(h.product_no) || 0}, this.dataset.name)" data-name="${escHtml(h.product || '')}"><i class="fa-solid fa-play"></i> ${label}</button>`;
+  };
+  return `<div class="box team-box"><h3><i class="fa-solid fa-people-group" style="color:#0e7490;"></i> 팀 협업 <span class="muted small">동료 보고서를 읽고 함께 판단한 것${seen.length ? ' · 읽은 보고서: ' + seen.map(c => `${escHtml(c.agent)} ${md(c.report_date)}`).join(', ') : ''}</span></h3>
+    <div class="team-grid">
+      <div><h5>동료에게서 가져온 것</h5>${notes.length ? notes.map(n => `<div class="team-row">${teamChip(n.from)}<div>${escHtml(n.took)}</div></div>`).join('') : '<div class="muted small">이번엔 반영한 것 없음</div>'}</div>
+      <div><h5>받은 요청${got.length ? ` <span class="chip warn">${got.length}</span>` : ''}</h5>${got.length ? got.map(h => `<div class="team-row">${teamChip(h.from)}<div><b>${escHtml(h.ask)}</b>${h.product ? ` <span class="muted">· ${escHtml(h.product)}</span>` : ''}<div class="muted small">${md(h.report_date)} · ${escHtml(h.why)}</div></div></div>`).join('') : '<div class="muted small">없음</div>'}</div>
+      <div><h5>동료에게 넘기는 요청${give.length ? ` <span class="chip new">${give.length}</span>` : ''}</h5>${give.length ? give.map(h => `<div class="team-row">${teamChip(h.to)}<div><b>${escHtml(h.ask)}</b>${h.product ? ` <span class="muted">· ${escHtml(h.product)}</span>` : ''}<div class="muted small">${escHtml(h.why)}</div>${runBtn(h)}</div></div>`).join('') : '<div class="muted small">없음</div>'}</div>
+    </div>
+    <div class="muted small chk-hint">자동 담당자(매출·반품·전략)는 다음 아침 보고서에서 받은 요청에 답해요. 상세 점검·광고 소재 요청은 버튼으로 바로 실행할 수 있어요.</div></div>`;
+}
+async function handoffRun(key, no, name) {
+  if (!isAdmin()) return;
+  if (key === 'detail' && no) return detailRun(no, name);
+  if (key === 'creative' && no) {
+    if (!confirm(`'${name}' 광고 소재 제작안을 만들까요? (2~4분, 약 250원)`)) return;
+    __reportsCache = null; location.hash = '#home';
+    await new Promise(r => setTimeout(r, 300));
+    return agentRun('creative', { product_no: String(no) });
+  }
+  // 상품 번호를 못 맞춘 경우: 담당자 카드로 가서 상품명을 채워 준다
+  location.hash = '#home';
+  await new Promise(r => setTimeout(r, 300));
+  const inp = $('pick-' + key); if (inp) { inp.value = name || ''; inp.focus(); if (typeof pickSuggest === 'function') pickSuggest(key); }
+  toast('목록에서 상품을 고른 뒤 실행해 주세요');
+}
 function copyText(btn) {
   const t = btn.dataset.text || '';
   (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('복사했어요')).catch(() => { window.prompt('복사할 문장', t); });

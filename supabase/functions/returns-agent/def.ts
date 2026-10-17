@@ -240,4 +240,8 @@ function postProcess(report: Row, data: Row): Row {
   return { ...report, cohort_table: cohortTable, risk_products: riskProducts };
 }
 
-export const DEF: AgentDef = { agent: AGENT, label: "취소·반품 감시 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess };
+// 동료 보고서 활용 규칙 (2026-10-17) — 반품 담당은 매출 담당(오늘 08:00) 직후라 오늘 매출 보고서를 본다
+const COLLEAGUE_RULES = `- 매출 분석 담당이 오늘(is_today) 급증·주목(highlights)으로 꼽은 상품은 top_sellers_return(위험 후보·good_sellers_low_return)과 watched_products에서 반품률을 **반드시 확인**해 한 줄로 답합니다: 양호면 highlights에 "매출 급증 + 반품 n%로 안전 → 확대해도 됨", 주의·위험이면 warnings에 원인·대응과 함께. 순위권 밖이면 "순위권 밖이라 확인 불가"라고 씁니다.
+- 상품 전략 담당이 '판매 확대'·집중 상품으로 꼽은 것의 반품률이 주의 이상이면 handoffs로 전략 담당에게 "확대 전 원인 해결" 요청, 사유가 상세(사이즈·색상)면 상세페이지 점검 담당에게 점검 요청.
+- 광고 소재 담당 제작안의 avoid(피할 소구)와 내 반품 사유가 어긋나면 알려 줍니다.`;
+export const DEF: AgentDef = { agent: AGENT, label: "취소·반품 감시 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, colleagueRules: COLLEAGUE_RULES };
