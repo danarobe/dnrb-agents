@@ -98,6 +98,18 @@ export function safeCollector() {
 //   보고서에는 colleague_notes(동료 것을 어떻게 반영했나)와 handoffs(동료에게 넘기는 요청)가 생기고, 다음 보고서가 그 요청에 답한다.
 export const AGENT_LABELS: Record<string, string> = { sales: "매출 분석 담당", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", creative: "광고 소재 담당", detail: "상세페이지 점검 담당" };
 export const COLLEAGUE_TARGETS = Object.values(AGENT_LABELS);
+// 담당자 이름을 정확한 표시 이름으로 맞춘다 (2026-10-18) — 스키마의 enum을 뺐기 때문.
+//   이유: 상품 전략 담당 스키마에 협업 칸(colleague_notes·handoffs)의 담당자 enum이 더해지자 Claude API가
+//   400 "The compiled grammar is too large"로 거절(10-18 08:30 정기·20:55 수동 둘 다 실패, 매출·반품은 정상). enum(한글 이름 5개 × 2칸)이
+//   구조화 출력 문법을 크게 키운다 → 그냥 문자열로 받고 여기서 맞춘다. 화면(TEAM_KEY[h.to])·받은 요청(h.to === 내 이름)이 정확한 이름을 쓰므로 꼭 거친다.
+export function matchColleague(v: unknown): string | null {
+  const s = String(v ?? "").normalize("NFC").replace(/\s+/g, "");
+  if (!s) return null;
+  for (const l of COLLEAGUE_TARGETS) if (l.replace(/\s+/g, "") === s) return l;
+  const keys: [RegExp, string][] = [[/상세/, AGENT_LABELS.detail], [/소재|광고/, AGENT_LABELS.creative], [/반품|취소/, AGENT_LABELS.returns], [/전략/, AGENT_LABELS.strategy], [/매출/, AGENT_LABELS.sales]];
+  for (const [re, l] of keys) if (re.test(s)) return l;
+  return null;
+}
 const clip = (v: unknown, n: number) => String(v ?? "").slice(0, n);
 // 담당자별로 다른 담당이 알아야 할 핵심만 줄인다 (입력 토큰 절약 — 보고서 전체는 수천 토큰)
 function colleagueDigest(agent: string, rp: Row): Row {
@@ -151,6 +163,29 @@ export async function colleagueContext(me: string, D: string) {
   });
   return { colleagues, handoffs_to_me: handoffsToMe.slice(0, 6), seen: colleagues.map((c) => ({ agent: c.agent, report_date: c.report_date })) };
 }
+// lean 스키마로 받은 값을 원래 모양으로(모든 담당자에 걸어도 무해 — 이미 원래 모양이면 그대로)
+export function leanFix(report: Row): Row {
+  const one = (v: unknown, vals: string[], dflt: string) => { const s = String(v ?? "").trim(); return vals.find((x) => x === s) ?? vals.find((x) => s.includes(x)) ?? dflt; };
+  const dates = (v: unknown) => Array.isArray(v) ? v.map(String) : String(v ?? "").split(/[,\s]+/).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  const st = (v: unknown) => one(v, ["ongoing", "new"], "new");
+  const ow = (v: unknown) => one(v, OWNERS, "대표");
+  const wk = (l: unknown) => ((l ?? []) as Row[]).map((x) => ({ ...x, dates: dates(x.dates), status: st(x.status) }));
+  const isWarn = (x: Row) => /주의|warn/i.test(String(x.kind ?? ""));
+  const strip = (l: Row[]) => l.map(({ kind: _k, ...rest }) => rest);
+  const r0: Row = { ...report };
+  if (Array.isArray(r0.signals)) { const l = r0.signals as Row[]; r0.highlights = strip(l.filter((x) => !isWarn(x))); r0.warnings = strip(l.filter(isWarn)); delete r0.signals; }
+  if (Array.isArray(r0.week_signals)) { const l = r0.week_signals as Row[]; r0.week_highlights = strip(l.filter((x) => !isWarn(x))); r0.week_warnings = strip(l.filter(isWarn)); delete r0.week_signals; }
+  if (typeof r0.summary === "string") r0.summary = r0.summary.split(/\n+/).map((x) => x.replace(/^\s*(?:[-*•·]|\d+[.)])\s*/, "").trim()).filter(Boolean);
+  report = r0;
+  return {
+    ...report,
+    mood: one(report.mood, ["good", "neutral", "bad"], "neutral"),
+    actions: ((report.actions ?? []) as Row[]).map((a) => ({ ...a, owner: ow(a.owner) })),
+    week_highlights: wk(report.week_highlights), week_warnings: wk(report.week_warnings),
+    week_actions: ((report.week_actions ?? []) as Row[]).map((a) => ({ ...a, owner: ow(a.owner), status: st(a.status) })),
+  };
+}
+
 // handoffs의 상품명을 수집 데이터 안의 상품 번호로 맞춘다 (화면의 '지금 점검·분석' 버튼용) — 데이터 어디든 {name, product_no|no} 쌍을 모아 findByName
 export function resolveProductNos(report: Row, data: Row): Row {
   const pairs: Row[] = [];
@@ -173,12 +208,14 @@ export function resolveProductNos(report: Row, data: Row): Row {
     const top = scored[0]; const sameNo = scored.filter((x) => x.score === top.score).every((x) => x.p.no === top.p.no);
     return sameNo ? top.p : null;
   };
-  const handoffs = ((report.handoffs ?? []) as Row[]).map((h) => {
+  // 담당자 이름 맞추기(matchColleague) — 못 알아보는 이름의 요청은 받을 사람이 없어 뺀다
+  const notes = ((report.colleague_notes ?? []) as Row[]).map((n) => ({ ...n, from: matchColleague(n.from) ?? String(n.from ?? "") }));
+  const handoffs = ((report.handoffs ?? []) as Row[]).map((h) => ({ ...h, to: matchColleague(h.to) })).filter((h) => h.to).map((h) => {
     if (!h.product) return h;
     const hit = findByName(pairs, h.product) ?? loose(String(h.product));
     return hit ? { ...h, product_no: hit.no } : h;
   });
-  return { ...report, handoffs };
+  return { ...report, colleague_notes: notes, handoffs };
 }
 
 export async function weekContext(agent: string, D: string) {
@@ -223,13 +260,19 @@ const item = (extra: Record<string, unknown> = {}, req: string[] = []) => ({
   properties: { title: { type: "string" }, detail: { type: "string" }, ...extra },
   required: ["title", "detail", ...req], additionalProperties: false,
 });
-export function reportSchema(opts: { highlights: string; warnings: string; actions: string; extra?: Record<string, unknown> }) {
+// lean(2026-10-18): 구조화 출력 문법을 줄인 모양 — 상품 전략 담당처럼 담당자 전용 표가 많아 '문법이 너무 크다'(400)에 걸리는 담당자용.
+//   enum(mood·owner·status)은 문자열로, 주간 항목의 dates(배열 안의 배열)는 쉼표로 이은 문자열로 받는다 → leanFix가 원래 모양으로 되돌려서 화면·다음 날 문맥은 그대로.
+const OWNERS = ["광고팀", "상품팀", "CS팀", "대표"];
+export function reportSchema(opts: { highlights: string; warnings: string; actions: string; extra?: Record<string, unknown>; lean?: boolean }) {
   const extraProps = opts.extra ?? {};
-  return {
+  const lean = !!opts.lean;
+  const pick = (vals: string[], desc = "") => lean ? { type: "string", description: `${desc ? desc + " — " : ""}다음 중 하나 그대로: ${vals.join(", ")}` } : { type: "string", enum: vals, ...(desc ? { description: desc } : {}) };
+  const datesProp = (desc?: string) => lean ? { type: "string", description: (desc ?? "등장한 기준일") + " — YYYY-MM-DD를 쉼표로 이어서, 오래된 순" } : { type: "array", items: { type: "string" }, ...(desc ? { description: desc + " YYYY-MM-DD, 오래된 순" } : {}) };
+  const sch: Row = {
     type: "object",
     properties: {
       headline: { type: "string", description: "한 문장 제목, 40자 이내. 핵심 한 줄" },
-      mood: { type: "string", enum: ["good", "neutral", "bad"], description: "전반 톤" },
+      mood: pick(["good", "neutral", "bad"], "전반 톤"),
       summary: { type: "array", items: { type: "string" }, description: "핵심 요약 3~5줄. 각 줄에 숫자 근거 포함" },
       highlights: { type: "array", items: item(), description: opts.highlights },
       warnings: { type: "array", items: item(), description: opts.warnings },
@@ -239,7 +282,7 @@ export function reportSchema(opts: { highlights: string; warnings: string; actio
           type: "object",
           properties: {
             title: { type: "string", description: "할 일 한 줄" }, why: { type: "string", description: "왜 (데이터 근거)" },
-            owner: { type: "string", enum: ["광고팀", "상품팀", "CS팀", "대표"] },
+            owner: pick(OWNERS),
           },
           required: ["title", "why", "owner"], additionalProperties: false,
         },
@@ -249,14 +292,14 @@ export function reportSchema(opts: { highlights: string; warnings: string; actio
       week_highlights: {
         type: "array",
         items: item({
-          dates: { type: "array", items: { type: "string" }, description: "등장한 기준일 목록 YYYY-MM-DD, 오래된 순" },
-          status: { type: "string", enum: ["new", "ongoing"], description: "new = 오늘 처음, ongoing = 이번 주 앞선 날에도 있었음" },
+          dates: datesProp("등장한 기준일 목록"),
+          status: pick(["new", "ongoing"], "new = 오늘 처음, ongoing = 이번 주 앞선 날에도 있었음"),
         }, ["dates", "status"]),
         description: "이번 주(월~기준일) 누적 주목 항목. 앞선 날들의 highlights와 오늘 것을 합쳐 같은 상품·같은 신호는 하나로. 최대 8개",
       },
       week_warnings: {
         type: "array",
-        items: item({ dates: { type: "array", items: { type: "string" } }, status: { type: "string", enum: ["new", "ongoing"] } }, ["dates", "status"]),
+        items: item({ dates: datesProp(), status: pick(["new", "ongoing"]) }, ["dates", "status"]),
         description: "이번 주 누적 주의 항목. 이미 해소된 것은 뺀다. 최대 8개",
       },
       week_actions: {
@@ -266,9 +309,9 @@ export function reportSchema(opts: { highlights: string; warnings: string; actio
           properties: {
             id: { type: "string", description: "할 일 고유 id. 이전 항목을 유지하면 그 id 그대로, 새 항목은 '기준일YYYYMMDD-순번' (예: 20260911-1)" },
             title: { type: "string" }, why: { type: "string" },
-            owner: { type: "string", enum: ["광고팀", "상품팀", "CS팀", "대표"] },
+            owner: pick(OWNERS),
             since: { type: "string", description: "처음 제안한 기준일 YYYY-MM-DD" },
-            status: { type: "string", enum: ["new", "ongoing"] },
+            status: pick(["new", "ongoing"]),
           },
           required: ["id", "title", "why", "owner", "since", "status"], additionalProperties: false,
         },
@@ -276,13 +319,13 @@ export function reportSchema(opts: { highlights: string; warnings: string; actio
       },
       colleague_notes: {
         type: "array",
-        items: { type: "object", properties: { from: { type: "string", enum: COLLEAGUE_TARGETS }, took: { type: "string", description: "그 담당 보고서의 무엇을 내 판단에 어떻게 반영했나 (70자 이내, 숫자 포함)" } }, required: ["from", "took"], additionalProperties: false },
+        items: { type: "object", properties: { from: { type: "string", description: `어느 담당의 보고서인지 — 다음 이름 중 하나 그대로: ${COLLEAGUE_TARGETS.join(", ")}` }, took: { type: "string", description: "그 담당 보고서의 무엇을 내 판단에 어떻게 반영했나 (70자 이내, 숫자 포함)" } }, required: ["from", "took"], additionalProperties: false },
         description: "동료 보고서(colleagues)에서 가져와 판단에 반영한 것. 반영할 게 없으면 빈 배열(억지로 만들지 않음). 나에게 온 요청(handoffs_to_me)에 답했으면 여기에 '요청에 답함: …'으로 적는다. 최대 4개",
       },
       handoffs: {
         type: "array",
         items: { type: "object", properties: {
-          to: { type: "string", enum: COLLEAGUE_TARGETS, description: "받을 담당자 (자기 자신 제외)" },
+          to: { type: "string", description: `받을 담당자 (자기 자신 제외) — 다음 이름 중 하나 그대로: ${COLLEAGUE_TARGETS.join(", ")}` },
           product: { type: "string", description: "관련 상품명 — 데이터에 있는 그대로. 특정 상품이 아니면 빈 문자열" },
           ask: { type: "string", description: "확인·실행을 요청하는 한 줄 (40자 이내)" },
           why: { type: "string", description: "왜 필요한지 — 내 데이터의 숫자 근거 (70자 이내)" },
@@ -294,6 +337,26 @@ export function reportSchema(opts: { highlights: string; warnings: string; actio
     required: ["headline", "mood", "summary", "highlights", "warnings", "actions", "note", "week_highlights", "week_warnings", "week_actions", "colleague_notes", "handoffs", ...Object.keys(extraProps)],
     additionalProperties: false,
   };
+  if (!lean) return sch;
+  // lean: 같은 모양의 짝(주목·주의, 이번 주 주목·주의)을 한 목록(kind로 구분)으로, 요약은 한 칸 글로 — 목록(배열) 하나하나가 문법을 크게 키우기 때문.
+  //   2026-10-18 실측(임시 점검 함수): 상품 전략 담당 스키마는 칸 하나만 빼도 통과하는 한계선 바로 위였고, 이 두 짝을 합치면 표 1개를 더 넣을 여유가 생김.
+  const P = sch.properties as Row, req = sch.required as string[];
+  const merged = (a: string, b: string, desc: string) => {
+    const it = JSON.parse(JSON.stringify((P[a] as Row).items)) as Row;
+    it.properties = { kind: { type: "string", description: "'주목'(좋은 신호) 또는 '주의'(나쁜 신호)" }, ...(it.properties as Row) };
+    it.required = ["kind", ...(it.required as string[])];
+    return { type: "array", items: it, description: desc };
+  };
+  const props: Row = {};
+  for (const [key, v] of Object.entries(P)) {
+    if (key === "summary") props.summary = { type: "string", description: "핵심 요약 3~5줄을 줄바꿈으로 구분해 한 칸에. 각 줄에 숫자 근거 포함" };
+    else if (key === "highlights") props.signals = merged("highlights", "warnings", `오늘의 주목(= highlights, kind '주목'): ${opts.highlights} / 주의(= warnings, kind '주의'): ${opts.warnings}`);
+    else if (key === "week_highlights") props.week_signals = merged("week_highlights", "week_warnings", `이번 주 누적(= week_highlights·week_warnings). kind '주목' = ${String((P.week_highlights as Row).description ?? "")} / kind '주의' = ${String((P.week_warnings as Row).description ?? "")}`);
+    else if (key === "warnings" || key === "week_warnings") continue;
+    else props[key] = v;
+  }
+  const rq = req.flatMap((x) => x === "highlights" ? ["signals"] : x === "week_highlights" ? ["week_signals"] : x === "warnings" || x === "week_warnings" ? [] : [x]);
+  return { ...sch, properties: props, required: rq };
 }
 
 // 모든 담당자에게 공통으로 붙는 글쓰기 원칙 + 주간 항목 규칙
@@ -528,7 +591,8 @@ export async function writeStage(def: AgentDef, D: string, key: string, opts: { 
     const { report: written0, usage, model } = await writeReport(system, def.schema, llmData,
       { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far, colleagues: cc.colleagues, handoffs_to_me: cc.handoffs_to_me }, retry > 0 ? "low" : (def.effort ?? "medium"),
       def.images ? def.images(data) : [], { maxTokens: opts.maxTokens, compact: retry > 0 });
-    const written = resolveProductNos(def.postProcess ? def.postProcess(written0, data) : written0, data);
+    const lean0 = leanFix(written0);
+    const written = resolveProductNos(def.postProcess ? def.postProcess(lean0, data) : lean0, data);
     const report = { ...written, week: wc.week, last_week: wc.last_week, colleagues_seen: cc.seen, handoffs_received: cc.handoffs_to_me };
     const saved = await saveRow({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage: { ...(usage as Row), retry }, created_by: createdBy });
     await dropCache();

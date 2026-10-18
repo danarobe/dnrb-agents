@@ -435,7 +435,8 @@ function postProcess(report: Row, data: Row): Row {
   const fc = ((report.focus ?? []) as Row[]).map((x) => {
     const f = findByName(focus, x.name);
     if (!f) return null;
-    return { ...x, name: f.name, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
+    const hooks = Array.isArray(x.reels_hooks) ? (x.reels_hooks as unknown[]).map(String) : String(x.reels_hooks ?? "").split(/\s*[|｜\n]\s*/);
+    return { ...x, reels_hooks: hooks.map((h) => h.trim()).filter(Boolean).slice(0, 5), name: f.name, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
   }).filter((x): x is NonNullable<typeof x> => !!x);
   return { ...report, matrix: mt, focus: fc };
 }
@@ -470,7 +471,9 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 4) actions는 오늘 실행할 구체적인 것 3개(광고팀·상품팀 위주). 트렌드·날씨에서 나온 것도 포함될 수 있습니다.
 ${COMMON_RULES}`;
 
+// lean: 담당자 전용 표(matrix·focus·trend_actions)가 많아 협업 칸이 더해진 뒤 '문법이 너무 크다'(400)에 걸림(2026-10-18) — 공통 칸의 enum·중첩 배열을 줄인 모양
 const SCHEMA = reportSchema({
+  lean: true,
   highlights: "밀어줄 상품·잘 되는 소재 등 좋은 신호. 최대 5개",
   warnings: "조회는 많은데 안 팔리는 상품, 소재 피로, 마진 낮은 상품에 광고 집중 등 나쁜 신호. 최대 5개",
   actions: "오늘 실행할 구체적 액션 정확히 3개",
@@ -488,7 +491,8 @@ const SCHEMA = reportSchema({
           name: { type: "string", description: "focus[].name 그대로" },
           driver: { type: "string", description: "어떤 소재가 판매를 견인하는지, 근거 포함 80자 이내" },
           creative_plan: { type: "string", description: "추가할 소재 컨셉 (참고 소재 특성 근거) 100자 이내" },
-          reels_hooks: { type: "array", items: { type: "string" }, description: "릴스 첫 3초 훅 멘트 3개, 각 25자 이내" },
+          // 배열 안의 배열은 구조화 출력 문법을 크게 키운다(2026-10-18 '문법이 너무 크다' 400) → 한 줄로 받고 postProcess가 배열로 나눈다(화면·상세 점검 담당은 배열 그대로 받음)
+          reels_hooks: { type: "string", description: "릴스 첫 3초 훅 멘트 3개를 ' | '로 이어 한 줄로 (각 25자 이내). 예: 훅1 | 훅2 | 훅3" },
           detail_focus: { type: "string", description: "상세페이지에서 강조할 것 80자 이내" },
           plan: { type: "string", description: "마진·혜택·재고 고려한 판매 계획 80자 이내" },
         },
