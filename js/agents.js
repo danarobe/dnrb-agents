@@ -50,9 +50,11 @@ async function renderHome() {
       <div><h1>담당자</h1><p class="sub">쇼핑몰 매출을 키우기 위한 AI 담당자들입니다. 각자 정해진 시간에 데이터를 보고 보고서를 씁니다.</p></div>
     </div>
     <div id="setup-notice"></div>
+    <div id="credit-strip"></div>
     ${orgChartHtml()}
     <div class="cards" id="agent-cards">${AGENTS.map(agentCardSkeleton).join('')}</div>`;
   renderSetupNotice();
+  if (SESSION?.role === 'admin') creditLoad();
   // 최신 보고서 1건씩 (현재는 sales만 데이터가 있음)
   if (!isAdmin()) {
     AGENTS.forEach(a => { const el = $('card-last-' + a.key); if (el) el.innerHTML = '<span class="muted">보고서는 관리자만 볼 수 있어요</span>'; });
@@ -268,4 +270,35 @@ async function detailRun(no, name) {
     }
     toast('아직 읽는 중이에요. 잠시 후 보고서 목록을 확인해 주세요');
   } catch (e) { toast('실패: ' + e.message); }
+}
+
+/* ── Claude 크레딧 소진액 (2026-10-18 사용자 요청 — 담당자 화면 맨 위) ──
+   서버 agent-ask?action=credit(관리자만): 저장된 호출별 토큰 × claude-opus-5 공개 가격 → 이번 주(월~오늘) 하루 평균.
+   남은 크레딧은 Anthropic이 알려 주는 방법이 없어 표시하지 않고(사용자 결정) 충전 페이지 링크, '잔액 부족' 오류가 마지막 성공 뒤에 났으면 빨간 경고. */
+const CREDIT_BILLING_URL = 'https://console.anthropic.com/settings/billing';
+const USD_KRW = 1400;   // 원화 환산 기준(참고용 — 청구는 달러)
+async function creditLoad() {
+  const el = $('credit-strip'); if (!el) return;
+  let d;
+  try { d = await callFn('agent-ask', { action: 'credit' }); }
+  catch (e) { el.innerHTML = `<div class="muted small" style="margin-bottom:12px;">Claude 사용액을 불러오지 못했어요 — ${escHtml(e.message)}</div>`; return; }
+  const usd = v => '$' + Number(v || 0).toFixed(2);
+  const won = v => '약 ' + (Math.round(Number(v || 0) * USD_KRW / 10) * 10).toLocaleString('ko-KR') + '원';
+  const days = (d.by_day || []).map(x => `${x.date.slice(5).replace('-', '/')}  ${usd(x.usd)} (${x.calls}회)`).join('&#10;');
+  const kinds = Object.entries(d.by_kind || {}).map(([k, v]) => `${k} ${usd(v)}`).join(' · ');
+  const low = d.credit_low;
+  const at = low ? new Date(low.at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  el.innerHTML = `<div class="tiles">
+    <div class="tile" title="날짜별 사용액&#10;${days}&#10;&#10;${escHtml(d.price_note || '')}">
+      <div class="t-label"><i class="fa-solid fa-coins" style="color:#d97706;"></i> 이번 주 하루 평균 Claude 사용액</div>
+      <div class="t-value">${usd(d.avg_usd)} <span class="muted small" style="font-weight:600;">${won(d.avg_usd)}</span></div>
+      <div class="t-sub">이번 주 합계 ${usd(d.total_usd)} · ${d.days}일(${String(d.week_start).slice(5).replace('-', '/')}~)${kinds ? ' · ' + escHtml(kinds) : ''}</div>
+    </div>
+    <div class="tile" style="${low ? 'border-color:#fecaca;background:var(--bad-bg);' : ''}">
+      <div class="t-label"><i class="fa-solid fa-wallet" style="color:${low ? 'var(--bad)' : '#4f46e5'};"></i> 남은 크레딧</div>
+      ${low
+        ? `<div class="t-value" style="color:var(--bad);">크레딧 바닥 — 충전 필요</div><div class="t-sub" style="color:#991b1b;">${escHtml(at)}부터 '잔액 부족'으로 실패 중 · <a href="${CREDIT_BILLING_URL}" target="_blank" rel="noopener">충전하러 가기 <i class="fa-solid fa-arrow-up-right-from-square"></i></a></div>`
+        : `<div class="t-value"><a href="${CREDIT_BILLING_URL}" target="_blank" rel="noopener" style="color:inherit;">충전 페이지에서 확인 <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:.8em;"></i></a></div><div class="t-sub">Anthropic이 남은 금액을 알려 주지 않아 충전 페이지에서만 볼 수 있어요</div>`}
+    </div>
+  </div>`;
 }

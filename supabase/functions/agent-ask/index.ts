@@ -166,6 +166,62 @@ Deno.serve(async (req) => {
       const r = await rest(`agent_questions?report_id=eq.${rid}&select=id,question,answer,tools_used,status,error,asked_by_name,took_ms,created_at&order=created_at.asc&limit=50`);
       return json({ rows: r.ok ? await r.json() : [] });
     }
+    // ── Claude 크레딧 소진액 (2026-10-18 사용자 요청 — 담당자 화면 맨 위에 '이번 주 일일 평균 소진 금액') ──
+    //   Anthropic은 남은 선불 잔액을 알려 주는 API가 없다(사용량·비용 보고서는 조직 계정 + Admin 키 전용) → 우리가 저장한 호출별 토큰(usage)에 공개 가격을 곱해 계산.
+    //   대상 = 이 앱의 Claude 호출 전부: 보고서(agent_reports)·질문(agent_questions)·광고 소재(creative_briefs)·상세 점검(detail_reviews.review.usage).
+    //   잔여는 사용자 결정으로 표시하지 않고(충전 페이지 링크), 대신 '잔액 부족' 오류가 마지막 성공 뒤에 났으면 credit_low로 알린다.
+    if (action === "credit") {
+      if (me?.role !== "admin") return json({ error: "관리자만 볼 수 있어요" }, 403);
+      // claude-opus-5 가격(USD / 100만 토큰): 입력 5 · 출력 25(생각 토큰 포함) · 캐시 쓰기 5분 6.25 · 1시간 10 · 캐시 읽기 0.5
+      const PRICE = { input: 5, output: 25, cw5m: 6.25, cw1h: 10, cread: 0.5 };
+      const costOf = (u: Row | null | undefined) => {
+        if (!u) return 0;
+        const cc = (u.cache_creation ?? null) as Row | null;
+        const w5 = cc ? num(cc.ephemeral_5m_input_tokens) : num(u.cache_creation_input_tokens), w1 = cc ? num(cc.ephemeral_1h_input_tokens) : 0;
+        return (num(u.input_tokens) * PRICE.input + num(u.output_tokens) * PRICE.output + w5 * PRICE.cw5m + w1 * PRICE.cw1h + num(u.cache_read_input_tokens) * PRICE.cread) / 1e6;
+      };
+      const D = seoulToday();
+      const dow = new Date(`${D}T12:00:00Z`).getUTCDay();   // 0 = 일
+      const monday = addDays(D, -((dow + 6) % 7));
+      const since = encodeURIComponent(`${monday}T00:00:00+09:00`);
+      const kst = (ts: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date(ts));
+      const src: [string, string, string][] = [
+        ["agent_reports", "보고서", "created_at,agent,usage"],
+        ["agent_questions", "질문", "created_at,agent,usage"],
+        ["creative_briefs", "광고 소재", "created_at,usage"],
+        ["detail_reviews", "상세 점검", "created_at,usage:review->usage"],
+      ];
+      const byDay: Record<string, { usd: number; calls: number }> = {};
+      const byKind: Record<string, number> = {};
+      for (let d = monday; d <= D; d = addDays(d, 1)) byDay[d] = { usd: 0, calls: 0 };
+      let lastOk = "", lastLow = "";
+      await Promise.all(src.map(async ([table, label, sel]) => {
+        const r = await rest(`${table}?created_at=gte.${since}&select=${sel}&order=created_at.asc&limit=5000`);
+        for (const x of (r.ok ? await r.json() : []) as Row[]) {
+          const u = x.usage as Row | null; if (!u || !(num(u.input_tokens) + num(u.output_tokens))) continue;
+          const c = costOf(u), day = kst(String(x.created_at));
+          if (byDay[day]) { byDay[day].usd += c; byDay[day].calls++; }
+          byKind[label] = (byKind[label] ?? 0) + c;
+        }
+        // 잔액 부족 감지: 마지막 성공(usage 있음)과 마지막 '잔액 부족' 오류(최근 14일) 비교
+        const okR = await rest(`${table}?usage=not.is.null&select=created_at&order=created_at.desc&limit=1`);
+        const ok = okR.ok ? ((await okR.json()) as Row[])[0] : null;
+        if (ok && String(ok.created_at) > lastOk) lastOk = String(ok.created_at);
+        const lowR = await rest(`${table}?error=ilike.*credit%20balance*&created_at=gte.${encodeURIComponent(new Date(Date.now() - 14 * 864e5).toISOString())}&select=created_at&order=created_at.desc&limit=1`);
+        const low = lowR.ok ? ((await lowR.json()) as Row[])[0] : null;
+        if (low && String(low.created_at) > lastLow) lastLow = String(low.created_at);
+      }));
+      const days = Object.keys(byDay).length;
+      const total = Object.values(byDay).reduce((t, x) => t + x.usd, 0);
+      const r2 = (v: number) => Math.round(v * 100) / 100;
+      return json({
+        week_start: monday, today: D, days, total_usd: r2(total), avg_usd: r2(days ? total / days : 0),
+        by_day: Object.entries(byDay).map(([date, x]) => ({ date, usd: r2(x.usd), calls: x.calls })),
+        by_kind: Object.fromEntries(Object.entries(byKind).map(([k, v]) => [k, r2(v)])),
+        credit_low: lastLow && lastLow > lastOk ? { at: lastLow } : null, last_ok_at: lastOk || null,
+        price_note: "claude-opus-5 공개 가격 × 저장된 호출 토큰 (실패해 기록이 없는 호출·다른 앱의 사용은 빠짐)",
+      });
+    }
     if (action !== "ask" || req.method !== "POST") return json({ error: "알 수 없는 action" }, 400);
     if (!ANTHROPIC_API_KEY) return json({ error: "ANTHROPIC_API_KEY 미설정" }, 500);
     const body = await req.json().catch(() => ({}));
