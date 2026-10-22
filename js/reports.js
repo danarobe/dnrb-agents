@@ -8,7 +8,7 @@ const reportsState = { filter: '' };
 function reportsFilter(k) { reportsState.filter = k; if (k) location.hash = '#reports/agent:' + k; else if (location.hash !== '#reports') location.hash = '#reports'; else renderReports(); }
 async function reportsLoad(force) {
   if (__reportsCache && !force) return __reportsCache;
-  const SEL = 'agent_reports?select=id,agent,report_date,trigger,status,report,data,error,model,created_at&order=created_at.desc';
+  const SEL = 'agent_reports?select=id,agent,report_date,trigger,status,report,data,error,model,created_at&status=in.(ok,error)&order=created_at.desc';   // collected(08:00 숫자판)는 보고서가 아님
   const rare = AGENTS.filter(a => a.status === 'active' && a.onDemand).map(a => a.key);
   const [recent, rareRows] = await Promise.all([
     dbProxy(SEL + '&limit=60'),
@@ -360,6 +360,10 @@ function reportHtml(r) {
       ads?.yesterday ? tile('어제 광고비', fmtMan(ads.yesterday.spend), `ROAS(카페24) ${ads.roas_cafe24?.yesterday ?? '—'} · 최근 7일 ${ads.roas_cafe24?.last7 ?? '—'}`)
         : tile('어제 광고비', '—', 'Meta 데이터 없음'),
     ].join('');
+    // 오늘의 요약(2026-10-22): 대표가 직접 결정할 것만 따로
+    if (Array.isArray(rp.decisions) && rp.decisions.length) {
+      extraBoxes = `<div class="box decide-box"><h3><i class="fa-solid fa-gavel" style="color:#b45309;"></i> 대표 결정 필요</h3>${rp.decisions.map(x => `<div class="li"><b>${escHtml(x.what)}</b><div>${escHtml(x.why)}</div></div>`).join('')}</div>`;
+    }
   }
   const list = (arr, cls) => (arr || []).length ? (arr || []).map(x => `<div class="li"><b class="${cls}">${escHtml(x.title)}</b><div>${escHtml(x.detail)}</div></div>`).join('') : '<div class="muted">없음</div>';
   const chips = x => `${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${(x.dates || []).length ? `<span class="chip">${x.dates.map(md).join(' · ')}</span>` : ''}`;
@@ -370,7 +374,7 @@ function reportHtml(r) {
     const doneMeta = done ? `완료 · ${escHtml(st.done_by || '')} · ${st.done_at ? timeLabel(st.done_at) : ''}` : '';
     return `<div class="act ${opts.past ? 'past' : ''} ${done ? 'done' : ''}">
       <label class="chk" title="완료 체크"><input type="checkbox" class="act-chk" ${done ? 'checked' : ''} data-key="${escHtml(key)}" data-agent="${escHtml(r.agent)}" data-week="${escHtml(opts.week || '')}" data-title="${escHtml(x.title)}" data-owner="${escHtml(x.owner || '')}"><span class="num">${i + 1}</span></label>
-      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}</div><div class="muted">${escHtml(x.why)}</div><div class="done-meta">${doneMeta}</div></div>
+      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}${x.source && x.source !== '오늘의 요약' ? `<span class="chip src">${escHtml(x.source.replace(' 담당', ''))} 제안</span>` : ''}</div><div class="muted">${escHtml(x.why)}</div><div class="done-meta">${doneMeta}</div></div>
     </div>`;
   };
   const hasWeek = Array.isArray(rp.week_actions) || Array.isArray(rp.week_highlights);
@@ -395,7 +399,7 @@ function reportHtml(r) {
       <div class="box wk-p"><h3><span class="pn p">P</span> 이번 주 주목</h3>${wlist(rp.week_highlights, 'up')}</div>
       <div class="box wk-n"><h3><span class="pn n">N</span> 이번 주 주의</h3>${wlist(rp.week_warnings, 'down')}</div>
     </div>` : ''}
-    ${(!weekActions.length && ['detail', 'creative'].includes(r.agent)) ? '' : `<div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 이번 주 할 일${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i, { week: rp.week?.start })).join('') : '<div class="muted">없음</div>'}<div class="muted small chk-hint">체크하면 완료로 기록되고, 다음 날 보고서의 할 일에서 빠집니다.</div></div>`}
+    ${(!weekActions.length && ['detail', 'creative'].includes(r.agent)) ? '' : `<div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> ${r.agent === 'sales' && hasWeek ? '팀 통합 할 일' : '이번 주 할 일'}${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i, { week: rp.week?.start })).join('') : '<div class="muted">없음</div>'}<div class="muted small chk-hint">체크하면 완료로 기록되고, 다음 날 보고서의 할 일에서 빠집니다.</div></div>`}
     ${lw ? `<div class="box past-box"><h3><i class="fa-regular fa-clock" style="color:#9ca3af;"></i> 저번 주 해야 했을 일 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''}</span></h3>${(lw.actions || []).length ? lw.actions.map((x, i) => actRow(x, i, { past: true, week: lw.start })).join('') : '<div class="muted">저번 주 보고서가 없어요</div>'}</div>` : ''}
     ${rp.note ? `<div class="muted small"><i class="fa-regular fa-circle-question"></i> ${escHtml(rp.note)}</div>` : ''}
     ${dataErrors(r.data)}
@@ -470,7 +474,7 @@ function rawTableStrategy(d) {
 
 /* ── 팀 협업 칸 (2026-10-17): 동료 보고서에서 가져온 것 · 받은 요청 · 동료에게 넘기는 요청 ──
    handoffs[].to 가 상세 점검·광고 소재 담당이고 상품 번호가 맞춰져 있으면 바로 실행 버튼, 아니면 담당자 카드로 가서 상품을 고르게. */
-const TEAM_KEY = { '매출 분석 담당': 'sales', '취소·반품 감시 담당': 'returns', '상품 전략 담당': 'strategy', '광고 소재 담당': 'creative', '상세페이지 점검 담당': 'detail' };
+const TEAM_KEY = { '오늘의 요약': 'sales', '매출 분석 담당': 'sales', '취소·반품 감시 담당': 'returns', '상품 전략 담당': 'strategy', '광고 소재 담당': 'creative', '상세페이지 점검 담당': 'detail' };
 function teamChip(label) { const k = TEAM_KEY[label], a = k && agentOf(k); return a ? `<span class="chip team" style="color:${a.color};background:${a.color}1a;"><i class="fa-solid ${a.icon}"></i> ${escHtml(label)}</span>` : `<span class="chip">${escHtml(label || '')}</span>`; }
 function teamBox(rp) {
   const notes = rp.colleague_notes || [], got = rp.handoffs_received || [], give = rp.handoffs || [], seen = rp.colleagues_seen || [];

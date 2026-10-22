@@ -6,10 +6,10 @@
 ────────────────────────────────────────── */
 const AGENTS = [
   {
-    key: 'sales', name: '매출 분석 담당', icon: 'fa-chart-line', color: '#4f46e5', status: 'active', fn: 'sales-agent',
-    schedule: '매일 아침 8시',
-    desc: '어제 매출·주문율·취소반품·광고 효율을 모아 아침 보고서를 씁니다. 오늘 할 일 3가지를 담당별로 제안합니다.',
-    sources: ['카페24 매출·상품', '카페24 취소반품', 'Meta 광고'],
+    key: 'sales', name: '오늘의 요약', icon: 'fa-newspaper', color: '#4f46e5', status: 'active', fn: 'sales-agent',
+    schedule: '매일 아침 8시 45분 (숫자판은 8시)',
+    desc: '대표가 아침에 이 한 장만 봐도 되게 씁니다. 8시에 어제 매출 숫자판을 모아 두고, 반품·전략 담당이 그걸 보고 일한 뒤, 8시 45분에 숫자 흐름 + 팀 결론(출처) + 팀 통합 할 일 + 대표 결정 필요만 정리합니다. 상품별 분석은 하지 않습니다.',
+    sources: ['매출 숫자판', '오늘 반품·전략 보고서', '광고 소재·상세 점검 보고서'],
   },
   {
     key: 'returns', name: '취소·반품 감시 담당', icon: 'fa-rotate-left', color: '#b91c1c', status: 'active', fn: 'returns-agent',
@@ -89,9 +89,9 @@ async function renderHome() {
    아침 줄: 매출(08:00) → 반품(08:15) → 전략(08:30). 전략·반품 아래로 상세 점검·광고 소재(요청형)에 '부탁' 화살표.
    상태는 orgChartStatus가 실제 최신 보고서로 채운다(오늘 보고 완료 ✓, 넘긴 요청 수). */
 const ORG_DESKS = {
-  sales:    { time: '08:00', q: '어제 얼마 팔렸나?' },
   returns:  { time: '08:15', q: '반품은 괜찮나?' },
   strategy: { time: '08:30', q: '어떤 상품을 밀까?' },
+  sales:    { time: '08:45', q: '오늘, 한 장으로?' },
   detail:   { time: '요청하면', q: '상세 어디를 고칠까?' },
   creative: { time: '월요일 · 요청하면', q: '어떤 소재로 팔까?' },
 };
@@ -109,15 +109,15 @@ function orgChartHtml() {
   const right = `<div class="org-arrow"><i class="fa-solid fa-arrow-right-long"></i></div>`;
   const down = (label, cls) => `<div class="org-down ${cls}"><i class="fa-solid fa-arrow-down-long"></i><span>${escHtml(label)}</span></div>`;
   return `<div class="org">
-    <div class="org-head"><b><i class="fa-solid fa-building"></i> 매출 성장팀</b><span class="muted small">매일 아침, 이 순서로 앞사람 보고서를 읽고 이어 씁니다</span></div>
+    <div class="org-head"><b><i class="fa-solid fa-building"></i> 매출 성장팀</b><span class="muted small">08:00 어제 매출 숫자판 → 반품·전략이 보고 일하고 → 요약이 한 장으로 마무리</span></div>
     <div class="org-grid">
-      ${orgDesk('sales')}${right}${orgDesk('returns')}${right}${orgDesk('strategy')}
-      <div class="org-gap"></div><div></div>${down('부탁', 'd1')}<div></div>${down('부탁', 'd2')}
-      <div class="org-gap"></div><div></div>${orgDesk('detail')}<div></div>${orgDesk('creative')}
+      ${orgDesk('returns')}${right}${orgDesk('strategy')}${right}${orgDesk('sales')}
+      ${down('부탁', 'd1')}<div></div>${down('부탁', 'd2')}<div></div><div class="org-gap"></div>
+      ${orgDesk('detail')}<div></div>${orgDesk('creative')}<div></div><div class="org-gap"></div>
     </div>
     <details class="org-help"><summary><i class="fa-regular fa-circle-question"></i> 이 그림 읽는 법</summary>
       <ul>
-        <li><b>→</b> 앞사람 보고서를 읽고 답하면서 이어 씁니다. 예: 매출이 "이 상품 급등"이라 하면 반품이 "반품률 8%로 안전"이라 답합니다.</li>
+        <li><b>→</b> 08:00에 모인 매출 숫자판(급등·하락 상품)을 반품·전략이 읽고 답하고, 요약이 둘의 보고서를 합쳐 한 장으로 씁니다. 예: 숫자판 "이 상품 급등" → 반품 "반품률 8%로 안전" → 요약 "확대 적합".</li>
         <li><b>부탁</b> 전략·반품이 "이 상품 상세 점검해 줘", "이 상품 소재 만들어 줘"라고 넘기면, 보고서의 버튼으로 바로 실행합니다.</li>
         <li><b>✓</b> 오늘 보고서가 나왔다는 뜻. 담당자를 누르면 그 보고서로 갑니다. 담당자는 제안만 하고, 결정은 대표가 합니다.</li>
       </ul>

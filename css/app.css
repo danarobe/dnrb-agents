@@ -425,5 +425,10 @@ table.risk .r { white-space: normal; }
   .org-grid { grid-template-columns: 1fr; }
   .org-grid > div:empty, .org-gap { display: none; }
   .org-arrow { transform: rotate(90deg); padding: 2px 0; }
-  .org-down.d2, #desk-creative { order: 2; }   /* 휴대폰: 부탁 → 상세 점검 → 부탁 → 광고 소재 순으로 */
+  .org-down.d1 { order: 1; } #desk-detail { order: 2; } .org-down.d2 { order: 3; } #desk-creative { order: 4; } #desk-sales { order: 5; }   /* 휴대폰: 반품 → 전략 → 부탁 → 상세 점검 → 부탁 → 광고 소재 → 요약 */
 }
+
+/* ── 오늘의 요약: 대표 결정 필요 (2026-10-22) ── */
+.decide-box { border-color: #fcd34d; background: #fffbeb; }
+.decide-box .li b { color: #92400e; }
+.chip.src { color: #0e7490; background: #ecfeff; }

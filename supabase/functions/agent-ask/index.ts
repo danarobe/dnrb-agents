@@ -18,7 +18,7 @@ import { DEF as STRATEGY } from "../strategy-agent/def.ts";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
 const DEFS: Record<string, AgentDef> = { sales: SALES, returns: RETURNS, strategy: STRATEGY };
-const LABELS: Record<string, string> = { sales: "매출 분석 담당", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", detail: "상세페이지 점검 담당", creative: "광고 소재 담당" };
+const LABELS: Record<string, string> = { sales: "오늘의 요약", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", detail: "상세페이지 점검 담당", creative: "광고 소재 담당" };
 const MAX_TOOL_ROUNDS = 4, TIME_BUDGET_MS = 75_000, MAX_QUESTION = 500, PRIOR_QA = 6;
 
 // ── 담당자 페르소나: def.system에서 담당자 고유 규칙만(COMMON_RULES 앞부분) 떼어 쓴다 ──

@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════
-// 매출 분석 담당 (에이전트 1호, 2026-09-10) — 공통 뼈대는 ../_shared/agent.ts
+// 오늘의 요약 (에이전트 1호 '매출 분석 담당'에서 2026-10-22 역할 변경) — 공통 뼈대는 ../_shared/agent.ts. 수집(숫자판)은 그대로, 작성은 팀 종합.
 //   매일 08:00 KST (pg_cron `sales-agent-morning`) 또는 앱의 [지금 실행].
 //   수집: 카페24 매출 8구간·상품 조회/주문율 3구간·취소반품 최근 7일·Meta 광고 3구간 → Claude → agent_reports
 //   ⚠ 이 함수는 ~/dnrb-agents 소속. 호출하는 cafe24-analytics/cafe24-claims/meta-ads는 ~/dnrb-dashboard 소속(x-agent-secret 인정 코드가 거기 있음).
@@ -129,20 +129,39 @@ async function collect(D: string) {
   };
 }
 
-const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 매출 분석 담당자입니다. 매일 아침 대표에게 어제 실적을 보고합니다.
-- 요일 효과를 항상 고려합니다. 전날 대비보다 '지난주 같은 요일 대비'와 '최근 7일 vs 직전 7일'을 더 신뢰합니다.
-- actions는 오늘 당장 실행할 구체적인 것 정확히 3개.
+// ── 오늘의 요약 (2026-10-22 사용자 결정: '매출 분석 담당'이 반품·전략 담당과 겹쳐서 역할을 바꿈) ──
+//   08:00 snapshot = 숫자판만 저장(Claude 없음) → 반품·전략이 숫자판을 보고 일함 → 08:45 run = 오늘 반품·전략 보고서를 읽고 한 장 요약.
+//   요약은 상품별 분석을 하지 않는다(그건 전략·반품 몫) — 숫자 흐름 + 팀 결론(출처) + 통합 할 일 + 대표 결정 필요.
+const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 '오늘의 요약' 담당자입니다. 매일 아침 맨 마지막(08:45)에, 대표가 **이 한 장만 읽어도 오늘 상황과 할 일을 알 수 있게** 씁니다.
+
+읽는 것: ① 수집 데이터 = 어제 매출 숫자판(요일 비교·7일·이달 누적·광고비·ROAS·급등/하락 상품 목록) ② colleagues = 오늘 아침 취소·반품 감시 담당·상품 전략 담당 보고서(is_today)와 최근 광고 소재·상세 점검 보고서 ③ this_week = 이번 주 누적.
+
+쓰는 법:
+- headline: 오늘 상황 한 줄(40자). 숫자 하나 + 방향.
+- summary: **팀 결론 3~5줄**. 매출 흐름 한 줄(요일 효과: 전날보다 '지난주 같은 요일 대비'·'7일 vs 직전 7일'을 신뢰) + 반품 담당 결론 + 전략 담당 결론 + (있으면) 소재·상세 점검 결론. 동료 결론은 반드시 출처를 붙입니다("반품 담당 기준 …", "전략 담당 기준 …"). 동료 보고서가 없는 날은 "오늘 반품 보고 없음"처럼 밝히고 숫자판만으로 씁니다.
+- highlights / warnings: 오늘 대표가 알아야 할 좋은 신호·나쁜 신호. **상품별 깊은 분석은 하지 않습니다** — 전략·반품 담당의 판단을 인용하고, 숫자판에만 있는 신호(매출 급등·하락, 광고 효율 변화)는 짧게 짚습니다.
+- actions: 오늘 할 일 3개 — 동료들의 actions 중 매출 효과가 가장 큰 것을 고르거나 합칩니다(담당 표시).
+- week_actions: **팀 통합 할 일** — 동료 보고서들의 할 일과 내 제안을 합쳐 같은 일은 하나로, 중요한 순 최대 6개, source에 처음 낸 담당. this_week.week_actions_so_far의 done=false 항목은 id·since·source 그대로 유지, done=true는 뺍니다.
+- decisions: 대표가 직접 결정해야 하는 것만(예산 증감·가격·판매 중단·행사 시작). 없으면 빈 배열.
+- colleague_notes에는 어느 담당의 무엇을 요약에 넣었는지, handoffs는 동료가 확인해야 할 것이 있을 때만.
 ${COMMON_RULES}`;
 
 const SCHEMA = reportSchema({
-  highlights: "주목할 상품·신호 (밀어줄 만한 것). 최대 5개",
-  warnings: "걱정되는 신호 (하락·반품·광고 효율 악화). 없으면 빈 배열",
-  actions: "오늘 당장 실행할 구체적 액션 정확히 3개",
+  highlights: "오늘 좋은 신호 — 숫자판·동료 보고서에서, 최대 4개(출처 표시)",
+  warnings: "오늘 나쁜 신호 — 최대 4개(출처 표시). 없으면 빈 배열",
+  actions: "오늘 할 일 정확히 3개 — 동료 제안 중 매출 효과 큰 것 위주",
+  actionSource: true,
+  extra: {
+    decisions: {
+      type: "array",
+      items: { type: "object", properties: { what: { type: "string", description: "결정할 것 한 줄 (40자 이내)" }, why: { type: "string", description: "근거 — 숫자·출처 (70자 이내)" } }, required: ["what", "why"], additionalProperties: false },
+      description: "대표가 직접 결정해야 하는 것(예산·가격·판매 중단·행사). 없으면 빈 배열, 최대 3개",
+    },
+  },
 });
 
-// 동료 보고서 활용 규칙 (2026-10-17) — 매출 담당은 아침 첫 순서라 어제 전략·반품·광고 소재 보고서를 본다
-const COLLEAGUE_RULES = `- 상품 전략 담당 보고서의 '판매 확대'·'노출 부족' 상품과 집중 상품(focus)이 어제 실제로 팔렸는지(top_yesterday·surge·summary 데이터)를 확인해, 전략이 매출로 이어지는지 highlights/warnings에 씁니다. 이어지지 않으면 왜인지 추측(노출·가격·소재)과 함께 전략 담당에게 handoff.
-- 광고 소재 담당 제작안이 있는 상품은 그 뒤 매출·광고 효율이 움직였는지 확인합니다.
-- 반품 담당이 위험·주의로 꼽은 상품이 급증 TOP이나 어제 TOP에 있으면 "매출은 늘지만 반품 위험"으로 함께 쓰고, 소재·예산 확대 전에 원인 해결을 권합니다.
-- actions 3개 중 적어도 하나는 동료 보고서와 내 매출 데이터를 합쳐 '앞으로 매출을 더 키울 방안'이어야 합니다(예: 반품 낮고 급상승인 상품에 예산 집중, 조회 많고 안 팔리는 상품은 상세 점검 요청).`;
-export const DEF: AgentDef = { agent: AGENT, label: "매출 분석 담당", system: SYSTEM, schema: SCHEMA, collect, colleagueRules: COLLEAGUE_RULES };
+// 동료 보고서 활용 규칙 (2026-10-22) — 요약은 아침 맨 마지막이라 오늘 반품·전략 보고서를 모두 본다
+const COLLEAGUE_RULES = `- 오늘(is_today) 반품·전략 보고서의 headline·summary·warnings·actions가 요약의 재료입니다. 같은 상품을 두 담당이 다르게 봤으면(급등인데 반품 위험) 합쳐서 한 줄로 씁니다.
+- 숫자판의 급등·하락 상품은 전략·반품 담당이 이미 다뤘으면 그 판단을 인용하고, 다루지 않았으면 handoffs로 넘깁니다(해석을 직접 만들지 않습니다).
+- 동료 할 일을 통합할 때 중복(같은 상품·같은 일)은 하나로 합치고 source에 처음 낸 담당을 적습니다. 완료 체크된 것은 뺍니다.`;
+export const DEF: AgentDef = { agent: AGENT, label: "오늘의 요약", system: SYSTEM, schema: SCHEMA, collect, colleagueRules: COLLEAGUE_RULES, notify: "always" };

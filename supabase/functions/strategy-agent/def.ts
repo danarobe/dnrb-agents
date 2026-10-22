@@ -520,8 +520,8 @@ const SCHEMA = reportSchema({
 
 // effort low (2026-09-13): 생각 토큰을 줄여 생성 시간 단축 — 작성 단계는 벽시계 150초 안에 끝나야 함(546 실사례). 판단 규칙은 프롬프트에 다 있어 low로 충분.
 // 동료 보고서 활용 규칙 (2026-10-17) — 전략 담당은 아침 마지막(08:30)이라 오늘 매출·반품 보고서를 모두 본다
-const COLLEAGUE_RULES = `- 매출 분석 담당(오늘)의 급증·하락 상품과 취소·반품 감시 담당(오늘)의 위험·주의 상품을 집중 상품(focus.plan)과 4분면 전략(matrix.strategy)에 반영합니다: 반품 위험·주의 상품은 "광고 확대" 대신 "원인 해결 후 확대"(반품 담당 기준 n%), 반품 낮고 매출 급증인 상품은 최우선 확대.
-- 매출 담당이 '조회 많고 안 팔림'으로 꼽은 상품이 4분면에 있으면 '상세·가격 점검' 전략에 그 근거를 더하고, 상세페이지 점검 담당에게 handoff.
+const COLLEAGUE_RULES = `- '오늘 숫자판'(colleagues 첫 항목 — 코드가 모은 매출 집계)의 급등(surge_7d)·하락(rate_drops_7d)·조회 많고 안 팔림(high_view_low_rate_7d) 상품과 취소·반품 감시 담당(오늘)의 위험·주의 상품을 집중 상품(focus.plan)과 4분면 전략(matrix.strategy)에 반영합니다: 반품 위험·주의 상품은 "광고 확대" 대신 "원인 해결 후 확대"(반품 담당 기준 n%), 반품 낮고 매출 급증인 상품은 최우선 확대.
+- 숫자판의 '조회 많고 안 팔림' 상품이 4분면에 있으면 '상세·가격 점검' 전략에 그 근거를 더하고, 상세페이지 점검 담당에게 handoff.
 - 밀어줄 상품(판매 확대·집중 상품) 중 광고 소재가 부족하거나 소재 피로(빈도 3↑)인 것은 광고 소재 담당에게 제작안 handoff(상품명 그대로).
 - 어제 광고 소재 담당 제작안이 있는 상품은 그 제작안의 1순위 훅과 내 소재 분석이 같은 방향인지 확인하고, 다르면 이유를 씁니다.`;
-export const DEF: AgentDef = { agent: AGENT, label: "상품 전략 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, images, effort: "low", actions: { trends: trendsAction }, colleagueRules: COLLEAGUE_RULES };
+export const DEF: AgentDef = { agent: AGENT, label: "상품 전략 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, images, effort: "low", actions: { trends: trendsAction }, colleagueRules: COLLEAGUE_RULES, notify: "warn" };

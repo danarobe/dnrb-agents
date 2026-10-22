@@ -96,7 +96,7 @@ export function safeCollector() {
 //   각 담당자는 보고서를 쓰기 전에 다른 담당자들의 최근 보고서 요약(colleagues)과 자기에게 온 요청(handoffs_to_me)을 받는다.
 //   아침 순서가 매출(08:00) → 반품(08:15) → 전략(08:30)이라 반품은 오늘 매출 보고서를, 전략은 오늘 매출·반품 보고서를, 매출은 어제 전략·반품을 본다.
 //   보고서에는 colleague_notes(동료 것을 어떻게 반영했나)와 handoffs(동료에게 넘기는 요청)가 생기고, 다음 보고서가 그 요청에 답한다.
-export const AGENT_LABELS: Record<string, string> = { sales: "매출 분석 담당", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", creative: "광고 소재 담당", detail: "상세페이지 점검 담당" };
+export const AGENT_LABELS: Record<string, string> = { sales: "오늘의 요약", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", creative: "광고 소재 담당", detail: "상세페이지 점검 담당" };
 export const COLLEAGUE_TARGETS = Object.values(AGENT_LABELS);
 // 담당자 이름을 정확한 표시 이름으로 맞춘다 (2026-10-18) — 스키마의 enum을 뺐기 때문.
 //   이유: 상품 전략 담당 스키마에 협업 칸(colleague_notes·handoffs)의 담당자 enum이 더해지자 Claude API가
@@ -106,7 +106,7 @@ export function matchColleague(v: unknown): string | null {
   const s = String(v ?? "").normalize("NFC").replace(/\s+/g, "");
   if (!s) return null;
   for (const l of COLLEAGUE_TARGETS) if (l.replace(/\s+/g, "") === s) return l;
-  const keys: [RegExp, string][] = [[/상세/, AGENT_LABELS.detail], [/소재|광고/, AGENT_LABELS.creative], [/반품|취소/, AGENT_LABELS.returns], [/전략/, AGENT_LABELS.strategy], [/매출/, AGENT_LABELS.sales]];
+  const keys: [RegExp, string][] = [[/상세/, AGENT_LABELS.detail], [/소재|광고/, AGENT_LABELS.creative], [/반품|취소/, AGENT_LABELS.returns], [/전략/, AGENT_LABELS.strategy], [/매출|요약|overview/i, AGENT_LABELS.sales]];
   for (const [re, l] of keys) if (re.test(s)) return l;
   return null;
 }
@@ -156,11 +156,29 @@ export async function colleagueContext(me: string, D: string) {
     seenDay.add(k);
     if (date >= addDays(D, -3)) for (const h of ((rp.handoffs ?? []) as Row[])) if (String(h.to) === myLabel) handoffsToMe.push({ from: AGENT_LABELS[agent] ?? agent, report_date: date, product: h.product ?? "", ask: h.ask, why: h.why });
   }
-  const colleagues = [...latest.entries()].map(([agent, row]) => {
+  const colleagues: Row[] = [...latest.entries()].map(([agent, row]) => {
     const date = String(row.report_date);
     const age = Math.round((new Date(`${D}T00:00:00Z`).getTime() - new Date(`${date}T00:00:00Z`).getTime()) / 86400000);
     return { agent: AGENT_LABELS[agent] ?? agent, report_date: date, is_today: date === D, age_days: age, ...colleagueDigest(agent, (row.report ?? {}) as Row) };
   });
+  // 오늘 숫자판 (2026-10-22): 08:00에 코드가 모아 둔 매출 집계(status collected) — 해석 없는 숫자. 반품·전략이 급등·하락 상품에 답할 때 쓴다.
+  if (me !== "sales") {
+    const sn = await rest(`agent_reports?agent=eq.sales&report_date=eq.${D}&status=in.(collected,ok)&select=data&order=created_at.desc&limit=1`);
+    const d = sn.ok ? ((((await sn.json()) as Row[])[0] ?? {}).data as Row | undefined) : undefined;
+    if (d) {
+      const rv = (d.revenue ?? {}) as Row, pr = (d.products ?? {}) as Row;
+      const pick = (arr: unknown, n: number, keys: string[]) => ((arr ?? []) as Row[]).slice(0, n).map((x) => Object.fromEntries(keys.map((k) => [k, x[k]])));
+      colleagues.unshift({
+        agent: "오늘 숫자판(매출 집계 — 코드가 모은 숫자, 해석 없음)", report_date: D, is_today: true, age_days: 0,
+        revenue: { yesterday: (rv.yesterday as Row)?.revenue, change_pct: rv.change_pct, last7: (rv.last7 as Row)?.revenue },
+        surge_7d: pick(pr.trending_7d, 8, ["name", "qty_7d", "qty_prev7d", "rate_7d"]),
+        rate_drops_7d: pick(pr.rate_drops_7d, 5, ["name", "views_7d", "rate_7d", "rate_prev7d"]),
+        high_view_low_rate_7d: pick(pr.high_view_low_rate_7d, 5, ["name", "views_7d", "rate_7d"]),
+        top_yesterday: pick(pr.top_yesterday, 8, ["name", "qty", "amount"]),
+        roas_cafe24: ((d.ads ?? {}) as Row).roas_cafe24 ?? null,
+      });
+    }
+  }
   return { colleagues, handoffs_to_me: handoffsToMe.slice(0, 6), seen: colleagues.map((c) => ({ agent: c.agent, report_date: c.report_date })) };
 }
 // lean 스키마로 받은 값을 원래 모양으로(모든 담당자에 걸어도 무해 — 이미 원래 모양이면 그대로)
@@ -263,7 +281,7 @@ const item = (extra: Record<string, unknown> = {}, req: string[] = []) => ({
 // lean(2026-10-18): 구조화 출력 문법을 줄인 모양 — 상품 전략 담당처럼 담당자 전용 표가 많아 '문법이 너무 크다'(400)에 걸리는 담당자용.
 //   enum(mood·owner·status)은 문자열로, 주간 항목의 dates(배열 안의 배열)는 쉼표로 이은 문자열로 받는다 → leanFix가 원래 모양으로 되돌려서 화면·다음 날 문맥은 그대로.
 const OWNERS = ["광고팀", "상품팀", "CS팀", "대표"];
-export function reportSchema(opts: { highlights: string; warnings: string; actions: string; extra?: Record<string, unknown>; lean?: boolean }) {
+export function reportSchema(opts: { highlights: string; warnings: string; actions: string; extra?: Record<string, unknown>; lean?: boolean; actionSource?: boolean }) {
   const extraProps = opts.extra ?? {};
   const lean = !!opts.lean;
   const pick = (vals: string[], desc = "") => lean ? { type: "string", description: `${desc ? desc + " — " : ""}다음 중 하나 그대로: ${vals.join(", ")}` } : { type: "string", enum: vals, ...(desc ? { description: desc } : {}) };
@@ -312,10 +330,13 @@ export function reportSchema(opts: { highlights: string; warnings: string; actio
             owner: pick(OWNERS),
             since: { type: "string", description: "처음 제안한 기준일 YYYY-MM-DD" },
             status: pick(["new", "ongoing"]),
+            ...(opts.actionSource ? { source: pick(COLLEAGUE_TARGETS, "이 할 일을 처음 제안한 담당자 (동료 보고서의 actions·week_actions에서 가져왔으면 그 담당, 내가 낸 것이면 나)") } : {}),
           },
-          required: ["id", "title", "why", "owner", "since", "status"], additionalProperties: false,
+          required: ["id", "title", "why", "owner", "since", "status", ...(opts.actionSource ? ["source"] : [])], additionalProperties: false,
         },
-        description: "이번 주 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since 그대로)하고 오늘 새 제안을 더한다. done=true는 뺀다. 중요한 순, 최대 6개",
+        description: opts.actionSource
+          ? "팀 통합 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since·source 그대로)하고, 오늘 동료 보고서들의 actions와 내 제안을 합쳐 같은 일은 하나로(source는 처음 낸 담당). done=true는 뺀다. 중요한 순, 최대 6개"
+          : "이번 주 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since 그대로)하고 오늘 새 제안을 더한다. done=true는 뺀다. 중요한 순, 최대 6개",
       },
       colleague_notes: {
         type: "array",
@@ -383,7 +404,7 @@ export const COMMON_RULES = `
 - 보고서를 쓰기 전에 colleagues를 읽고 내 판단과 맞물리는 것을 찾습니다. 같은 상품을 동료가 다르게 봤으면(예: 매출 담당은 급상승, 반품 담당은 위험) 두 신호를 **합쳐서** 판단하고 그 사실을 문장에 씁니다 ("매출은 늘지만 반품 담당 기준 반품률 18%라 소재 확대 전 사이즈 안내부터").
 - colleague_notes에 동료 보고서의 무엇을 어떻게 반영했는지 적습니다. 반영할 게 없으면 빈 배열 — 억지로 만들지 않습니다.
 - handoffs_to_me에 요청이 있으면 **반드시 답합니다**: 확인 결과를 highlights·warnings·summary 중 알맞은 곳에 넣고 colleague_notes에 "요청에 답함: …"을 적습니다. 내 데이터에 없으면 "확인 불가(이유)"라고 답합니다.
-- handoffs로 동료에게 넘깁니다(최대 3개): 급상승·주목 상품의 반품률 확인 → 취소·반품 감시 담당 / 조회 많고 주문율 낮은 상품의 상세 점검 → 상세페이지 점검 담당 / 밀어줄 상품의 소재 제작안 → 광고 소재 담당 / 반품 위험·광고 효율이 좋은 상품을 전략에 반영 → 상품 전략 담당 / 매출 흐름 확인 → 매출 분석 담당. 상품명은 데이터에 있는 그대로.
+- handoffs로 동료에게 넘깁니다(최대 3개): 급상승·주목 상품의 반품률 확인 → 취소·반품 감시 담당 / 조회 많고 주문율 낮은 상품의 상세 점검 → 상세페이지 점검 담당 / 밀어줄 상품의 소재 제작안 → 광고 소재 담당 / 반품 위험·광고 효율이 좋은 상품을 전략에 반영 → 상품 전략 담당 / 전체 매출 흐름·팀 종합에 넣을 것 → 오늘의 요약. 상품명은 데이터에 있는 그대로.
 - 동료의 숫자를 내 숫자처럼 다시 쓰지 않습니다. 인용할 때는 "반품 담당 보고서 기준"처럼 출처를 밝힙니다.`;
 
 // ── Claude 호출 ──
@@ -498,6 +519,7 @@ export interface AgentDef {
   postProcess?: (report: Row, data: Row) => Row;
   effort?: "low" | "medium" | "high";   // 기본 medium
   colleagueRules?: string;               // 선택: 동료 보고서를 어떻게 쓸지 담당자별 규칙 (2026-10-17) — system 끝에 붙는다
+  notify?: "always" | "warn";            // 알림: always(기본) / warn = mood가 bad일 때만 (2026-10-22 아침 알림을 요약 1번으로 줄임)
   images?: (data: Row) => LLMImage[];    // 선택: Claude가 봐야 할 이미지(광고 소재 썸네일 등, 최대 12장)
   // 선택: 담당자 전용 추가 액션(관리자 또는 x-cron-secret). 예: strategy-agent의 'trends'(데이터랩 순위표를 낮에 받아 저장, 2026-10-11)
   actions?: Record<string, (url: URL, req: Request) => Promise<Response>>;
@@ -514,7 +536,7 @@ export function serveAgent(def: AgentDef) {
 
     try {
       if (action === "status") {
-        const r = await rest(`agent_reports?agent=eq.${def.agent}&select=id,report_date,status,trigger,created_at,error&order=created_at.desc&limit=1`);
+        const r = await rest(`agent_reports?agent=eq.${def.agent}&status=in.(ok,error)&select=id,report_date,status,trigger,created_at,error&order=created_at.desc&limit=1`);
         const last = r.ok ? ((await r.json())[0] ?? null) : null;
         return json({ agent: def.agent, configured: !!ANTHROPIC_API_KEY, secret_ready: !!AGENT_SECRET, model: MODEL, last });
       }
@@ -532,6 +554,15 @@ export function serveAgent(def: AgentDef) {
         const data = await def.collect(D);
         return json({ ...data, took_ms: Date.now() - t0 });
       }
+      // ── snapshot (2026-10-22, 오늘의 요약): 숫자만 모아 agent_reports에 status 'collected'로 저장 — Claude 호출 없음(비용 0).
+      //    반품·전략 담당이 colleagueContext로 이 숫자판(급등·하락·매출)을 읽고, 08:45 run이 이 행을 보고서로 채운다(PATCH). 화면·동료 문맥은 'collected'를 보고서로 치지 않는다.
+      if (action === "snapshot") {
+        const t0 = Date.now();
+        const data = await def.collect(D);
+        await rest(`agent_reports?agent=eq.${def.agent}&report_date=eq.${D}&status=eq.collected`, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => {});
+        const saved = await saveRow({ agent: def.agent, report_date: D, trigger: viaCron ? "cron" : "manual", status: "collected", data, created_by: me?.id ?? null });
+        return json({ ok: true, snapshot_id: saved.id, report_date: D, errors: data.errors, took_ms: Date.now() - t0 });
+      }
       // ── run = 2단계 (2026-09-13): ① 이 isolate에서 수집해 api_cache에 저장 → ② 자기 자신을 write로 호출(새 isolate)해 Claude·저장·알림.
       //    Supabase 무료 요금제의 요청당 CPU 한도(WORKER_RESOURCE_LIMIT 546) 때문 — 수집(JSON 대량·TLS)과 이미지 base64·Claude 응답 파싱을
       //    한 요청에 몰면 한도를 넘는다(상품 전략 담당 실사례). 벽시계는 1단계가 2단계 응답을 기다리므로 합산되지만 대기는 CPU가 아니다.
@@ -539,15 +570,20 @@ export function serveAgent(def: AgentDef) {
         const trigger = viaCron ? "cron" : "manual";
         const t0 = Date.now();
         let data: Row | null = null;
+        let snapshotId: string | null = null;
         try {
-          data = await def.collect(D);
+          // 오늘 숫자판(snapshot)이 있으면 다시 모으지 않고 그 행을 채운다 (2026-10-22)
+          const snap = await rest(`agent_reports?agent=eq.${def.agent}&report_date=eq.${D}&status=eq.collected&select=id,data&order=created_at.desc&limit=1`);
+          const snapRow = snap.ok ? (((await snap.json()) as Row[])[0] ?? null) : null;
+          if (snapRow) { snapshotId = String(snapRow.id); data = snapRow.data as Row; }
+          else data = await def.collect(D);
           const key = `agentrun:${def.agent}:${D}:${crypto.randomUUID()}`;
           // 작성 단계가 중간에 죽어(546 등) 못 지운 옛 수집 데이터 정리 — 하루 지난 것만 (재시도 중인 것은 몇 분 안에 끝남)
           await rest(`api_cache?cache_key=like.agentrun:*&created_at=lt.${encodeURIComponent(new Date(Date.now() - 86400000).toISOString())}`,
             { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => {});
           const put = await rest(`api_cache?on_conflict=cache_key`, {
             method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-            body: JSON.stringify({ cache_key: key, payload: { data, trigger, created_by: me?.id ?? null }, created_at: new Date().toISOString() }),
+            body: JSON.stringify({ cache_key: key, payload: { data, trigger, created_by: me?.id ?? null, snapshot_id: snapshotId }, created_at: new Date().toISOString() }),
           });
           if (!put.ok) throw new Error(`수집 데이터 임시 저장 실패 ${put.status}`);
           // 작성 단계는 **별도 함수 agent-write**(다른 worker) — 같은 함수를 다시 부르면 같은 worker가 받아 CPU 한도가 합산됨(실측 546).
@@ -555,7 +591,7 @@ export function serveAgent(def: AgentDef) {
           // (직접 fetch + waitUntil 방식은 호출자 종료와 함께 agent-write도 죽어 보고서가 안 남는 실사례, 2026-09-13)
           const dispatch = await rest("rpc/agent_dispatch_write", { method: "POST", body: JSON.stringify({ p_agent: def.agent, p_date: D, p_key: key }) });
           if (!dispatch.ok) throw new Error(`작성 단계 예약 실패 ${dispatch.status}: ${(await dispatch.text()).slice(0, 160)}`);
-          return json({ queued: true, report_date: D, key, collect_ms: Date.now() - t0, message: "수집 완료 — 보고서 작성 중(1~2분). 새 보고서가 생기면 목록에 나타납니다." }, 202);
+          return json({ queued: true, report_date: D, key, snapshot_reused: !!snapshotId, collect_ms: Date.now() - t0, message: "수집 완료 — 보고서 작성 중(1~2분). 새 보고서가 생기면 목록에 나타납니다." }, 202);
         } catch (e) {
           const msg = String((e as Error)?.message ?? e).slice(0, 500);
           await saveRow({ agent: def.agent, report_date: D, trigger, status: "error", data, error: msg, created_by: me?.id ?? null }).catch(() => {});
@@ -581,8 +617,15 @@ export async function writeStage(def: AgentDef, D: string, key: string, opts: { 
   const row = got.ok ? ((await got.json())[0] ?? null) : null;
   if (!row) return json({ error: "수집 데이터를 찾을 수 없습니다 (key)" }, 400);
   const dropCache = () => rest(keyQ, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => {});
-  const payload = row.payload as { data: Row; trigger: string; created_by: string | null; retry?: number };
-  const trigger = payload.trigger, data = payload.data, createdBy = payload.created_by, retry = num(payload.retry);
+  const payload = row.payload as { data: Row; trigger: string; created_by: string | null; retry?: number; snapshot_id?: string | null };
+  const trigger = payload.trigger, data = payload.data, createdBy = payload.created_by, retry = num(payload.retry), snapshotId = payload.snapshot_id ?? null;
+  // 숫자판(status collected) 행이 있으면 새 행 대신 그 행을 채운다 — 하루에 요약 행 하나 (2026-10-22)
+  const store = async (body: Row): Promise<Row> => {
+    if (!snapshotId) return await saveRow(body);
+    const res = await rest(`agent_reports?id=eq.${encodeURIComponent(snapshotId)}&status=eq.collected`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...body, created_at: new Date().toISOString() }) });
+    const rows = res.ok ? ((await res.json()) as Row[]) : [];
+    return rows[0] ?? await saveRow(body);   // 이미 채워졌거나 지워졌으면 새 행
+  };
   const t0 = Date.now();
   try {
     const [wc, cc] = await Promise.all([weekContext(def.agent, D), colleagueContext(def.agent, D)]);
@@ -594,9 +637,11 @@ export async function writeStage(def: AgentDef, D: string, key: string, opts: { 
     const lean0 = leanFix(written0);
     const written = resolveProductNos(def.postProcess ? def.postProcess(lean0, data) : lean0, data);
     const report = { ...written, week: wc.week, last_week: wc.last_week, colleagues_seen: cc.seen, handoffs_received: cc.handoffs_to_me };
-    const saved = await saveRow({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage: { ...(usage as Row), retry }, created_by: createdBy });
+    const saved = await store({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage: { ...(usage as Row), retry }, created_by: createdBy });
     await dropCache();
-    const notified = await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 }));
+    // 알림: 기본은 보고서마다, notify:"warn"인 담당자는 mood가 bad일 때만 (아침 알림을 요약 1번으로 — 2026-10-22)
+    const wantNotify = (def.notify ?? "always") === "always" || String(report.mood) === "bad";
+    const notified = wantNotify ? await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 })) : { saved: 0, pushed: 0, skipped: true };
     return json({ ok: true, id: saved.id, report_date: D, report, notified, retry, write_ms: Date.now() - t0 });
   } catch (e) {
     const msg = String((e as Error)?.message ?? e).slice(0, 500);
@@ -607,7 +652,7 @@ export async function writeStage(def: AgentDef, D: string, key: string, opts: { 
     }
     await dropCache();
     const finalMsg = (retry > 0 ? `(짧게 다시 쓰기 ${retry}회 재시도 후에도 실패) ` : "") + msg;
-    await saveRow({ agent: def.agent, report_date: D, trigger, status: "error", data, error: finalMsg, created_by: createdBy }).catch(() => {});
+    await store({ agent: def.agent, report_date: D, trigger, status: "error", data, error: finalMsg, created_by: createdBy }).catch(() => {});
     return json({ error: finalMsg, report_date: D, write_ms: Date.now() - t0 }, 500);
   }
 }
