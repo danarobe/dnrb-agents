@@ -107,7 +107,12 @@ export function paMatchAudit(products: { no: number; name: string; qty: number }
 }
 
 const median = (arr: number[]) => { if (!arr.length) return 0; const s = [...arr].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-export const marginRate = (price: number, supply: number) => price > 0 && supply > 0 ? +(((price - supply * 1.1) / price) * 100).toFixed(1) : null;   // 워크스페이스 판매 성과와 같은 식(공급가 VAT 별도)
+// 워크스페이스 판매 성과와 같은 식: (판매가 − 마진 원가) ÷ 판매가. 마진 원가 = 공급가 × 1.1(VAT 별도),
+//   **중국 사입 상품은 워크스페이스 productinfo의 cost_vat**(= 실질 단가 + 실제 수입 부가세 몫 — 2026-10-22 사용자 요청 "에이전트 마진율에도 똑같이").
+export const marginRate = (price: number, supply: number, costVat?: number | null) => {
+  const cost = costVat != null && costVat > 0 ? costVat : supply * 1.1;
+  return price > 0 && cost > 0 ? +(((price - cost) / price) * 100).toFixed(1) : null;
+};
 
 // ── 데이터랩 순위표 저장본 (trend_ranks) ──
 type RankMap = Map<string, number>;
@@ -271,7 +276,7 @@ async function collect(D: string) {
     return {
       product_no: no, name: String(p.product_name ?? r?.product_name ?? ""), category: leafCat(no),
       created: String(p.created_date ?? "").slice(0, 10) || null, age_days: ageOf(no), sold_out: String(p.sold_out ?? "") === "T",
-      price, discount_price: dprice && dprice < price ? dprice : null, margin_rate: marginRate(price, supply), promos: promosOf(no),
+      price, discount_price: dprice && dprice < price ? dprice : null, margin_rate: marginRate(price, supply, p.cost_vat != null ? num(p.cost_vat) : null), promos: promosOf(no),
       views_14d: num(r?.views), orders_14d: num(r?.order_count), qty_14d: num(r?.order_qty), rate_14d: num(r?.rate), qty_7d: num(r7?.order_qty), views_7d: num(r7?.views),
       active_ads: adCountOf(no), ad_spend_total: adsKnown && !suspectNos.has(no) ? Math.round(ads.reduce((t, a) => t + num(a.spend), 0)) : null,
     };
@@ -346,7 +351,7 @@ async function collect(D: string) {
       product_no: f.no, name: nameOf(f.no) || String(p.product_name ?? ""), category: f.cat,
       why: [meta.trending ? `급상승(7일 ${meta.prevQty}→${meta.qty7}개)` : "", meta.rank10 ? `14일 판매 ${meta.rank10}위` : ""].filter(Boolean).join(" · "),
       views_14d: num(r?.views), qty_14d: num(r?.order_qty), rate_14d: num(r?.rate),
-      price, discount_price: dprice && dprice < price ? dprice : null, margin_rate: marginRate(price, supply), promos: promosOf(f.no), sold_out: String(p.sold_out ?? "") === "T",
+      price, discount_price: dprice && dprice < price ? dprice : null, margin_rate: marginRate(price, supply, p.cost_vat != null ? num(p.cost_vat) : null), promos: promosOf(f.no), sold_out: String(p.sold_out ?? "") === "T",
       is_new: newNos.includes(f.no),
       own_ads: f.own.map(adView),
       reference_ads: f.refAds.map((a) => ({ product_name: String(a.product_name), ...adView(a) })),

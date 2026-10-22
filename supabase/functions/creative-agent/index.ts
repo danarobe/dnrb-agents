@@ -404,7 +404,7 @@ Deno.serve(async (req) => {
         const metrics = {
           why: kind === "surge" ? `급상승 (7일 ${sr?.prev ?? 0}→${sr?.qty7 ?? 0}개)` : kind === "best" ? `베스트 ${br?.rank ?? "-"}위 (14일 ${num(r14?.order_qty)}개)` : "직접 고름",
           qty_7d: num(r7?.order_qty), qty_prev7d: num(mPrev.get(no)?.order_qty), qty_14d: num(r14?.order_qty), views_14d: num(r14?.views), rate_14d: num(r14?.rate),
-          price: price || null, margin_rate: marginRate(price, supply), promos: promosOf(no), best_rank_14d: br?.rank ?? null,
+          price: price || null, margin_rate: marginRate(price, supply, p.cost_vat != null ? num(p.cost_vat) : null), promos: promosOf(no), best_rank_14d: br?.rank ?? null,
         };
         const own = (adsByProduct.get(no) ?? []).sort((a, b) => b.spend - a.spend).slice(0, 8);
         // 매칭 자기 점검(2026-09-23): 정식 매칭 0개인데 광고명에 상품명이 들어 있으면 '광고 없음'이 아니라 '모름'(null)으로 — 제작안이 "기존 소재 없음"으로 오판하지 않게

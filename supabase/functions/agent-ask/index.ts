@@ -130,10 +130,11 @@ async function runTool(name: string, input: Row, yesterday: string): Promise<{ l
     if (!nos.length) return { label: "상품 정보", result: { error: "product_nos 비어 있음" } };
     const b = await callFn("cafe24-analytics", { action: "productinfo", product_nos: nos.join(",") }) as { products?: Row[] };
     const rows = (b.products ?? []).map((p) => {
-      const price = num(p.price), supply = num(p.supply_price);
-      return { product_no: Number(p.product_no), name: p.product_name, price, supply_price: supply, margin_rate: price > 0 ? Math.round((price - supply * 1.1) / price * 1000) / 10 : null, created: String(p.created_date ?? "").slice(0, 10), sold_out: String(p.sold_out) === "T", display: String(p.display) === "T", selling: String(p.selling) === "T" };
+      const price = num(p.price), supply = num(p.supply_price), cn = p.cost_src === "cn" && num(p.cost_vat) > 0;
+      const cost = cn ? num(p.cost_vat) : supply * 1.1;   // 중국 사입 = 실질 단가 + 실제 수입 부가세 몫(2026-10-22 — 워크스페이스와 같은 식)
+      return { product_no: Number(p.product_no), name: p.product_name, price, supply_price: supply, ...(cn ? { china_real_cost: num(p.cn_real_cost), china_import_vat: num(p.cn_vat) } : {}), margin_rate: price > 0 && cost > 0 ? Math.round((price - cost) / price * 1000) / 10 : null, created: String(p.created_date ?? "").slice(0, 10), sold_out: String(p.sold_out) === "T", display: String(p.display) === "T", selling: String(p.selling) === "T" };
     });
-    return { label: `상품 정보 ${rows.length}개`, result: { rows, note: "마진율 = (판매가 − 공급가×1.1) ÷ 판매가" } };
+    return { label: `상품 정보 ${rows.length}개`, result: { rows, note: "마진율 = (판매가 − 마진 원가) ÷ 판매가. 마진 원가 = 공급가×1.1, 중국 사입 상품(china_real_cost가 있는 상품)은 실질 단가 + 실제 수입 부가세(china_import_vat)" } };
   }
   return { label: name, result: { error: "알 수 없는 도구" } };
 }
