@@ -432,3 +432,10 @@ table.risk .r { white-space: normal; }
 .decide-box { border-color: #fcd34d; background: #fffbeb; }
 .decide-box .li b { color: #92400e; }
 .chip.src { color: #0e7490; background: #ecfeff; }
+
+/* ── 발행 규칙 줄 (2026-10-26, 사용자 요청) ── */
+.org-rules { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; font-size: .8rem; color: var(--ink-2); }
+.rule { display: grid; grid-template-columns: 96px 1fr; gap: 8px; align-items: center; min-width: 0; }
+.rule-k { font-size: .7rem; font-weight: 800; border-radius: 999px; padding: 2px 8px; text-align: center; white-space: nowrap; }
+.rule-k.daily { color: #92400e; background: #fef3c7; } .rule-k.weekly { color: #1d4ed8; background: #dbeafe; } .rule-k.ask { color: #6d28d9; background: #ede9fe; }
+.rule > span:last-child { overflow-wrap: break-word; }

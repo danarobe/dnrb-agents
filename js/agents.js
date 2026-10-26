@@ -110,6 +110,11 @@ function orgChartHtml() {
   const down = (label, cls) => `<div class="org-down ${cls}"><i class="fa-solid fa-arrow-down-long"></i><span>${escHtml(label)}</span></div>`;
   return `<div class="org">
     <div class="org-head"><b><i class="fa-solid fa-building"></i> 매출 성장팀</b><span class="muted small">08:00 어제 매출 숫자판 → 반품·전략이 보고 일하고 → 요약이 한 장으로 마무리</span></div>
+    <div class="org-rules">
+      <div class="rule"><span class="rule-k daily"><i class="fa-solid fa-sun"></i> 매일 자동</span><span>08:00 숫자판 → 08:15 취소·반품 → 08:30 상품 전략 → 08:45 오늘의 요약 <b class="muted">(알림은 요약 1번)</b></span></div>
+      <div class="rule"><span class="rule-k weekly"><i class="fa-solid fa-calendar-week"></i> 매주 자동</span><span>월요일 09:00 광고 소재 — 급상승 5 + 베스트 5 상품 제작안</span></div>
+      <div class="rule"><span class="rule-k ask"><i class="fa-solid fa-hand-pointer"></i> 요청할 때</span><span>상세페이지 점검 · 광고 소재 1개 · 담당자에게 질문 — 버튼으로만, 자동 실행 없음</span></div>
+    </div>
     <div class="org-grid">
       ${orgDesk('returns')}${right}${orgDesk('strategy')}${right}${orgDesk('sales')}
       ${down('부탁', 'd1')}<div></div>${down('부탁', 'd2')}<div></div><div class="org-gap"></div>
