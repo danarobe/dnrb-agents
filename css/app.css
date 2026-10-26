@@ -439,3 +439,11 @@ table.risk .r { white-space: normal; }
 .rule-k { font-size: .7rem; font-weight: 800; border-radius: 999px; padding: 2px 8px; text-align: center; white-space: nowrap; }
 .rule-k.daily { color: #92400e; background: #fef3c7; } .rule-k.weekly { color: #1d4ed8; background: #dbeafe; } .rule-k.ask { color: #6d28d9; background: #ede9fe; }
 .rule > span:last-child { overflow-wrap: break-word; }
+
+/* ── 반품 담당 개요: Best 30 TOP5 (2026-10-26) ── */
+.b30 { margin-bottom: 12px; }
+.b30-row { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; padding: 6px 0; border-top: 1px dashed #f3f4f6; font-size: .83rem; line-height: 1.4; }
+.b30-row:first-of-type { border-top: 0; }
+.b30-row .num { width: 20px; height: 20px; border-radius: 50%; background: #fee2e2; color: #991b1b; font-weight: 800; font-size: .7rem; display: inline-flex; align-items: center; justify-content: center; }
+.b30-val { font-size: .95rem; white-space: nowrap; }
+.t-sub-inline { font-size: .72rem; font-weight: 700; color: var(--muted); }

@@ -118,19 +118,38 @@ function reportHtml(r) {
   const rp = r.report, d = r.data || {}, rev = d.revenue || {}, ch = rev.change_pct || {}, ads = d.ads;
   const md = d => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
   const tile = (label, value, sub) => `<div class="tile"><div class="t-label">${label}</div><div class="t-value">${value}</div><div class="t-sub">${sub}</div></div>`;
-  let tiles = '', extraBoxes = '';
+  let tiles = '', extraBoxes = '', headExtra = '';
   if (r.agent === 'returns') {
     const ts = d.top_sellers_return || {}, co = d.cohorts || {};
     const weeks = co.weeks || [], ms = co.mature_weeks_summary, lm = ms?.latest_mature, cur = weeks.find(w => w.partial) || weeks[0];
     const wk = w => w ? `${md(w.start)}~${md(w.end)}` : '';
     const pr = v => v == null ? '—' : v + '%';
     if (weeks.length) {
+      // 2026-10-26 사용자 요청: 취소율·반품률은 '최근 성숙 주 + 최근 성숙 주를 포함한 4주 총합', 이번 주(집계 중)는 표시하지 않음
+      const m4 = co.mature_4w || (() => {   // 옛 보고서: 성숙 주 4개를 화면에서 합산
+        const ws = weeks.filter(w => w.maturity === '성숙').slice(0, 4); if (!ws.length) return null;
+        const sum = k => ws.reduce((t, w) => t + (Number(w[k]) || 0), 0);
+        return { count: ws.length, weeks: ws.map(w => w.week), paid: sum('paid'), cancel: sum('cancel'), ret: sum('ret'), cancel_rate: sum('paid') ? +(sum('cancel') / sum('paid') * 100).toFixed(2) : null, return_rate: sum('paid') ? +(sum('ret') / sum('paid') * 100).toFixed(2) : null };
+      })();
+      const m4Range = m4 && m4.weeks?.length ? `${md(String(m4.weeks[m4.weeks.length - 1]).slice(0, 10))}~${md(String(m4.weeks[0]).slice(11, 21))}` : '';
       tiles = [
-        tile('취소율 (최근 성숙 주)', lm ? pr(lm.cancel_rate) : '—', lm ? `결제 주 ${wk(lm)} · 성숙 주 평균 ${pr(ms.avg_cancel_rate)}` : '성숙한 주가 아직 없음'),
-        tile('반품률 (최근 성숙 주)', lm ? pr(lm.return_rate) : '—', lm ? `결제 ${fmt(lm.paid)}건 중 반품 ${fmt(lm.ret)}건 · 평균 ${pr(ms.avg_return_rate)}` : '성숙한 주가 아직 없음'),
-        tile('이번 주 (집계 중)', cur ? `${pr(cur.cancel_rate)} · ${pr(cur.return_rate)}` : '—', cur ? `취소 · 반품 · 결제 ${fmt(cur.paid)}건 · 아직 늘어날 수 있음` : ''),
+        tile('취소율', lm ? `${pr(lm.cancel_rate)} <span class="t-sub-inline">· 4주 ${m4 ? pr(m4.cancel_rate) : '—'}</span>` : '—', lm ? `최근 성숙 주 ${wk(lm)} · 성숙 ${m4?.count || 0}주 총합 취소 ${fmt(m4?.cancel)}건 ÷ 결제 ${fmt(m4?.paid)}건` : '성숙한 주가 아직 없음'),
+        tile('반품률', lm ? `${pr(lm.return_rate)} <span class="t-sub-inline">· 4주 ${m4 ? pr(m4.return_rate) : '—'}</span>` : '—', lm ? `최근 성숙 주 ${wk(lm)} · 성숙 ${m4?.count || 0}주 총합 반품 ${fmt(m4?.ret)}건 ÷ 결제 ${fmt(m4?.paid)}건` : '성숙한 주가 아직 없음'),
         tile('위험·주의 상품', (rp.risk_products || []).length + '개', `상위 상품 14일 순반품률 ${ts.rate_14d != null ? ts.rate_14d + '%' : '—'} · 관리 ${fmt(d.watched_count || 0)}개`),
+        tile('성숙 4주 결제', m4 ? fmt(m4.paid) + '건' : '—', m4 ? `${m4Range} · 취소 ${fmt(m4.cancel)}건 · 반품 ${fmt(m4.ret)}건` : '성숙한 주가 아직 없음'),
       ].join('');
+      // 개요 바로 아래: Best 30 중 취소율 TOP5 / 순반품률 TOP5 (코드 집계, 2026-10-26 사용자 요청)
+      const b30 = d.best30;
+      if (b30 && ((b30.cancel_top5 || []).length || (b30.return_top5 || []).length)) {
+        const lvl = l => l === '위험' ? 'bad' : l === '주의' ? 'warn' : 'good';
+        const row = (i, name, main, sub, chip = '') => `<div class="b30-row"><span class="num">${i + 1}</span><div><b>${escHtml(name)}</b><div class="muted small">${sub}</div></div><div class="b30-val">${main}${chip}</div></div>`;
+        headExtra = `<div class="two b30">
+          <div class="box"><h3><i class="fa-solid fa-ban" style="color:#b91c1c;"></i> Best 30 중 취소율 TOP 5 <span class="muted small">결제일 기준 14일 · 취소완료</span></h3>
+            ${(b30.cancel_top5 || []).map((x, i) => row(i, x.name, `<b>${pr(x.cancel_rate)}</b>`, `판매 ${x.rank}위 · 취소 ${fmt(x.cancel_qty)}개 / 결제 ${fmt(x.paid_qty)}개`)).join('') || '<div class="muted">취소가 있는 상품 없음</div>'}</div>
+          <div class="box"><h3><i class="fa-solid fa-rotate-left" style="color:#b91c1c;"></i> Best 30 중 순반품률 TOP 5 <span class="muted small">배송완료 기준 14일 창</span></h3>
+            ${(b30.return_top5 || []).map((x, i) => row(i, x.name, `<b>${pr(x.rate_14d)}</b>`, `판매 ${x.rank}위 · 반품 ${fmt(x.returned_14d)}개 / 배송완료 ${fmt(x.delivered_14d)}개`, ` <span class="chip ${lvl(x.level)}">${escHtml(x.level)}</span>`)).join('') || '<div class="muted">반품이 있는 상품 없음</div>'}</div>
+        </div>`;
+      }
     } else {
       // 코호트 도입 전 보고서(2026-09-11 이전 데이터)
       const cl = d.claims || {}, cc = cl.cancel || {}, rt = cl.return || {};
@@ -387,6 +406,7 @@ function reportHtml(r) {
       <div class="h-text">${escHtml(rp.headline)}</div>
       <ul>${(rp.summary || []).map(s => `<li>${escHtml(s)}</li>`).join('')}</ul>
     </div>
+    ${headExtra}
     <div class="tiles">${tiles}</div>
     ${(['detail', 'creative'].includes(r.agent) && !(rp.highlights || []).length && !(rp.warnings || []).length) ? '' : `<div class="two">
       <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 오늘의 주목</h3>${list(rp.highlights, 'up')}</div>

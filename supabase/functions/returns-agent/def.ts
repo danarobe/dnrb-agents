@@ -39,6 +39,8 @@ async function collect(D: string) {
     })),
     safe("반품 사유(14일)", () => callFn("cafe24-analytics", { action: "returnreasons", start_date: reasonWin[0], end_date: reasonWin[1] })),
   ]);
+  // 상품별 취소율(cancelwatch, 2026-10-26)은 주문 14일치를 훑는 무거운 호출이라 위 셋이 끝난 뒤 따로 — 순반품률(returnwatch)과 동시에 돌리면 그쪽이 503으로 떨어진 실측(10-26)
+  const cw = await safe("상품별 취소율(14일)", () => callFn("cafe24-analytics", { action: "cancelwatch", end_date: D, days: "14", top: "30" }));
 
   // ── 취소·반품 규모: 이번 주 vs 지난주 ──
   const bucket = (c: Row | null, k: string) => {
@@ -55,6 +57,14 @@ async function collect(D: string) {
     paid: num(w.paid), cancel: num(w.cancel), cancel_rate: w.cancel_rate, ret: num(w.ret), return_rate: w.return_rate, claim_rate: w.claim_rate,
   }));
   const matureWeeks = cohortWeeks.filter((w) => w.maturity === "성숙");
+  // 성숙 주 4주 총합 (2026-10-26 사용자 요청: 타일은 최근 성숙 주 + 최근 성숙 주 포함 4주 총합, 이번 주는 표시 안 함)
+  const m4 = matureWeeks.slice(0, 4);
+  const sum4 = (k: "paid" | "cancel" | "ret") => m4.reduce((t, w) => t + num(w[k]), 0);
+  const mature4w = m4.length ? {
+    weeks: m4.map((w) => w.week), count: m4.length, paid: sum4("paid"), cancel: sum4("cancel"), ret: sum4("ret"),
+    cancel_rate: sum4("paid") > 0 ? +(sum4("cancel") / sum4("paid") * 100).toFixed(2) : null,
+    return_rate: sum4("paid") > 0 ? +(sum4("ret") / sum4("paid") * 100).toFixed(2) : null,
+  } : null;
   const cohortDays = ((cohort?.days ?? []) as CRow[]).map((d) => ({ date: d.start, age_days: d.age_days, paid: num(d.paid), cancel: num(d.cancel), cancel_rate: d.cancel_rate, ret: num(d.ret), return_rate: d.return_rate }));
 
   // ── 상품별 반품 사유 TOP (14일, 배송완료일 기준) ──
@@ -105,6 +115,19 @@ async function collect(D: string) {
     rate_7d: p.win7.rate, rate_14d: p.win14.rate, rate_30d: p.win30.rate, delivered_14d: p.win14.delivered, reasons_top3: p.reasons_top3,
   }));
 
+  // Best 30 중 취소율 TOP5(cancelwatch: 결제일 14일 결제수량 상위 30) / 순반품률 TOP5(returnwatch 14일 창, 배송완료 MIN_QTY 이상) — 개요 칸용 (2026-10-26 사용자 요청)
+  const cwProducts = ((cw?.products ?? []) as Row[]);
+  const cancelTop5 = cwProducts.filter((p) => num(p.paid_qty) >= MIN_QTY && num(p.cancel_qty) > 0)
+    .sort((a, b) => num(b.cancel_rate) - num(a.cancel_rate)).slice(0, 5)
+    .map((p) => ({ product_no: Number(p.product_no), name: String(p.product_name ?? ""), rank: num(p.rank), paid_qty: num(p.paid_qty), cancel_qty: num(p.cancel_qty), cancel_rate: p.cancel_rate }));
+  const returnTop5 = ranked.filter((p) => p.win14.delivered >= MIN_QTY && p.win14.returned > 0)
+    .sort((a, b) => b.win14.rate - a.win14.rate).slice(0, 5)
+    .map((p) => ({ product_no: p.product_no, name: p.name, rank: p.rank14 || p.rank7, delivered_14d: p.win14.delivered, returned_14d: p.win14.returned, rate_14d: p.win14.rate, level: p.win14.level }));
+  const best30 = {
+    basis: `취소율 = 결제일 기준 최근 14일 결제수량 상위 30 상품의 취소완료 수량 ÷ 결제 수량 / 순반품률 = 배송완료일 기준 14일 창(E=${E}) 결제수량 상위 30 상품`,
+    cancel_total: cw ? { paid_qty: num((cw.total as Row)?.paid_qty), cancel_qty: num((cw.total as Row)?.cancel_qty), cancel_rate: (cw.total as Row)?.cancel_rate ?? null } : null,
+    cancel_top5: cancelTop5, return_top5: returnTop5,
+  };
   const totalDel14 = ranked.reduce((t, p) => t + p.win14.delivered, 0);
   const totalRet14 = ranked.reduce((t, p) => t + p.win14.returned, 0);
 
@@ -116,6 +139,7 @@ async function collect(D: string) {
       basis: "결제일(pay_date) 주차(월~일) 코호트. 그 주에 결제된 주문 중 지금까지 취소(C40)·반품(R00~R40)된 비율. 취소가 다음 주에 나도 결제 주에 귀속",
       maturity_rule: "경과 14일 이상 = 성숙(비교 가능). 미만 = 집계 중(취소·반품이 더 들어올 수 있어 낮게 보임). partial = 이번 주 진행 중",
       weeks: cohortWeeks,
+      mature_4w: mature4w,
       mature_weeks_summary: matureWeeks.length ? {
         latest_mature: matureWeeks[0],
         avg_cancel_rate: +(matureWeeks.reduce((t, w) => t + num(w.cancel_rate), 0) / matureWeeks.length).toFixed(2),
@@ -138,6 +162,7 @@ async function collect(D: string) {
     },
     watched_products: watchedStatus,
     watched_count: watch.length,
+    best30,
     errors,
   };
 }
@@ -147,7 +172,8 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 취소·�
 취소·반품률을 보는 원칙 (대표가 정한 기준 — 반드시 지킬 것):
 - 취소·반품률은 **결제 주차 코호트**로 봅니다: "그 주에 결제된 주문 중 몇 %가 취소·반품됐나". 취소가 다음 주에 일어나도 결제 주에 귀속됩니다. cohorts.weeks가 그 표입니다.
 - 최근 주는 취소·반품이 아직 다 들어오지 않아 낮게 보입니다(미성숙). **maturity가 '성숙'인 주끼리만 추세를 비교**하고, '집계 중'·'진행 중' 주는 "아직 늘어날 수 있음"이라고 반드시 밝힙니다. 미성숙 주를 근거로 "취소·반품이 줄었다"고 쓰면 안 됩니다.
-- 성숙 주 평균(mature_weeks_summary)과 가장 최근 성숙 주를 비교해 좋아지는지 나빠지는지 말합니다. 집계 중인 주가 같은 경과일의 과거 주보다 이미 높으면 경고할 수 있습니다(days_last14의 age_days 참고).
+- 성숙 주 평균(mature_weeks_summary)·성숙 4주 총합(mature_4w)과 가장 최근 성숙 주를 비교해 좋아지는지 나빠지는지 말합니다.
+- best30(결제수량 상위 30 상품 중 취소율 TOP5·순반품률 TOP5 — 코드가 집계, 화면 맨 위에 그대로 표시됨)은 headline·summary에서 눈에 띄는 상품만 짚습니다. 취소율은 결제일 기준 14일(최근 주문은 취소가 더 들어올 수 있음), 순반품률은 배송완료 기준 14일 창입니다. 집계 중인 주가 같은 경과일의 과거 주보다 이미 높으면 경고할 수 있습니다(days_last14의 age_days 참고).
 - claim_reasons_last7은 사유 분포만 보는 용도입니다(어떤 사유가 많은가). 건수 증감 판단에 쓰지 않습니다.
 
 할 일:
