@@ -454,3 +454,38 @@ table.risk .r { white-space: normal; }
 .cc-legend { margin-left: auto; font-size: .74rem; color: var(--ink-2); display: inline-flex; gap: 10px; align-items: center; }
 .cc-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .cohort-chart svg { width: 100%; height: auto; display: block; }
+
+/* ── 전략 담당 상단 개편 (2026-10-27): 결론 칩 · 급증 TOP10 표 · 타일 5칸 ── */
+.headline .h-sub { margin-top: 6px; font-size: .86rem; color: var(--ink-2); }
+.verdicts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-top: 12px; }
+.vd { display: flex; gap: 10px; align-items: flex-start; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.vd-k { flex: 0 0 auto; font-size: .72rem; font-weight: 900; border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
+.vd-body { min-width: 0; font-size: .84rem; line-height: 1.45; }
+.vd-body b { display: block; color: var(--ink); overflow-wrap: anywhere; }
+.vd-r { color: var(--ink-2); }
+.v-push .vd-k { background: var(--good-bg); color: var(--good); } .v-push { border-color: #bbf7d0; }
+.v-hold .vd-k { background: #fffbeb; color: #b45309; } .v-hold { border-color: #fde68a; }
+.v-check .vd-k { background: var(--bad-bg); color: var(--bad); } .v-check { border-color: #fecaca; }
+.v-season .vd-k { background: #eff6ff; color: #1d4ed8; } .v-season { border-color: #bfdbfe; }
+.v-source .vd-k { background: #f5f3ff; color: #6d28d9; } .v-source { border-color: #ddd6fe; }
+.box.surge { margin-bottom: 14px; }
+.box.surge h3 .muted { font-weight: 500; }
+table.t-surge .sg-rank { color: var(--muted); width: 28px; }
+table.t-surge td .up { color: var(--good); font-weight: 800; }
+@container rv (min-width: 760px) { .tiles.five { grid-template-columns: repeat(5, 1fr); } }
+@container rv (min-width: 620px) and (max-width: 759px) { .tiles.five { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 800px) {
+  .verdicts { grid-template-columns: 1fr; gap: 6px; }
+  table.risk.stack.t-surge tbody tr { grid-template-columns: 1fr 1fr 1fr; }
+  table.risk.stack.t-surge td:nth-child(1) { display: none; }
+  table.risk.stack.t-surge td:nth-child(2) { grid-column: 1 / -1; }
+}
+table.t-surge { table-layout: fixed; }
+table.t-surge th:nth-child(1) { width: 30px; }
+table.t-surge th:nth-child(3) { width: 150px; }
+table.t-surge th:nth-child(4) { width: 76px; }
+table.t-surge th:nth-child(5) { width: 56px; }
+table.t-surge th:nth-child(6) { width: 82px; }
+table.t-surge th:nth-child(7) { width: 70px; }
+table.t-surge td:nth-child(2) .icon-btn { vertical-align: middle; }
+@media (max-width: 800px) { table.risk.stack.t-surge td:last-child { grid-column: auto; } }

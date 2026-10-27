@@ -218,10 +218,12 @@ async function collect(D: string) {
 
   // ── 판매 TOP10(14일 결제수량) · 급상승(7일 vs 직전 7일, 매출 담당과 같은 규칙) ──
   const top10 = [...rows14].sort((a, b) => num(b.order_qty) - num(a.order_qty)).slice(0, 10).map((r, i) => ({ no: Number(r.product_no), rank: i + 1 }));
-  const trending = rows7.filter((r) => num(r.order_qty) >= 10).map((r) => {
+  // 급증 TOP10 = 워크스페이스 홈 '판매량 급증 TOP 10'과 같은 규칙(이번 주 10개↑, (이번주+5)/(지난주+5) 순, 지난주 0 = NEW). 2026-10-27 화면 상단 표.
+  const surge10 = rows7.filter((r) => num(r.order_qty) >= 10).map((r) => {
     const p = mPrev.get(Number(r.product_no)); const prevQty = p ? num(p.order_qty) : 0;
-    return { no: Number(r.product_no), qty7: num(r.order_qty), prevQty, score: (num(r.order_qty) + 5) / (prevQty + 5) };
-  }).filter((r) => r.qty7 > r.prevQty).sort((a, b) => b.score - a.score).slice(0, 6);
+    return { no: Number(r.product_no), qty7: num(r.order_qty), prevQty, views7: num(r.views), rate7: num(r.rate), score: (num(r.order_qty) + 5) / (prevQty + 5) };
+  }).filter((r) => r.qty7 > r.prevQty).sort((a, b) => b.score - a.score).slice(0, 10);
+  const trending = surge10.slice(0, 6);
   const focusSet = new Map<number, { rank10: number; trending: boolean; qty7?: number; prevQty?: number }>();
   for (const t of top10) focusSet.set(t.no, { rank10: t.rank, trending: false });
   for (const t of trending) { const e = focusSet.get(t.no); if (e) { e.trending = true; e.qty7 = t.qty7; e.prevQty = t.prevQty; } else focusSet.set(t.no, { rank10: 0, trending: true, qty7: t.qty7, prevQty: t.prevQty }); }
@@ -238,7 +240,9 @@ async function collect(D: string) {
   const focusNos = [...trendPick, ...topPick];
 
   // ── 상품 정보: 신상품 전체(할인 없이 1회) + 후보(신상품 중 조회 상위 24 + 집중 상품)는 할인가 포함 ──
-  const info = await safe("신상품 상품정보", () => callFn("cafe24-analytics", { action: "productinfo", product_nos: newNos.join(",") }));
+  const sold7Nos = rows7.filter((r) => num(r.order_qty) > 0).map((r) => Number(r.product_no));
+  const infoNos = [...new Set([...newNos, ...sold7Nos])];
+  const info = await safe("상품정보(신상품+최근 7일 판매 상품)", () => callFn("cafe24-analytics", { action: "productinfo", product_nos: infoNos.join(",") }));
   const infoMap = new Map(((info?.products ?? []) as Row[]).map((p) => [Number(p.product_no), p]));
   const newTopNos = [...newNos].sort((a, b) => num(m14.get(b)?.views) - num(m14.get(a)?.views)).slice(0, 24);
   const discNos = [...new Set([...newTopNos, ...focusNos])];
@@ -320,10 +324,50 @@ async function collect(D: string) {
   const prevDay = tr.prevDay;
   const rankPairs = tr.pairs;
   // 광고 카드 + 날씨는 병렬
-  const [cards, weather] = await Promise.all([
+  // 급증 TOP10에 붙은 광고 **전부**의 최근 7일 성과(지출·구매·구매액 → ROAS). adcards는 한 번에 60개라 60개씩 나눠 병렬.
+  //   7일 인사이트 행이 없는 광고 = 그 기간 지출 0(테스트 단계 등) — '모름'이 아니라 0원으로 센다(2026-10-27 실측: 클린 소프트 니트 광고 8개 지출 0).
+  const surgeAdIds: string[] = [];
+  for (const t of surge10) for (const a of (suspectNos.has(t.no) ? [] : (adsByProduct.get(t.no) ?? []))) surgeAdIds.push(String(a.ad_id));
+  const surgeChunks: string[][] = []; for (let i = 0; i < surgeAdIds.length; i += 60) surgeChunks.push(surgeAdIds.slice(i, i + 60));
+  const [cards, weather, ...surgeCardsArr] = await Promise.all([
     adIds.size ? safe("광고 소재 카드", () => callFn("meta-ads", { action: "adcards", ad_ids: [...adIds].slice(0, 60).join(","), start_date: cur14[0], end_date: cur14[1] })) : Promise.resolve(null),
     safe("날씨(서울)", () => seoulWeather()),
+    ...surgeChunks.map((ids, i) => safe(`급증 상품 광고 7일 성과(${i + 1})`, () => callFn("meta-ads", { action: "adcards", ad_ids: ids.join(","), start_date: cur7[0], end_date: cur7[1] }))),
   ]);
+  const surgePerf = new Map<string, Row | null>();
+  for (const sc of surgeCardsArr) for (const a of (((sc as Row | null)?.ads ?? []) as Row[])) surgePerf.set(String(a.ad_id), (a.period ?? null) as Row | null);
+  const surgeKnown = adsKnown && surgeCardsArr.every((x) => !!x);
+  const surge_top10 = surge10.map((t, i) => {
+    const ads = suspectNos.has(t.no) ? [] : (adsByProduct.get(t.no) ?? []);
+    let spend = 0, value = 0, purchases = 0;
+    for (const a of ads) { const p = surgePerf.get(String(a.ad_id)); if (!p) continue; spend += num(p.spend); value += num(p.purchase_value); purchases += num(p.purchases); }
+    const perfOk = surgeKnown && adCountOf(t.no) != null;
+    return {
+      rank: i + 1, product_no: t.no, name: nameOf(t.no), category: leafCat(t.no),
+      qty_7d: t.qty7, qty_prev7d: t.prevQty, change_pct: t.prevQty > 0 ? Math.round((t.qty7 - t.prevQty) / t.prevQty * 100) : null,
+      views_7d: t.views7, rate_7d: t.rate7, is_new: newNos.includes(t.no),
+      active_ads: adCountOf(t.no),
+      ad_spend_7d: perfOk ? Math.round(spend) : null, ad_purchases_7d: perfOk ? purchases : null,
+      ad_roas_7d: perfOk ? (spend > 0 ? +(value / spend).toFixed(2) : null) : null,
+    };
+  });
+  // 최근 7일 판매된 상품 전체: 평균 마진율(판매수량 가중, 워크스페이스 홈 타일과 같은 식) · 구매 전환율(주문 ÷ 조회)
+  let mW = 0, mQ = 0, mN = 0, sViews = 0, sOrders = 0, sQty = 0;
+  for (const r of rows7) {
+    if (num(r.order_qty) <= 0) continue;
+    const no = Number(r.product_no), p = infoMap.get(no) ?? {};
+    sViews += num(r.views); sOrders += num(r.order_count); sQty += num(r.order_qty);
+    const mr = marginRate(num(p.price), num(p.supply_price), p.cost_vat != null ? num(p.cost_vat) : null);
+    if (mr != null) { mW += mr * num(r.order_qty); mQ += num(r.order_qty); mN++; }
+  }
+  const t7 = (s7?.totals ?? {}) as Row;
+  const sold_7d = {
+    period: cur7, products: sold7Nos.length, qty: sQty, orders: sOrders,
+    margin_avg: mQ > 0 ? +(mW / mQ).toFixed(1) : null, margin_products: mN,
+    conversion: sViews > 0 ? +(sOrders / sViews * 100).toFixed(2) : null, views: sViews,
+    conversion_all: num(t7.views) > 0 ? +(num(t7.order_count) / num(t7.views) * 100).toFixed(2) : (t7.rate != null ? num(t7.rate) : null),
+    note: "margin_avg = 판매수량 가중 평균 마진율(마진 원가 = 공급가×1.1, 중국 사입은 실질 단가+부가세). conversion = 판매된 상품의 주문 ÷ 조회, conversion_all = 조회된 상품 전체 기준",
+  };
   const matchPool = [...new Map([...rows14, ...rows7].map((r) => [Number(r.product_no), { no: Number(r.product_no), name: String(r.product_name ?? ""), category: leafCat(Number(r.product_no)) }])).values()];
   const qtyOf = (no: number) => num(m14.get(no)?.order_qty);
   const trendCats = rankPairs.filter((x): x is { cid: string; cur: Map<string, number>; prev: Map<string, number> } => !!x).map((x) => {
@@ -364,6 +408,7 @@ async function collect(D: string) {
     rules: {
       matrix: `신상품(NEW ARRIVALS ${newNos.length}개) 중 등록 ${MIN_AGE_DAYS}일↑·14일 조회 ${MIN_VIEWS}↑인 ${eligible.length}개의 중앙값(조회 ${Math.round(medViews)}, 주문율 ${medRate}%) 기준 4분면`,
       margin: "마진율 = (판매가 − 공급가×1.1) ÷ 판매가. 낮으면 밀어도 남는 게 적음",
+      surge: "surge_top10 = 판매량 급증 TOP10(최근 7일 vs 직전 7일, 이번 주 10개↑). ad_spend_7d·ad_roas_7d = 그 상품에 붙은 광고의 최근 7일 Meta 지출·ROAS(null = 광고 정보 없음/모름). sold_7d = 최근 7일 판매 상품 전체의 평균 마진율·구매 전환율",
       ads: "since_start = 광고 시작~어제 누적, last14 = 최근 14일. 빈도(frequency) 3 이상이면 같은 사람에게 반복 노출 = 소재 피로",
       ads_status: adsKnown && matchAudit.status === "suspect" ? `⚠ 광고↔상품 매칭이 체계적으로 깨진 것으로 의심(매칭 ${matchAudit.matched_share}%, 의심 상품 ${matchAudit.suspects.length}개). 광고 개수·광고 착수 여부를 판단하지 말고 '광고 정보 확인 필요'로만 쓸 것`
         : adsKnown && matchAudit.suspects.length ? `정상. 단 active_ads가 null인 상품(${matchAudit.suspects.map((s) => s.name).join(", ")})은 광고명이 줄임말 등으로 달라 자동 연결이 안 된 것 — '광고 0개'가 아니라 '광고 연결 확인 필요'로 쓸 것`
@@ -373,6 +418,7 @@ async function collect(D: string) {
     match_audit: matchAudit,
     new_arrivals: { count: newNos.length, eligible: eligible.length, median_views_14d: Math.round(medViews), median_rate_14d: medRate, matrix },
     focus,
+    surge_top10, sold_7d,
     top10: top10.map((t) => ({ rank: t.rank, product_no: t.no, name: nameOf(t.no), qty_14d: num(m14.get(t.no)?.order_qty), rate_14d: num(m14.get(t.no)?.rate), active_ads: adCountOf(t.no) })),
     trending: trending.map((t) => ({ product_no: t.no, name: nameOf(t.no), qty_7d: t.qty7, qty_prev7d: t.prevQty })),
     benefits_active: num(ben?.active_count),
@@ -403,7 +449,8 @@ function forLLM(data: Row) {
   const tr = (data.trends ?? {}) as Row;
   const w = (tr.weather ?? null) as Row | null;
   const trends = { ...tr, weather: w ? { summary: w.summary, next_7d: w.next_7d } : null };
-  return { ...data, new_arrivals: { ...na, matrix }, focus, trends };
+  const surge = ((data.surge_top10 ?? []) as Row[]).map(({ product_no: _n, ...x }) => x);
+  return { ...data, new_arrivals: { ...na, matrix }, focus, trends, surge_top10: surge };
 }
 
 // Claude가 봐야 할 이미지: 집중 상품별 자기 최상위 소재 1장 + 참고 소재 (총 12장 이내)
@@ -443,8 +490,16 @@ function postProcess(report: Row, data: Row): Row {
     const hooks = Array.isArray(x.reels_hooks) ? (x.reels_hooks as unknown[]).map(String) : String(x.reels_hooks ?? "").split(/\s*[|｜\n]\s*/);
     return { ...x, reels_hooks: hooks.map((h) => h.trim()).filter(Boolean).slice(0, 5), name: f.name, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
   }).filter((x): x is NonNullable<typeof x> => !!x);
-  return { ...report, matrix: mt, focus: fc };
+  // 오늘의 결론 칩(2026-10-27): 종류는 정해진 5가지만, 상품명은 데이터의 정식 이름으로(못 찾으면 쓴 그대로), 최대 5개
+  const pool = [...matrix, ...focus, ...((data.surge_top10 ?? []) as Row[])] as Row[];
+  const vd = ((report.verdicts ?? []) as Row[]).map((v) => {
+    const kind = VERDICT_KINDS.find((k) => String(v.kind ?? "").includes(k)) ?? "점검";
+    const p = v.product ? findByName(pool, String(v.product)) : null;
+    return { kind, product: p ? String(p.name) : String(v.product ?? "").trim(), product_no: p?.product_no ?? null, reason: String(v.reason ?? "").trim() };
+  }).filter((v) => v.reason).slice(0, 5);
+  return { ...report, matrix: mt, focus: fc, verdicts: vd };
 }
+const VERDICT_KINDS = ["밀기", "보류", "점검", "시즌", "소싱"];
 
 const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전략 담당자입니다. 매일 아침 대표에게 "어떤 상품에 힘을 실을지, 광고 소재와 상세를 어떻게 바꿀지"를 보고합니다.
 
@@ -474,6 +529,12 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 - trend_actions에 키워드 기반 제안을 최대 6개, weather_plan에 날씨 기반 한 줄.
 
 4) actions는 오늘 실행할 구체적인 것 3개(광고팀·상품팀 위주). 트렌드·날씨에서 나온 것도 포함될 수 있습니다.
+
+5) 맨 위 요약은 글이 아니라 **결론 칩**입니다 (2026-10-27 대표 요청 "줄글 말고 직관적으로"):
+- verdicts: 오늘의 결론 3~5개. 각각 kind(밀기 = 힘을 실을 상품 / 보류 = 확대를 멈추거나 미룰 상품 / 점검 = 상세·가격·소재를 손볼 상품 / 시즌 = 날씨·시즌에 따른 카테고리 배치 / 소싱 = 없는 상품의 소싱 검토) + product(상품명은 데이터 그대로, 카테고리면 '니트·가디건'처럼 짧게) + reason(근거 숫자 하나를 넣어 25자 이내. 예: "마진 67.6% · 광고 8개 test 중", "반품 15.4% · 차콜 28%").
+- summary는 **딱 1줄**(45자 이내) — 오늘 전체 흐름 한 문장. 상품 나열 금지.
+- 급증 상품을 나열하는 문장은 쓰지 않습니다 — 화면 맨 위에 surge_top10 표(판매량 변화·광고 수·7일 광고비·ROAS·주문율)가 그대로 보입니다. 대신 surge_top10의 광고비·ROAS·주문율을 근거로 '밀기/보류/점검' 결론을 냅니다(예: 급증인데 광고 0개 → 밀기·광고 착수, 급증인데 ROAS 1 미만 → 점검).
+- sold_7d(최근 7일 판매 상품 전체의 평균 마진율·구매 전환율)는 화면 타일에 보입니다. 결론에서 "평균 마진(n%)보다 높은/낮은 상품"처럼 비교 기준으로 씁니다.
 ${COMMON_RULES}`;
 
 // lean: 담당자 전용 표(matrix·focus·trend_actions)가 많아 협업 칸이 더해진 뒤 '문법이 너무 크다'(400)에 걸림(2026-10-18) — 공통 칸의 enum·중첩 배열을 줄인 모양
@@ -520,6 +581,19 @@ const SCHEMA = reportSchema({
       description: "급상승 키워드 기반 제안. 품목·소재·스타일 키워드만(브랜드 제외), 최대 5개",
     },
     weather_plan: { type: "string", description: "날씨 기반 카테고리 타이밍 한 줄, 80자 이내" },
+    verdicts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          kind: { type: "string", description: "다음 중 하나 그대로: 밀기, 보류, 점검, 시즌, 소싱" },
+          product: { type: "string", description: "상품명(데이터 그대로) 또는 카테고리 짧게. 전체 흐름이면 빈 문자열" },
+          reason: { type: "string", description: "근거 숫자 하나 포함 25자 이내" },
+        },
+        required: ["kind", "product", "reason"], additionalProperties: false,
+      },
+      description: "오늘의 결론 칩 3~5개 (맨 위 요약 자리에 글 대신 표시됨). 중요한 순",
+    },
   },
 });
 

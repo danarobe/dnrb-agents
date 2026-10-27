@@ -118,7 +118,7 @@ function reportHtml(r) {
   const rp = r.report, d = r.data || {}, rev = d.revenue || {}, ch = rev.change_pct || {}, ads = d.ads;
   const md = d => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
   const tile = (label, value, sub) => `<div class="tile"><div class="t-label">${label}</div><div class="t-value">${value}</div><div class="t-sub">${sub}</div></div>`;
-  let tiles = '', extraBoxes = '', headExtra = '';
+  let tiles = '', extraBoxes = '', headExtra = '', headBody = '', tilesCls = '';
   if (r.agent === 'returns') {
     const ts = d.top_sellers_return || {}, co = d.cohorts || {};
     const weeks = co.weeks || [], ms = co.mature_weeks_summary, lm = ms?.latest_mature, cur = weeks.find(w => w.partial) || weeks[0];
@@ -339,12 +339,43 @@ function reportHtml(r) {
   } else if (r.agent === 'strategy') {
     const na = d.new_arrivals || {}, mx = rp.matrix || [];
     const cnt = q => (na.matrix || []).filter(p => String(p.quadrant).startsWith(q)).length;
+    const s7 = d.sold_7d || null;
+    // 2026-10-27 대표 요청: 신상품 타일 대신 최근 7일 판매 상품 전체의 평균 마진율·구매 전환율
     tiles = [
-      tile('신상품', `${fmt(na.count)}개`, `판정 가능 ${fmt(na.eligible)}개 · 기준 조회 ${fmt(na.median_views_14d)} / 주문율 ${na.median_rate_14d ?? '—'}%`),
-      tile('판매 확대 · 노출 부족', `${cnt('판매 확대')} · ${cnt('노출 부족')}`, '힘을 실을 상품'),
-      tile('상세·가격 점검 · 집중도 낮춤', `${cnt('상세·가격')} · ${cnt('집중도')}`, '손보거나 뒤로 보낼 상품'),
+      s7 ? tile('최근 7일 평균 마진율', s7.margin_avg != null ? `${s7.margin_avg}%` : '—', `판매된 ${fmt(s7.products)}개 상품 · 수량 가중${s7.margin_products < s7.products ? ` · 원가 있는 ${fmt(s7.margin_products)}개 기준` : ''}`) : tile('최근 7일 평균 마진율', '—', '이 보고서에는 아직 없음'),
+      s7 ? tile('최근 7일 구매 전환율', s7.conversion != null ? `${s7.conversion}%` : '—', `판매된 상품의 주문 ÷ 조회${s7.conversion_all != null ? ` · 전체 상품 ${s7.conversion_all}%` : ''}`) : tile('최근 7일 구매 전환율', '—', '이 보고서에는 아직 없음'),
+      tile('판매 확대 · 노출 부족', `${cnt('판매 확대')} · ${cnt('노출 부족')}`, '힘을 실을 신상품'),
+      tile('상세·가격 점검 · 집중도 낮춤', `${cnt('상세·가격')} · ${cnt('집중도')}`, '손보거나 뒤로 보낼 신상품'),
       tile('집중 상품', `${(rp.focus || []).length}개`, `급상승 ${(d.trending || []).length} · TOP10 순환 · 행사 ${fmt(d.benefits_active || 0)}건 적용 중`),
     ].join('');
+    tilesCls = 'five';
+    // 맨 위 결론 칩 (verdicts) — 글 대신 종류 칩 + 상품 + 근거 한 줄. 옛 보고서(verdicts 없음)는 summary 그대로
+    const pn = n => String(n || '').replace(/\s*[-–—|]\s*(danarobe|dana|다나로브|다나)\s*$/i, '');   // 카페24 통계 상품명의 ' - Danarobe' 접미사는 화면에서 뗀다
+    const vds = rp.verdicts || [];
+    if (vds.length) {
+      const VK = { '밀기': 'v-push', '보류': 'v-hold', '점검': 'v-check', '시즌': 'v-season', '소싱': 'v-source' };
+      const VI = { '밀기': 'fa-arrow-up', '보류': 'fa-pause', '점검': 'fa-magnifying-glass', '시즌': 'fa-cloud-sun', '소싱': 'fa-cart-plus' };
+      headBody = `${(rp.summary || []).length ? `<div class="h-sub">${escHtml(rp.summary[0])}</div>` : ''}
+        <div class="verdicts">${vds.map(v => `<div class="vd ${VK[v.kind] || 'v-check'}"><span class="vd-k"><i class="fa-solid ${VI[v.kind] || 'fa-circle'}"></i> ${escHtml(v.kind)}</span><div class="vd-body">${v.product ? `<b>${escHtml(pn(v.product))}</b>` : ''}<span class="vd-r">${escHtml(v.reason)}</span></div></div>`).join('')}</div>`;
+    }
+    // 판매량 급증 TOP10 (워크스페이스 홈과 같은 규칙) + 광고 수·7일 광고비·ROAS·주문율
+    const sg = d.surge_top10 || [];
+    if (sg.length) {
+      const won = v => v == null ? '—' : v >= 10000 ? (v / 10000).toFixed(v >= 100000 ? 0 : 1).replace(/\.0$/, '') + '만' : Math.round(v).toLocaleString('ko-KR') + '원';
+      const sgRows = sg.map(x => `<tr>
+          <td class="r sg-rank">${x.rank}</td>
+          <td><b>${escHtml(pn(x.name))}</b>${x.is_new ? ' <span class="chip new">신상</span>' : ''}${x.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(x.product_no)}, this.dataset.n)" data-n="${escHtml(x.name)}" title="상세페이지 점검"><i class="fa-solid fa-file-image"></i></button>` : ''}</td>
+          <td class="r"><b>${fmt(x.qty_prev7d)} → ${fmt(x.qty_7d)}개</b> ${x.change_pct == null ? '<span class="chip new">NEW</span>' : `<span class="up">+${fmt(x.change_pct)}%</span>`}</td>
+          <td class="r">${x.rate_7d != null ? x.rate_7d + '%' : '—'}</td>
+          <td class="r">${x.active_ads == null ? '<span class="muted" title="광고 연결 확인 필요">모름</span>' : x.active_ads ? `${x.active_ads}개` : '<span class="chip bad">없음</span>'}</td>
+          <td class="r">${x.active_ads === 0 ? '—' : won(x.ad_spend_7d)}</td>
+          <td class="r">${x.active_ads === 0 ? '—' : x.ad_roas_7d == null ? '—' : `<b class="${x.ad_roas_7d >= 2 ? 'up' : x.ad_roas_7d < 1 ? 'down' : ''}">${x.ad_roas_7d}</b>`}</td>
+        </tr>`).join('');
+      const pr7 = d.periods?.last7, md2 = v => v ? `${Number(v.slice(5, 7))}/${Number(v.slice(8, 10))}` : '';
+      headExtra += `<div class="box surge"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 판매량 급증 TOP ${sg.length} <span class="muted small">${pr7 ? `${md2(pr7[0])}~${md2(pr7[1])} vs 직전 7일 · ` : ''}이번 주 10개 이상 판매 · 광고비·ROAS는 Meta 최근 7일</span></h3>
+        <div class="tbl-wrap"><table class="risk stack t-surge"><thead><tr><th class="r">#</th><th>상품</th><th class="r">판매량 변화</th><th class="r">주문율 7일</th><th class="r">광고</th><th class="r">광고비 7일</th><th class="r">ROAS 7일</th></tr></thead><tbody>${sgRows}</tbody></table></div>
+        ${d.ads_known === false ? '<div class="muted small warn-text">Meta 광고 정보를 받지 못해 광고 칸은 비어 있어요 (광고가 없다는 뜻이 아님)</div>' : ''}</div>`;
+    }
     const qColor = { '판매 확대': 'q-grow', '노출 부족': 'q-expose', '상세·가격 점검': 'q-fix', '집중도 낮춤': 'q-low' };
     const qc = q => { const k = Object.keys(qColor).find(k => String(q).startsWith(k)); return k ? qColor[k] : 'q-na'; };
     const won = v => v == null ? '' : Math.round(v).toLocaleString('ko-KR') + '원';
@@ -433,10 +464,10 @@ function reportHtml(r) {
   return head + `
     <div class="headline mood-${rp.mood || 'neutral'}">
       <div class="h-text">${escHtml(rp.headline)}</div>
-      <ul>${(rp.summary || []).map(s => `<li>${escHtml(s)}</li>`).join('')}</ul>
+      ${headBody || `<ul>${(rp.summary || []).map(s => `<li>${escHtml(s)}</li>`).join('')}</ul>`}
     </div>
     ${headExtra}
-    <div class="tiles">${tiles}</div>
+    <div class="tiles ${tilesCls}">${tiles}</div>
     ${(['detail', 'creative'].includes(r.agent) && !(rp.highlights || []).length && !(rp.warnings || []).length) ? '' : `<div class="two">
       <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 오늘의 주목</h3>${list(rp.highlights, 'up')}</div>
       <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 오늘의 주의</h3>${list(rp.warnings, 'down')}</div>
@@ -515,7 +546,11 @@ function rawTableStrategy(d) {
   const na = d.new_arrivals || {};
   const rows = (na.matrix || []).map(p => `<tr><td>${escHtml(p.name)}</td><td>${escHtml(p.category || '')}</td><td>${escHtml(p.quadrant)}</td><td class="r">${p.age_days ?? '—'}</td><td class="r">${fmt(p.views_14d)}</td><td class="r">${p.rate_14d}%</td><td class="r">${fmt(p.qty_14d)}</td><td class="r">${p.margin_rate ?? '—'}</td><td class="r">${p.active_ads ?? '—'}</td><td>${(p.promos || []).map(escHtml).join(', ')}</td></tr>`).join('');
   const top = (d.top10 || []).map(t => `<tr><td>${t.rank}</td><td>${escHtml(t.name)}</td><td class="r">${fmt(t.qty_14d)}</td><td class="r">${t.rate_14d}%</td><td class="r">${t.active_ads ?? '—'}</td></tr>`).join('');
-  return `<h4>신상품 전체 (${fmt(na.count)}개)</h4>
+  const sg = (d.surge_top10 || []).map(t => `<tr><td>${t.rank}</td><td>${escHtml(t.name)}</td><td class="r">${fmt(t.qty_prev7d)} → ${fmt(t.qty_7d)}</td><td class="r">${fmt(t.views_7d)}</td><td class="r">${t.rate_7d}%</td><td class="r">${t.active_ads ?? '—'}</td><td class="r">${t.ad_spend_7d != null ? fmt(t.ad_spend_7d) + '원' : '—'}</td><td class="r">${t.ad_roas_7d ?? '—'}</td></tr>`).join('');
+  const s7 = d.sold_7d;
+  return `${s7 ? `<h4>최근 7일 판매 상품 전체</h4><div class="muted">${fmt(s7.products)}개 상품 · ${fmt(s7.qty)}개 판매 · 주문 ${fmt(s7.orders)}건 / 조회 ${fmt(s7.views)} → 전환율 ${s7.conversion ?? '—'}% (전체 상품 ${s7.conversion_all ?? '—'}%) · 평균 마진율 ${s7.margin_avg ?? '—'}% (원가 있는 ${fmt(s7.margin_products)}개, 수량 가중)</div>` : ''}
+    ${sg ? `<h4>판매량 급증 TOP10 (7일 vs 직전 7일)</h4><table><thead><tr><th>#</th><th>상품</th><th class="r">판매</th><th class="r">조회</th><th class="r">주문율</th><th class="r">광고</th><th class="r">광고비 7일</th><th class="r">ROAS 7일</th></tr></thead><tbody>${sg}</tbody></table>` : ''}
+    <h4>신상품 전체 (${fmt(na.count)}개)</h4>
     <table><thead><tr><th>상품</th><th>카테고리</th><th>판정</th><th class="r">등록일수</th><th class="r">조회 14일</th><th class="r">주문율</th><th class="r">판매</th><th class="r">마진%</th><th class="r">광고</th><th>행사</th></tr></thead><tbody>${rows}</tbody></table>
     <h4>판매 TOP10 (14일 결제수량)</h4>
     <table><thead><tr><th>#</th><th>상품</th><th class="r">판매</th><th class="r">주문율</th><th class="r">활성 광고</th></tr></thead><tbody>${top}</tbody></table>`;
