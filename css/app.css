@@ -447,3 +447,10 @@ table.risk .r { white-space: normal; }
 .b30-row .num { width: 20px; height: 20px; border-radius: 50%; background: #fee2e2; color: #991b1b; font-weight: 800; font-size: .7rem; display: inline-flex; align-items: center; justify-content: center; }
 .b30-val { font-size: .95rem; white-space: nowrap; }
 .t-sub-inline { font-size: .72rem; font-weight: 700; color: var(--muted); }
+
+/* ── 반품 담당: 최근 6주 취소율·반품률 그래프 (2026-10-27) ── */
+.cohort-chart { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px 4px; margin-bottom: 12px; background: #fff; }
+.cc-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 4px; font-size: .84rem; }
+.cc-legend { margin-left: auto; font-size: .74rem; color: var(--ink-2); display: inline-flex; gap: 10px; align-items: center; }
+.cc-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.cohort-chart svg { width: 100%; height: auto; display: block; }

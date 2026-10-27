@@ -138,12 +138,40 @@ function reportHtml(r) {
         tile('위험·주의 상품', (rp.risk_products || []).length + '개', `상위 상품 14일 순반품률 ${ts.rate_14d != null ? ts.rate_14d + '%' : '—'} · 관리 ${fmt(d.watched_count || 0)}개`),
         tile('성숙 4주 결제', m4 ? fmt(m4.paid) + '건' : '—', m4 ? `${m4Range} · 취소 ${fmt(m4.cancel)}건 · 반품 ${fmt(m4.ret)}건` : '성숙한 주가 아직 없음'),
       ].join('');
+      // 헤드라인 안: 최근 6주 취소율·반품률 그래프 (2026-10-27 사용자 요청 — 요약의 코호트 흐름 문장 대신). 진행 중인 주는 빼고 꽉 찬 주 6개, 집계 중은 연하게 + 빗금
+      const full = weeks.filter(w => !w.partial).slice(0, 6).reverse();
+      if (full.length >= 2) {
+        const W = 640, H = 210, padL = 36, padR = 12, padT = 26, padB = 44;
+        const maxV = Math.max(5, ...full.flatMap(w => [Number(w.cancel_rate) || 0, Number(w.return_rate) || 0])) * 1.18;
+        const gw = (W - padL - padR) / full.length, bw = Math.min(26, gw * 0.3);
+        const y = v => padT + (H - padT - padB) * (1 - (Number(v) || 0) / maxV);
+        const ticks = [0, Math.round(maxV / 3), Math.round(maxV * 2 / 3)].filter((v, i, a) => a.indexOf(v) === i);
+        const grid = ticks.map(t => `<line x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}" stroke="#e5e7eb" stroke-width="1"/><text x="${padL - 6}" y="${y(t) + 4}" text-anchor="end" font-size="10" fill="#6b7280">${t}%</text>`).join('');
+        const bar = (x, v, color, immature, label) => {
+          const top = y(v), h = Math.max(2, y(0) - top);
+          return `<g><rect x="${x}" y="${top}" width="${bw}" height="${h}" rx="3" fill="${immature ? 'url(#hatch-' + color.slice(1) + ')' : color}" ${immature ? `stroke="${color}" stroke-width="1"` : ''} opacity="${immature ? 0.75 : 1}"><title>${escHtml(label)}</title></rect><text x="${x + bw / 2}" y="${top - 4}" text-anchor="middle" font-size="10" font-weight="700" fill="#374151">${pr(v)}</text></g>`;
+        };
+        const groups = full.map((w, i) => {
+          const x0 = padL + gw * i + (gw - bw * 2 - 4) / 2, imm = w.maturity !== '성숙';
+          const lbl = `${md(w.start)}~${md(w.end)}`;
+          return bar(x0, w.cancel_rate, '#2563eb', imm, `${lbl} 취소율 ${pr(w.cancel_rate)} (${fmt(w.cancel)}/${fmt(w.paid)}건)`) + bar(x0 + bw + 4, w.return_rate, '#b91c1c', imm, `${lbl} 반품률 ${pr(w.return_rate)} (${fmt(w.ret)}/${fmt(w.paid)}건)`)
+            + `<text x="${padL + gw * i + gw / 2}" y="${H - padB + 16}" text-anchor="middle" font-size="10.5" fill="#374151">${lbl}</text>`
+            + (imm ? `<text x="${padL + gw * i + gw / 2}" y="${H - padB + 30}" text-anchor="middle" font-size="9.5" fill="#9ca3af">집계 중</text>` : '');
+        }).join('');
+        headExtra += `<div class="cohort-chart"><div class="cc-head"><b>최근 ${full.length}주 취소율 · 반품률</b><span class="muted small">결제 주차 기준 · 빗금 = 집계 중(아직 늘어날 수 있음)</span>
+          <span class="cc-legend"><i style="background:#2563eb"></i>취소율 <i style="background:#b91c1c"></i>반품률</span></div>
+          <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="최근 ${full.length}주 취소율과 반품률">
+            <defs><pattern id="hatch-2563eb" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#dbeafe"/><line x1="0" y1="0" x2="0" y2="6" stroke="#2563eb" stroke-width="2"/></pattern>
+            <pattern id="hatch-b91c1c" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#fee2e2"/><line x1="0" y1="0" x2="0" y2="6" stroke="#b91c1c" stroke-width="2"/></pattern></defs>
+            ${grid}<line x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" stroke="#9ca3af" stroke-width="1"/>${groups}
+          </svg></div>`;
+      }
       // 개요 바로 아래: Best 30 중 취소율 TOP5 / 순반품률 TOP5 (코드 집계, 2026-10-26 사용자 요청)
       const b30 = d.best30;
       if (b30 && ((b30.cancel_top5 || []).length || (b30.return_top5 || []).length)) {
         const lvl = l => l === '위험' ? 'bad' : l === '주의' ? 'warn' : 'good';
         const row = (i, name, main, sub, chip = '') => `<div class="b30-row"><span class="num">${i + 1}</span><div><b>${escHtml(name)}</b><div class="muted small">${sub}</div></div><div class="b30-val">${main}${chip}</div></div>`;
-        headExtra = `<div class="two b30">
+        headExtra += `<div class="two b30">
           <div class="box"><h3><i class="fa-solid fa-ban" style="color:#b91c1c;"></i> Best 30 중 취소율 TOP 5 <span class="muted small">결제일 기준 14일 · 취소완료</span></h3>
             ${(b30.cancel_top5 || []).map((x, i) => row(i, x.name, `<b>${pr(x.cancel_rate)}</b>`, `판매 ${x.rank}위 · 취소 ${fmt(x.cancel_qty)}개 / 결제 ${fmt(x.paid_qty)}개`)).join('') || '<div class="muted">취소가 있는 상품 없음</div>'}</div>
           <div class="box"><h3><i class="fa-solid fa-rotate-left" style="color:#b91c1c;"></i> Best 30 중 순반품률 TOP 5 <span class="muted small">배송완료 기준 14일 창</span></h3>
