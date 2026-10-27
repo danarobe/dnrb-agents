@@ -573,7 +573,7 @@ function rawTableReturns(d) {
 
 function rawTableStrategy(d) {
   const na = d.new_arrivals || {};
-  const rows = (na.matrix || []).map(p => `<tr><td>${escHtml(p.name)}</td><td>${escHtml(p.category || '')}</td><td>${escHtml(p.quadrant)}</td><td class="r">${p.age_days ?? '—'}</td><td class="r">${fmt(p.views_14d)}</td><td class="r">${p.rate_14d}%</td><td class="r">${fmt(p.qty_14d)}</td><td class="r">${p.margin_rate ?? '—'}</td><td class="r">${p.active_ads ?? '—'}</td><td>${p.codi ? `${p.codi.share ?? '—'}% (${(p.codi.parents || []).map(x => pn(x.name)).join(', ')})` : ''}</td><td>${(p.promos || []).map(escHtml).join(', ')}</td></tr>`).join('');
+  const rows = (na.matrix || []).map(p => `<tr><td>${escHtml(p.name)}</td><td>${escHtml(p.category || '')}</td><td>${escHtml(p.quadrant)}</td><td class="r">${p.age_days ?? '—'}</td><td class="r">${fmt(p.views_14d)}</td><td class="r">${p.rate_14d}%</td><td class="r">${fmt(p.qty_14d)}</td><td class="r">${p.margin_rate ?? '—'}</td><td class="r">${p.active_ads ?? '—'}</td><td>${p.codi ? `${escHtml(String(p.codi.share ?? '—'))}% (${(p.codi.parents || []).map(x => escHtml(pn(x.name))).join(', ')})` : ''}</td><td>${(p.promos || []).map(escHtml).join(', ')}</td></tr>`).join('');
   const top = (d.top10 || []).map(t => `<tr><td>${t.rank}</td><td>${escHtml(t.name)}</td><td class="r">${fmt(t.qty_14d)}</td><td class="r">${t.rate_14d}%</td><td class="r">${t.active_ads ?? '—'}</td></tr>`).join('');
   const sg = (d.surge_top10 || []).map(t => `<tr><td>${t.rank}</td><td>${escHtml(t.name)}</td><td class="r">${fmt(t.qty_prev7d)} → ${fmt(t.qty_7d)}</td><td class="r">${fmt(t.views_7d)}</td><td class="r">${t.rate_7d}%</td><td class="r">${t.active_ads ?? '—'}</td><td class="r">${t.ad_spend_7d != null ? fmt(t.ad_spend_7d) + '원' : '—'}</td><td class="r">${t.ad_roas_7d ?? '—'}</td></tr>`).join('');
   const s7 = d.sold_7d;
@@ -597,7 +597,7 @@ const codiChip = (c, long) => {
   const ps = c.parents || [], top = ps[0];
   const tip = `잘 팔리는 상품 페이지의 코디 상품 — 14일 주문 ${fmt(c.orders_14d)}건 중 ${fmt(c.with_parent)}건(${c.share ?? '—'}%)이 ${ps.map(x => pn(x.name)).join(', ')}와(과) 같은 주문`;
   const lvl = c.share == null ? '' : c.share >= 40 ? ' hi' : c.share >= 20 ? ' mid' : '';
-  return `<span class="chip codi${lvl}" title="${escHtml(tip)}"><i class="fa-solid fa-link"></i> 코디 ${c.share ?? '—'}%${long && top ? ` <em>↳ ${escHtml(pn(top.name)).slice(0, 14)}</em>` : ''}</span>`;
+  return `<span class="chip codi${lvl}" title="${escHtml(tip)}"><i class="fa-solid fa-link"></i> 코디 ${c.share ?? '—'}%${long && top ? ` <em>↳ ${escHtml(pn(top.name).slice(0, 14))}</em>` : ''}</span>`;
 };
 function teamBox(rp, compact) {
   const notes = rp.colleague_notes || [], got = rp.handoffs_received || [], give = rp.handoffs || [], seen = rp.colleagues_seen || [];
