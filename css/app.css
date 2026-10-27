@@ -550,3 +550,9 @@ table.t-trend th:nth-child(1) { width: 22%; } table.t-trend th:nth-child(2) { wi
   .quad-wrap { grid-template-columns: 1fr; }
   .quad-x { grid-column: 1; }
 }
+/* 코디 상품 칩 (2026-10-27) */
+.chip.codi { color: #0e7490; background: #ecfeff; border: 1px solid #a5f3fc; font-weight: 800; margin-left: 4px; }
+.chip.codi.mid { color: #b45309; background: #fef3c7; border-color: #fde68a; }
+.chip.codi.hi { color: #b91c1c; background: #fee2e2; border-color: #fecaca; }
+.chip.codi em { font-style: normal; font-weight: 600; opacity: .85; }
+.qchip .chip.codi { margin-left: 2px; }

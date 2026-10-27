@@ -363,7 +363,7 @@ function reportHtml(r) {
       const won = v => v == null ? '—' : v >= 10000 ? (v / 10000).toFixed(v >= 100000 ? 0 : 1).replace(/\.0$/, '') + '만' : Math.round(v).toLocaleString('ko-KR') + '원';
       const sgRows = sg.map(x => `<tr>
           <td class="r sg-rank">${x.rank}</td>
-          <td><b>${escHtml(pn(x.name))}</b>${x.is_new ? ' <span class="chip new">신상</span>' : ''}${x.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(x.product_no)}, this.dataset.n)" data-n="${escHtml(x.name)}" title="상세페이지 점검"><i class="fa-solid fa-file-image"></i></button>` : ''}</td>
+          <td><b>${escHtml(pn(x.name))}</b>${x.is_new ? ' <span class="chip new">신상</span>' : ''}${codiChip(x.codi, true)}${x.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(x.product_no)}, this.dataset.n)" data-n="${escHtml(x.name)}" title="상세페이지 점검"><i class="fa-solid fa-file-image"></i></button>` : ''}</td>
           <td class="r"><b>${fmt(x.qty_prev7d)} → ${fmt(x.qty_7d)}개</b> ${x.change_pct == null ? '<span class="chip new">NEW</span>' : `<span class="up">+${fmt(x.change_pct)}%</span>`}</td>
           <td class="r">${x.rate_7d != null ? x.rate_7d + '%' : '—'}</td>
           <td class="r">${x.active_ads == null ? '<span class="muted" title="광고 연결 확인 필요">모름</span>' : x.active_ads ? `${x.active_ads}개` : '<span class="chip bad">없음</span>'}</td>
@@ -379,7 +379,7 @@ function reportHtml(r) {
     const qc = q => { const k = Object.keys(qColor).find(k => String(q).startsWith(k)); return k ? qColor[k] : 'q-na'; };
     const won = v => v == null ? '' : Math.round(v).toLocaleString('ko-KR') + '원';
     const mxRows = mx.map(x => `<tr>
-        <td><b>${escHtml(x.name)}</b>${x.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(x.product_no)}, this.dataset.n)" data-n="${escHtml(x.name)}" title="상세페이지 점검"><i class="fa-solid fa-file-image"></i></button>` : ''}<div class="muted">${x.age_days != null ? `등록 ${x.age_days}일` : ''}${x.sold_out ? ' · <b class="down">품절</b>' : ''}${x.active_ads == null ? ' · <span class="warn">광고 정보 없음</span>' : x.active_ads ? ` · 광고 ${x.active_ads}개` : ' · 광고 없음'}</div></td>
+        <td><b>${escHtml(x.name)}</b>${x.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(x.product_no)}, this.dataset.n)" data-n="${escHtml(x.name)}" title="상세페이지 점검"><i class="fa-solid fa-file-image"></i></button>` : ''}<div class="muted">${x.age_days != null ? `등록 ${x.age_days}일` : ''}${x.sold_out ? ' · <b class="down">품절</b>' : ''}${x.active_ads == null ? ' · <span class="warn">광고 정보 없음</span>' : x.active_ads ? ` · 광고 ${x.active_ads}개` : ' · 광고 없음'}${x.codi ? ' · ' + codiChip(x.codi, true) : ''}</div></td>
         <td><span class="qbadge ${qc(x.quadrant)}">${escHtml(x.quadrant)}</span></td>
         <td class="r">${fmt(x.views_14d)}<div class="muted">${x.rate_14d != null ? x.rate_14d + '%' : '—'} · ${fmt(x.qty_14d)}개</div></td>
         <td class="r">${x.margin_rate != null ? x.margin_rate + '%' : '—'}<div class="muted">${x.discount_price ? `할인가 ${won(x.discount_price)}` : won(x.price)}</div></td>
@@ -399,7 +399,7 @@ function reportHtml(r) {
       const adTxt = d.ads_known === false ? '<span class="warn">광고 정보 없음</span>' : own.length ? `광고 ${own.length}개 · 14일 광고비 ${seen ? fmtMan(sp) : '0원'}${roas != null ? ` · ROAS <b class="${roas >= 2 ? 'up' : roas < 1 ? 'down' : ''}">${roas}</b>` : ''}` : '<b class="down">광고 없음</b>';
       const thumbs = own.length ? `<div class="fc-thumbs">${own.map(a => a.thumb ? `<img src="${escHtml(a.thumb)}" alt="" loading="lazy" title="${escHtml(a.name)}">` : '<span class="ad-noimg sm"></span>').join('')}<span class="muted small">${own.length}개 소재${d.ads_known === false ? '' : ''}</span></div>` : '';
       return `<div class="focus-card fc">
-        <div class="fc-head"><div class="fc-title"><b>${escHtml(pn(f.name))}</b> <span class="chip new">${escHtml(f.why)}</span>${f.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(f.product_no)}, this.dataset.n)" data-n="${escHtml(f.name)}" title="상세페이지 점검 담당에게 이 상품을 맡깁니다"><i class="fa-solid fa-file-image"></i></button>` : ''}</div>
+        <div class="fc-head"><div class="fc-title"><b>${escHtml(pn(f.name))}</b> <span class="chip new">${escHtml(f.why)}</span>${codiChip(f.codi, true)}${f.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(f.product_no)}, this.dataset.n)" data-n="${escHtml(f.name)}" title="상세페이지 점검 담당에게 이 상품을 맡깁니다"><i class="fa-solid fa-file-image"></i></button>` : ''}</div>
           <div class="fc-nums">14일 조회 <b>${fmt(f.views_14d)}</b> · 주문율 <b>${f.rate_14d ?? '—'}%</b> · 판매 <b>${fmt(f.qty_14d)}개</b> · 마진 <b>${f.margin_rate ?? '—'}%</b> · ${adTxt}${(f.promos || []).length ? ` · ${f.promos.map(escHtml).join(', ')}` : ''}</div></div>
         ${thumbs}
         <div class="fx"><b>판매 계획</b> ${escHtml(f.plan)}</div>
@@ -425,14 +425,14 @@ function reportHtml(r) {
       const withS = mx.filter(x => inQ(x.quadrant, q.k));
       const sNames = new Set(withS.map(x => x.name));
       const rest = all.filter(p => !sNames.has(p.name));
-      const sChip = x => `<button type="button" class="qchip ${q.cls}" onclick="this.classList.toggle('open')"><span>${escHtml(pn(x.name))}${x.active_ads ? ` <em class="ads">광고 ${x.active_ads}</em>` : ''}</span><small>${escHtml(x.strategy)}</small></button>`;
+      const sChip = x => `<button type="button" class="qchip ${q.cls}" onclick="this.classList.toggle('open')"><span>${escHtml(pn(x.name))}${x.active_ads ? ` <em class="ads">광고 ${x.active_ads}</em>` : ''}${codiChip(x.codi)}</span><small>${escHtml(x.strategy)}</small></button>`;
       return `<div class="qcell ${q.cls}"><div class="qhead"><span class="qbadge ${q.cls}">${q.k}</span><span class="muted small">${q.sub}</span><b>${all.length}개</b></div>
-        <div class="qchips">${withS.map(sChip).join('')}${rest.slice(0, 6).map(p => `<span class="qchip plain" title="${escHtml(pn(p.name))}">${escHtml(pn(p.name))}</span>`).join('')}${rest.length > 6 ? `<span class="qchip plain more">+${rest.length - 6}</span>` : ''}</div></div>`;
+        <div class="qchips">${withS.map(sChip).join('')}${rest.slice(0, 6).map(p => `<span class="qchip plain" title="${escHtml(pn(p.name))}">${escHtml(pn(p.name))}${codiChip(p.codi)}</span>`).join('')}${rest.length > 6 ? `<span class="qchip plain more">+${rest.length - 6}</span>` : ''}</div></div>`;
     }).join('');
     const otherQ = {};
     for (const p of naM) if (!QUAD.some(q => inQ(p.quadrant, q.k))) otherQ[p.quadrant] = (otherQ[p.quadrant] || 0) + 1;
     const otherLine = Object.keys(otherQ).length ? `<div class="muted small" style="margin-top:6px;">격자 밖: ${Object.entries(otherQ).map(([k, v]) => `${escHtml(k)} ${v}개`).join(' · ')}</div>` : '';
-    const quadBox = `<div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값(조회 ${fmt(na.median_views_14d)} · 주문율 ${na.median_rate_14d ?? '—'}%) 기준 · 색 칩은 누르면 전략이 열려요</span></h3>
+    const quadBox = `<div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값(조회 ${fmt(na.median_views_14d)} · 주문율 ${na.median_rate_14d ?? '—'}%) 기준 · 색 칩은 누르면 전략이 열려요 · <i class="fa-solid fa-link"></i> 코디 n% = 잘 팔리는 상품 페이지의 코디 상품이라 주문율이 부풀 수 있음(n = 부모와 같은 주문 비율)</span></h3>
       ${naM.length ? `<div class="quad-wrap"><div class="quad-y">주문율 ↑</div><div class="quad">${quadCells}</div><div class="quad-x">조회수 →</div></div>${otherLine}` : '<div class="muted">판정할 신상품이 없어요</div>'}
       ${mxRows ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 표로 보기 <span class="muted small">전략 있는 ${mx.length}개 · 마진율 = (판매가 − 공급가×1.1) ÷ 판매가</span></summary><div class="tbl-wrap"><table class="risk stack t-matrix"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div></details>` : ''}
     </div>`;
@@ -573,14 +573,14 @@ function rawTableReturns(d) {
 
 function rawTableStrategy(d) {
   const na = d.new_arrivals || {};
-  const rows = (na.matrix || []).map(p => `<tr><td>${escHtml(p.name)}</td><td>${escHtml(p.category || '')}</td><td>${escHtml(p.quadrant)}</td><td class="r">${p.age_days ?? '—'}</td><td class="r">${fmt(p.views_14d)}</td><td class="r">${p.rate_14d}%</td><td class="r">${fmt(p.qty_14d)}</td><td class="r">${p.margin_rate ?? '—'}</td><td class="r">${p.active_ads ?? '—'}</td><td>${(p.promos || []).map(escHtml).join(', ')}</td></tr>`).join('');
+  const rows = (na.matrix || []).map(p => `<tr><td>${escHtml(p.name)}</td><td>${escHtml(p.category || '')}</td><td>${escHtml(p.quadrant)}</td><td class="r">${p.age_days ?? '—'}</td><td class="r">${fmt(p.views_14d)}</td><td class="r">${p.rate_14d}%</td><td class="r">${fmt(p.qty_14d)}</td><td class="r">${p.margin_rate ?? '—'}</td><td class="r">${p.active_ads ?? '—'}</td><td>${p.codi ? `${p.codi.share ?? '—'}% (${(p.codi.parents || []).map(x => pn(x.name)).join(', ')})` : ''}</td><td>${(p.promos || []).map(escHtml).join(', ')}</td></tr>`).join('');
   const top = (d.top10 || []).map(t => `<tr><td>${t.rank}</td><td>${escHtml(t.name)}</td><td class="r">${fmt(t.qty_14d)}</td><td class="r">${t.rate_14d}%</td><td class="r">${t.active_ads ?? '—'}</td></tr>`).join('');
   const sg = (d.surge_top10 || []).map(t => `<tr><td>${t.rank}</td><td>${escHtml(t.name)}</td><td class="r">${fmt(t.qty_prev7d)} → ${fmt(t.qty_7d)}</td><td class="r">${fmt(t.views_7d)}</td><td class="r">${t.rate_7d}%</td><td class="r">${t.active_ads ?? '—'}</td><td class="r">${t.ad_spend_7d != null ? fmt(t.ad_spend_7d) + '원' : '—'}</td><td class="r">${t.ad_roas_7d ?? '—'}</td></tr>`).join('');
   const s7 = d.sold_7d;
   return `${s7 ? `<h4>최근 7일 판매 상품 전체</h4><div class="muted">${fmt(s7.products)}개 상품 · ${fmt(s7.qty)}개 판매 · 주문 ${fmt(s7.orders)}건 / 조회 ${fmt(s7.views)} → 전환율 ${s7.conversion ?? '—'}% (전체 상품 ${s7.conversion_all ?? '—'}%) · 평균 마진율 ${s7.margin_avg ?? '—'}% (원가 있는 ${fmt(s7.margin_products)}개, 수량 가중)</div>` : ''}
     ${sg ? `<h4>판매량 급증 TOP10 (7일 vs 직전 7일)</h4><table><thead><tr><th>#</th><th>상품</th><th class="r">판매</th><th class="r">조회</th><th class="r">주문율</th><th class="r">광고</th><th class="r">광고비 7일</th><th class="r">ROAS 7일</th></tr></thead><tbody>${sg}</tbody></table>` : ''}
     <h4>신상품 전체 (${fmt(na.count)}개)</h4>
-    <table><thead><tr><th>상품</th><th>카테고리</th><th>판정</th><th class="r">등록일수</th><th class="r">조회 14일</th><th class="r">주문율</th><th class="r">판매</th><th class="r">마진%</th><th class="r">광고</th><th>행사</th></tr></thead><tbody>${rows}</tbody></table>
+    <table><thead><tr><th>상품</th><th>카테고리</th><th>판정</th><th class="r">등록일수</th><th class="r">조회 14일</th><th class="r">주문율</th><th class="r">판매</th><th class="r">마진%</th><th class="r">광고</th><th>코디(부모)</th><th>행사</th></tr></thead><tbody>${rows}</tbody></table>
     <h4>판매 TOP10 (14일 결제수량)</h4>
     <table><thead><tr><th>#</th><th>상품</th><th class="r">판매</th><th class="r">주문율</th><th class="r">활성 광고</th></tr></thead><tbody>${top}</tbody></table>`;
 }
@@ -591,6 +591,14 @@ const TEAM_KEY = { '오늘의 요약': 'sales', '매출 분석 담당': 'sales',
 function teamChip(label) { const k = TEAM_KEY[label], a = k && agentOf(k); return a ? `<span class="chip team" style="color:${a.color};background:${a.color}1a;"><i class="fa-solid ${a.icon}"></i> ${escHtml(label)}</span>` : `<span class="chip">${escHtml(label || '')}</span>`; }
 /* 카페24 통계 상품명의 ' - Danarobe' 접미사는 화면에서 뗀다 */
 const pn = n => String(n || '').replace(/\s*[-–—|]\s*(danarobe|dana|다나로브|다나)\s*$/i, '');
+/* 코디 상품 칩(2026-10-27): 잘 팔리는 상품 페이지의 '코디 상품(추가구성)'이라 주문율이 부풀 수 있는 상품. share = 14일 주문 중 부모와 같은 주문 비율 */
+const codiChip = (c, long) => {
+  if (!c) return '';
+  const ps = c.parents || [], top = ps[0];
+  const tip = `잘 팔리는 상품 페이지의 코디 상품 — 14일 주문 ${fmt(c.orders_14d)}건 중 ${fmt(c.with_parent)}건(${c.share ?? '—'}%)이 ${ps.map(x => pn(x.name)).join(', ')}와(과) 같은 주문`;
+  const lvl = c.share == null ? '' : c.share >= 40 ? ' hi' : c.share >= 20 ? ' mid' : '';
+  return `<span class="chip codi${lvl}" title="${escHtml(tip)}"><i class="fa-solid fa-link"></i> 코디 ${c.share ?? '—'}%${long && top ? ` <em>↳ ${escHtml(pn(top.name)).slice(0, 14)}</em>` : ''}</span>`;
+};
 function teamBox(rp, compact) {
   const notes = rp.colleague_notes || [], got = rp.handoffs_received || [], give = rp.handoffs || [], seen = rp.colleagues_seen || [];
   if (!notes.length && !got.length && !give.length && !seen.length) return '';

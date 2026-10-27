@@ -329,11 +329,24 @@ async function collect(D: string) {
   const surgeAdIds: string[] = [];
   for (const t of surge10) for (const a of (suspectNos.has(t.no) ? [] : (adsByProduct.get(t.no) ?? []))) surgeAdIds.push(String(a.ad_id));
   const surgeChunks: string[][] = []; for (let i = 0; i < surgeAdIds.length; i += 60) surgeChunks.push(surgeAdIds.slice(i, i + 60));
-  const [cards, weather, ...surgeCardsArr] = await Promise.all([
+  // 코디 상품 점검(2026-10-27 대표: "잘 팔리는 상품의 코디 아이템이라 주문율이 높을 수 있다"): 부모 = 14일 판매 상위 40, 자식 = 4분면 판정 대상 중 주문율이 중앙값 이상 + 급증 + 집중 상품.
+  //   codi.share = 그 상품 14일 주문 중 부모(코디 상품으로 걸어 둔 잘 팔리는 상품)와 같은 주문에 담긴 비율. 높으면 주문율이 부모 덕.
+  const codiParents = [...rows14].sort((a, b) => num(b.order_qty) - num(a.order_qty)).slice(0, 40).map((r) => Number(r.product_no));
+  const codiChildren = [...new Set([...eligible.filter((p) => p.rate_14d >= medRate).map((p) => p.product_no), ...surge10.map((x) => x.no), ...focusNos])].slice(0, 60);
+  const [cards, weather, codiRes, ...surgeCardsArr] = await Promise.all([
     adIds.size ? safe("광고 소재 카드", () => callFn("meta-ads", { action: "adcards", ad_ids: [...adIds].slice(0, 60).join(","), start_date: cur14[0], end_date: cur14[1] })) : Promise.resolve(null),
     safe("날씨(서울)", () => seoulWeather()),
+    codiChildren.length ? safe("코디 상품(추가구성) 점검", () => callFn("cafe24-analytics", { action: "codi", parents: codiParents.join(","), children: codiChildren.join(","), start_date: cur14[0], end_date: cur14[1] })) : Promise.resolve(null),
     ...surgeChunks.map((ids, i) => safe(`급증 상품 광고 7일 성과(${i + 1})`, () => callFn("meta-ads", { action: "adcards", ad_ids: ids.join(","), start_date: cur7[0], end_date: cur7[1] }))),
   ]);
+  const codiKnown = !!codiRes;
+  const codiMap = ((codiRes as Row | null)?.children ?? {}) as Record<string, Row>;
+  const codiOf = (no: number) => {
+    const c = codiMap[String(no)]; if (!c) return null;
+    const ps = ((c.parents ?? []) as unknown[]).map(Number);
+    const byP = (c.by_parent ?? {}) as Record<string, number>;
+    return { parents: ps.map((p) => ({ product_no: p, name: nameOf(p), qty_14d: num(m14.get(p)?.order_qty), orders_together: num(byP[String(p)]) })).sort((a, b) => b.orders_together - a.orders_together), orders_14d: num(c.orders), with_parent: num(c.with_parent), share: c.share == null ? null : num(c.share) };
+  };
   const surgePerf = new Map<string, Row | null>();
   for (const sc of surgeCardsArr) for (const a of (((sc as Row | null)?.ads ?? []) as Row[])) surgePerf.set(String(a.ad_id), (a.period ?? null) as Row | null);
   const surgeKnown = adsKnown && surgeCardsArr.every((x) => !!x);
@@ -349,6 +362,7 @@ async function collect(D: string) {
       active_ads: adCountOf(t.no),
       ad_spend_7d: perfOk ? Math.round(spend) : null, ad_purchases_7d: perfOk ? purchases : null,
       ad_roas_7d: perfOk ? (spend > 0 ? +(value / spend).toFixed(2) : null) : null,
+      codi: codiOf(t.no),
     };
   });
   // 최근 7일 판매된 상품 전체: 평균 마진율(판매수량 가중, 워크스페이스 홈 타일과 같은 식) · 구매 전환율(주문 ÷ 조회)
@@ -397,6 +411,7 @@ async function collect(D: string) {
       views_14d: num(r?.views), qty_14d: num(r?.order_qty), rate_14d: num(r?.rate),
       price, discount_price: dprice && dprice < price ? dprice : null, margin_rate: marginRate(price, supply, p.cost_vat != null ? num(p.cost_vat) : null), promos: promosOf(f.no), sold_out: String(p.sold_out ?? "") === "T",
       is_new: newNos.includes(f.no),
+      codi: codiOf(f.no),
       own_ads: f.own.map(adView),
       reference_ads: f.refAds.map((a) => ({ product_name: String(a.product_name), ...adView(a) })),
     };
@@ -409,6 +424,7 @@ async function collect(D: string) {
       matrix: `신상품(NEW ARRIVALS ${newNos.length}개) 중 등록 ${MIN_AGE_DAYS}일↑·14일 조회 ${MIN_VIEWS}↑인 ${eligible.length}개의 중앙값(조회 ${Math.round(medViews)}, 주문율 ${medRate}%) 기준 4분면`,
       margin: "마진율 = (판매가 − 공급가×1.1) ÷ 판매가. 낮으면 밀어도 남는 게 적음",
       surge: "surge_top10 = 판매량 급증 TOP10(최근 7일 vs 직전 7일, 이번 주 10개↑). ad_spend_7d·ad_roas_7d = 그 상품에 붙은 광고의 최근 7일 Meta 지출·ROAS(null = 광고 정보 없음/모름). sold_7d = 최근 7일 판매 상품 전체의 평균 마진율·구매 전환율",
+      codi: codiKnown ? "codi = 코디 상품 점검. 그 상품이 잘 팔리는 상품(codi.parents)의 상품 페이지에 '코디 상품(추가구성)'으로 걸려 있으면 부모 페이지에서 함께 담긴 주문이 섞여 조회 대비 주문율이 높게 나온다. codi.share = 이 상품의 14일 주문 중 부모와 같은 주문에 들어간 비율(%). codi가 null이면 상위 40 판매 상품의 코디 상품이 아님" : "⚠ 코디 상품 점검 수집 실패 — 주문율이 높은 상품은 코디 구매가 섞였을 수 있다고만 쓸 것",
       ads: "since_start = 광고 시작~어제 누적, last14 = 최근 14일. 빈도(frequency) 3 이상이면 같은 사람에게 반복 노출 = 소재 피로",
       ads_status: adsKnown && matchAudit.status === "suspect" ? `⚠ 광고↔상품 매칭이 체계적으로 깨진 것으로 의심(매칭 ${matchAudit.matched_share}%, 의심 상품 ${matchAudit.suspects.length}개). 광고 개수·광고 착수 여부를 판단하지 말고 '광고 정보 확인 필요'로만 쓸 것`
         : adsKnown && matchAudit.suspects.length ? `정상. 단 active_ads가 null인 상품(${matchAudit.suspects.map((s) => s.name).join(", ")})은 광고명이 줄임말 등으로 달라 자동 연결이 안 된 것 — '광고 0개'가 아니라 '광고 연결 확인 필요'로 쓸 것`
@@ -416,7 +432,8 @@ async function collect(D: string) {
     },
     ads_known: adsKnown,
     match_audit: matchAudit,
-    new_arrivals: { count: newNos.length, eligible: eligible.length, median_views_14d: Math.round(medViews), median_rate_14d: medRate, matrix },
+    new_arrivals: { count: newNos.length, eligible: eligible.length, median_views_14d: Math.round(medViews), median_rate_14d: medRate, matrix: matrix.map((p) => ({ ...p, codi: codiOf(p.product_no) })) },
+    codi_known: codiKnown,
     focus,
     surge_top10, sold_7d,
     top10: top10.map((t) => ({ rank: t.rank, product_no: t.no, name: nameOf(t.no), qty_14d: num(m14.get(t.no)?.order_qty), rate_14d: num(m14.get(t.no)?.rate), active_ads: adCountOf(t.no) })),
@@ -439,6 +456,7 @@ function forLLM(data: Row) {
     name: p.name, category: p.category, quadrant: p.quadrant, age_days: p.age_days, sold_out: p.sold_out || undefined,
     views_14d: p.views_14d, rate_14d: p.rate_14d, qty_14d: p.qty_14d, margin_rate: p.margin_rate, discount_price: p.discount_price ?? undefined, price: p.price,
     promos: (p.promos as string[]).length ? p.promos : undefined, active_ads: p.active_ads,
+    codi: p.codi ? { share: (p.codi as Row).share, orders_14d: (p.codi as Row).orders_14d, parents: ((p.codi as Row).parents as Row[]).map((x) => `${x.name}(함께 ${x.orders_together}건)`).join(", ") } : undefined,
   }));
   const slimAd = (a: Row) => ({ name: a.name, is_video: a.is_video, created: a.created, body: a.body, since_start: a.since_start, last14: a.last14 });
   const focus = ((data.focus ?? []) as Row[]).map((f) => ({
@@ -481,13 +499,13 @@ function postProcess(report: Row, data: Row): Row {
   const mt = ((report.matrix ?? []) as Row[]).map((x) => {
     const p = findByName(matrix, x.name);
     if (!p) return null;
-    return { name: p.name, strategy: x.strategy, quadrant: p.quadrant ?? "", views_14d: num(p.views_14d), rate_14d: p.rate_14d ?? null, qty_14d: num(p.qty_14d), margin_rate: p.margin_rate ?? null, discount_price: p.discount_price ?? null, price: num(p.price), promos: p.promos ?? [], age_days: p.age_days ?? null, active_ads: p.active_ads ?? null, sold_out: !!p.sold_out, product_no: p.product_no ?? null };
+    return { name: p.name, strategy: x.strategy, quadrant: p.quadrant ?? "", views_14d: num(p.views_14d), rate_14d: p.rate_14d ?? null, qty_14d: num(p.qty_14d), margin_rate: p.margin_rate ?? null, discount_price: p.discount_price ?? null, price: num(p.price), promos: p.promos ?? [], age_days: p.age_days ?? null, active_ads: p.active_ads ?? null, sold_out: !!p.sold_out, product_no: p.product_no ?? null, codi: p.codi ?? null };
   }).filter((x): x is NonNullable<typeof x> => !!x);
   const focus = (data.focus ?? []) as Row[];
   const fc = ((report.focus ?? []) as Row[]).map((x) => {
     const f = findByName(focus, x.name);
     if (!f) return null;
-    return { ...x, name: f.name, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
+    return { ...x, name: f.name, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], codi: f.codi ?? null, own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
   }).filter((x): x is NonNullable<typeof x> => !!x);
   // 오늘의 결론 칩(2026-10-27): 종류는 정해진 5가지만, 상품명은 데이터의 정식 이름으로(못 찾으면 쓴 그대로), 최대 5개
   const pool = [...matrix, ...focus, ...((data.surge_top10 ?? []) as Row[])] as Row[];
@@ -510,6 +528,7 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 - '데이터 부족'·'노출 거의 없음'은 판단을 보류하고 필요하면 한 줄만.
 - 어떤 상품의 광고 개수는 **오늘 data(top10·matrix·focus의 active_ads·own_ads)만** 근거로 씁니다. this_week.prior_days의 문장에 적힌 광고 수를 다시 쓰지 않습니다(어제 0개였어도 오늘 5개면 5개).
 - rules.ads_status가 '정상'이 아니면(광고 수집 실패) active_ads가 null이고 own_ads가 비어 있습니다. 이때는 "광고 0개"·"광고 공백"·"광고 착수" 같은 광고 유무 판단을 절대 하지 말고, headline·summary에도 광고 얘기를 넣지 않으며, 소재 분석 칸에는 '광고 정보 확인 불가(수집 실패)'라고만 씁니다.
+- **코디 상품 점검(codi, 2026-10-27 대표 지시)**: codi가 있는 상품은 잘 팔리는 상품(codi.parents)의 페이지에 '코디 상품'으로 걸려 있어 그 페이지에서 함께 담긴 주문이 섞입니다. codi.share(이 상품 주문 중 부모와 같은 주문 비율)가 **40% 이상이면 높은 주문율은 자기 힘이 아니라 부모 덕** — '노출 부족'이라고 광고·진열 상향을 권하거나 '밀기' 결론의 근거로 주문율을 쓰지 말고, "○○ 코디 구매 n% — 부모 따라가는 상품, 단독 확대 보류"처럼 씁니다(부모 상품이 꺾이면 같이 꺾임). 40% 미만이면 단독 수요가 있는 것이니 평소대로 판단하되 strategy·reason에 비율을 적을 수 있습니다. codi가 없는 상품은 평소대로.
 - 마진율이 낮은 상품(예: 35% 미만)은 밀어도 남는 게 적으니 우선순위를 낮추고, 마진 좋은 '판매 확대' 상품이 최우선입니다. 적용 중인 혜택(promos: 1+1·기간할인)과 할인가를 전략에 반영합니다.
 - matrix에는 '판매 확대'·'노출 부족'·'상세·가격 점검' 중 중요한 순으로 최대 15개만 넣고, strategy는 30자 이내 한 줄. (보고서 생성 시간 제한이 있어 짧게)
 
