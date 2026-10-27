@@ -27,7 +27,7 @@ async function reportsLoad(force) {
 const actionsState = { map: null };
 async function actionsLoad(force) {
   if (actionsState.map && !force) return actionsState.map;
-  const rows = await dbProxy('agent_actions?select=agent,action_id,done,done_by,done_at,title,owner,week_start').catch(() => []);
+  const rows = await dbProxy('agent_actions?select=agent,action_id,done,done_by,done_at,title,owner,week_start,carried_to,why,since').catch(() => []);
   actionsState.map = new Map((rows || []).map(r => [r.agent + '|' + r.action_id, r]));
   return actionsState.map;
 }
@@ -56,6 +56,25 @@ async function actionToggle(input) {
   } finally { input.disabled = false; }
 }
 document.addEventListener('change', e => { if (e.target.classList && e.target.classList.contains('act-chk')) actionToggle(e.target); });
+/* 저번 주 할 일 → 이번 주로 가져오기 (2026-10-27): agent_actions.carried_to = 이번 주 월요일. 화면은 바로 이번 주 할 일에 합치고, 담당자는 다음 보고서부터 week_actions에 유지한다 */
+async function actCarry(btn) {
+  const d = btn.dataset; btn.disabled = true;
+  try {
+    const rows = await dbProxy('agent_actions?on_conflict=agent,action_id', {
+      method: 'POST', prefer: 'resolution=merge-duplicates,return=representation',
+      body: { agent: d.agent, action_id: d.key, week_start: d.week || null, title: d.title, owner: d.owner, why: d.why || null, since: d.since || null, carried_to: d.to, done: false, done_by: null, done_at: null },
+    });
+    const row = rows && rows[0];
+    if (row) (actionsState.map || (actionsState.map = new Map())).set(d.agent + '|' + d.key, row);
+    toast('이번 주 할 일로 가져왔어요 — 다음 보고서부터 자동으로 이어집니다');
+    if (d.rid) renderReports(d.rid);
+  } catch (e) { toast('저장 실패: ' + e.message); btn.disabled = false; }
+}
+function actFilter(btn) {
+  const box = btn.closest('.box'), o = btn.dataset.o || '';
+  box.querySelectorAll('.act-filter .chip-btn').forEach(b => b.classList.toggle('on', b === btn));
+  box.querySelectorAll('.act').forEach(a => { a.style.display = (!o || a.dataset.owner === o) ? '' : 'none'; });
+}
 
 async function renderReports(id) {
   const main = $('main');
@@ -385,33 +404,29 @@ function reportHtml(r) {
         <td class="r">${x.margin_rate != null ? x.margin_rate + '%' : '—'}<div class="muted">${x.discount_price ? `할인가 ${won(x.discount_price)}` : won(x.price)}</div></td>
         <td>${(x.promos || []).length ? (x.promos || []).map(p => `<span class="chip">${escHtml(p)}</span>`).join(' ') : '<span class="muted">—</span>'}</td>
         <td>${escHtml(x.strategy)}</td></tr>`).join('');
-    // 집중 상품 카드 압축(2026-10-27 대표 요청): 상품명 + 숫자 한 줄 + 광고 썸네일 띠 + 판매 계획만 보이고, 소재 본문·참고 소재·추가 컨셉·상세 강조는 '자세히'로 접는다. 릴스 훅은 뺐다(광고 소재 담당이 따로 만듦)
+    // 집중 상품 카드(2026-10-27 대표 요청 2차): 소재·참고 소재·견인 소재 없이 숫자 7칸(조회·주문율·판매·마진·ON 광고·14일 광고비·14일 ROAS) + 진행 중 이벤트 + 현재 상태 + 판매 확대 액션
     const focusCards = (rp.focus || []).map(f => {
-      const adRow = (a, ref) => `<div class="ad-row">
-          ${a.thumb ? `<img src="${escHtml(a.thumb)}" alt="" loading="lazy">` : '<span class="ad-noimg"></span>'}
-          <div class="ad-info"><div class="ad-name">${ref ? `<span class="chip">${escHtml(pn(a.product_name || ''))}</span> ` : ''}${escHtml(a.name)} <span class="chip">${a.is_video ? '영상' : '이미지'}</span></div>
-          <div class="muted">${a.last14 ? `14일 지출 ${fmtMan(a.last14.spend)} · 구매 ${fmt(a.last14.purchases)} · ROAS ${a.last14.roas} · CTR ${a.last14.ctr}% · 빈도 ${a.last14.frequency}` : (a.since_start ? `누적 지출 ${fmtMan(a.since_start.spend)} · 구매 ${fmt(a.since_start.purchases)} · ROAS ${a.since_start.roas}` : '성과 없음')}</div>
-          ${a.body ? `<div class="ad-body">${escHtml(a.body)}</div>` : ''}</div></div>`;
-      const own = f.own_ads || [], ref = f.reference_ads || [];
-      let sp = 0, val = 0, seen = 0;
-      for (const a of own) { const x = a.last14; if (!x) continue; seen++; const spend = Number(x.spend) || 0; sp += spend; val += (Number(x.roas) || 0) * spend; }
-      const roas = sp > 0 ? Math.round(val / sp * 100) / 100 : null;
-      const adTxt = d.ads_known === false ? '<span class="warn">광고 정보 없음</span>' : own.length ? `광고 ${own.length}개 · 14일 광고비 ${seen ? fmtMan(sp) : '0원'}${roas != null ? ` · ROAS <b class="${roas >= 2 ? 'up' : roas < 1 ? 'down' : ''}">${roas}</b>` : ''}` : '<b class="down">광고 없음</b>';
-      const thumbs = own.length ? `<div class="fc-thumbs">${own.map(a => a.thumb ? `<img src="${escHtml(a.thumb)}" alt="" loading="lazy" title="${escHtml(a.name)}">` : '<span class="ad-noimg sm"></span>').join('')}<span class="muted small">${own.length}개 소재${d.ads_known === false ? '' : ''}</span></div>` : '';
+      const adsUnknown = d.ads_known === false || f.active_ads == null;
+      const st = (l, v, sub, cls) => `<div class="fs ${cls || ''}"><div class="fs-l">${l}</div><div class="fs-v">${v}</div>${sub ? `<div class="fs-s">${sub}</div>` : ''}</div>`;
+      const roas = f.ad_roas_14d;
+      const stats = [
+        st('14일 조회', fmt(f.views_14d)),
+        st('주문율', `${f.rate_14d ?? '—'}%`, f.codi ? `코디 ${f.codi.share ?? '—'}%` : ''),
+        st('판매', `${fmt(f.qty_14d)}개`, f.why ? escHtml(f.why) : ''),
+        st('마진율', `${f.margin_rate ?? '—'}%`, f.discount_price ? `할인가 ${Math.round(f.discount_price).toLocaleString('ko-KR')}원` : (f.price ? `${Math.round(f.price).toLocaleString('ko-KR')}원` : '')),
+        st('ON 광고', adsUnknown ? '<span class="muted">모름</span>' : `${f.active_ads}개`, adsUnknown ? '광고 정보 없음' : '', f.active_ads === 0 ? 'bad' : ''),
+        st('14일 광고비', f.ad_spend_14d == null ? '—' : f.ad_spend_14d === 0 ? '0원' : fmtMan(f.ad_spend_14d), f.ad_purchases_14d != null ? `구매 ${fmt(f.ad_purchases_14d)}건` : ''),
+        st('14일 ROAS', roas == null ? '—' : roas, '', roas == null ? '' : roas >= 2 ? 'good' : roas < 1 ? 'bad' : ''),
+      ].join('');
+      const events = (f.promos || []).length ? `<div class="fc-ev"><i class="fa-solid fa-tag"></i> 진행 중 이벤트 ${f.promos.map(x => `<span class="chip ev">${escHtml(x)}</span>`).join(' ')}</div>` : '<div class="fc-ev muted small"><i class="fa-solid fa-tag"></i> 진행 중 이벤트 없음</div>';
+      const grow = Array.isArray(f.grow) ? f.grow : [];
+      const body = f.status ? `<div class="fc-status"><b>현재 상태</b> ${escHtml(f.status)}</div>${grow.length ? `<div class="fc-grow"><b>판매 확대</b><ol>${grow.map(g => `<li>${escHtml(g)}</li>`).join('')}</ol></div>` : ''}`
+        : `${f.plan ? `<div class="fx"><b>판매 계획</b> ${escHtml(f.plan)}</div>` : ''}${f.detail_focus ? `<div class="fx"><b>상세에서 강조</b> ${escHtml(f.detail_focus)}</div>` : ''}`;   // 옛 보고서(개편 전) 호환
       return `<div class="focus-card fc">
-        <div class="fc-head"><div class="fc-title"><b>${escHtml(pn(f.name))}</b> <span class="chip new">${escHtml(f.why)}</span>${codiChip(f.codi, true)}${f.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(f.product_no)}, this.dataset.n)" data-n="${escHtml(f.name)}" title="상세페이지 점검 담당에게 이 상품을 맡깁니다"><i class="fa-solid fa-file-image"></i></button>` : ''}</div>
-          <div class="fc-nums">14일 조회 <b>${fmt(f.views_14d)}</b> · 주문율 <b>${f.rate_14d ?? '—'}%</b> · 판매 <b>${fmt(f.qty_14d)}개</b> · 마진 <b>${f.margin_rate ?? '—'}%</b> · ${adTxt}${(f.promos || []).length ? ` · ${f.promos.map(escHtml).join(', ')}` : ''}</div></div>
-        ${thumbs}
-        <div class="fx"><b>판매 계획</b> ${escHtml(f.plan)}</div>
-        <details class="fc-more"><summary><i class="fa-solid fa-chevron-right"></i> 자세히 <span class="muted small">소재 ${own.length} · 참고 소재 ${ref.length} · 견인 소재 · 추가 소재 컨셉 · 상세 강조</span></summary>
-          <div class="focus-grid">
-            <div><h4>지금 붙은 소재${own.length ? '' : (d.ads_known === false ? ' <span class="chip">광고 정보 없음</span>' : ' <span class="chip bad">광고 없음</span>')}</h4>${own.map(a => adRow(a, false)).join('') || (d.ads_known === false ? '<div class="muted small">Meta 광고 정보를 받지 못해 소재를 볼 수 없어요 (수집 실패 — 광고가 없다는 뜻이 아님)</div>' : '<div class="muted small">이 상품에 붙은 활성 광고가 없어요</div>')}
-              <div class="fx"><b>견인 소재</b> ${escHtml(f.driver)}</div></div>
-            <div><h4>같은 카테고리 우수 소재</h4>${ref.map(a => adRow(a, true)).join('') || '<div class="muted small">참고할 우수 소재가 없어요</div>'}
-              <div class="fx"><b>추가 소재 컨셉</b> ${escHtml(f.creative_plan)}</div></div>
-          </div>
-          <div class="fx"><b>상세에서 강조</b> ${escHtml(f.detail_focus)}</div>
-        </details></div>`;
+        <div class="fc-head"><div class="fc-title"><b>${escHtml(pn(f.name))}</b>${f.is_new ? ' <span class="chip new">신상</span>' : ''}${f.sold_out ? ' <span class="chip bad">품절</span>' : ''}${codiChip(f.codi, true)}${f.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(f.product_no)}, this.dataset.n)" data-n="${escHtml(f.name)}" title="상세페이지 점검 담당에게 이 상품을 맡깁니다"><i class="fa-solid fa-file-image"></i></button>` : ''}${f.category ? ` <span class="muted small">${escHtml(f.category)}</span>` : ''}</div></div>
+        <div class="fc-stats">${stats}</div>
+        ${events}
+        ${body}</div>`;
     }).join('');
     // 신상품 4분면 격자(2026-10-27): 표 대신 2×2 칸. 칸마다 개수 + 상품 칩(전략 있는 상품은 누르면 전략 한 줄). 15줄 표는 접음
     const naM = na.matrix || [];
@@ -459,7 +474,7 @@ function reportHtml(r) {
       : (ma && ma.status === 'suspect') ? `<div class="notice warn"><b><i class="fa-solid fa-link-slash"></i> 광고↔상품 연결이 깨진 것 같아요.</b> 활성 광고 ${fmt(ma.total_ads)}개 중 ${ma.matched_share}%만 상품에 연결됐고, 광고 이름에 상품명이 있는데 연결 0개인 상품이 ${ma.suspects.length}개입니다. 이 상품들은 '광고 정보 없음'으로 두었습니다. 상품명 표기 규칙(접미사 등)이 바뀌었는지 확인해 주세요.</div>`
       : (ma && (ma.suspects || []).length) ? `<div class="muted small" style="margin-bottom:10px;"><i class="fa-solid fa-link-slash"></i> 광고 이름이 줄임말이라 자동 연결이 안 된 상품 ${ma.suspects.length}개(${ma.suspects.slice(0, 3).map(s => escHtml(s.name.replace(/^\s*(?:\([^)]*\)|\[[^\]]*\])\s*/g, '').slice(0, 18))).join(', ')})는 '광고 정보 없음'으로 표시했어요. 광고 이름에 상품명을 그대로 쓰면 연결됩니다.</div>` : '';
     extraBoxes = adsWarn + trendBox + quadBox + `
-    <div class="box"><h3><i class="fa-solid fa-bullseye" style="color:#0891b2;"></i> 집중 상품 <span class="muted small">급상승 3 + 판매 TOP10 순환 3 · 광고 소재 분석</span></h3>${focusCards || '<div class="muted">없음</div>'}</div>`;
+    <div class="box"><h3><i class="fa-solid fa-bullseye" style="color:#0891b2;"></i> 집중 상품 <span class="muted small">급상승 3 + 판매 TOP10 순환 3 · 현재 상태와 판매 확대 액션 · 소재 분석은 광고 소재 담당</span></h3>${focusCards || '<div class="muted">없음</div>'}</div>`;
   } else {
     tiles = [
       tile('어제 매출', fmtMan(rev.yesterday?.revenue), `지난주 같은 요일 대비 ${fmtDelta(ch.vs_same_dow_last_week)} · 주문 ${rev.yesterday ? fmt(rev.yesterday.orders) + '건' : '—'}`),
@@ -480,16 +495,41 @@ function reportHtml(r) {
   const actRow = (x, i, opts = {}) => {
     const key = actionKey(x), st = doneMap.get(r.agent + '|' + key), done = !!(st && st.done);
     const doneMeta = done ? `완료 · ${escHtml(st.done_by || '')} · ${st.done_at ? timeLabel(st.done_at) : ''}` : '';
-    return `<div class="act ${opts.past ? 'past' : ''} ${done ? 'done' : ''}">
+    const carriedRow = doneMap.get(r.agent + '|' + key);
+    const carriedHere = opts.past && carriedRow && carriedRow.carried_to && rp.week && carriedRow.carried_to === rp.week.start;
+    const carryBtn = opts.past && !done && opts.carryTo ? (carriedHere ? '<span class="chip src"><i class="fa-solid fa-arrow-turn-down"></i> 이번 주로 가져옴</span>'
+      : `<button class="btn ghost sm carry-btn" onclick="actCarry(this)" data-agent="${escHtml(r.agent)}" data-key="${escHtml(key)}" data-week="${escHtml(opts.week || '')}" data-to="${escHtml(opts.carryTo)}" data-title="${escHtml(x.title)}" data-owner="${escHtml(x.owner || '')}" data-why="${escHtml(x.why || '')}" data-since="${escHtml(x.since || '')}" data-rid="${escHtml(r.id)}"><i class="fa-solid fa-arrow-turn-down"></i> 이번 주로 가져오기</button>`) : '';
+    return `<div class="act ${opts.past ? 'past' : ''} ${done ? 'done' : ''}" data-owner="${escHtml(x.owner || '')}">
       <label class="chk" title="완료 체크"><input type="checkbox" class="act-chk" ${done ? 'checked' : ''} data-key="${escHtml(key)}" data-agent="${escHtml(r.agent)}" data-week="${escHtml(opts.week || '')}" data-title="${escHtml(x.title)}" data-owner="${escHtml(x.owner || '')}"><span class="num">${i + 1}</span></label>
-      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}${x.source && x.source !== '오늘의 요약' ? `<span class="chip src">${escHtml(x.source.replace(' 담당', ''))} 제안</span>` : ''}</div><div class="muted">${escHtml(x.why)}</div><div class="done-meta">${doneMeta}</div></div>
+      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}${x.source && x.source !== '오늘의 요약' ? `<span class="chip src">${escHtml(x.source.replace(' 담당', ''))} 제안</span>` : ''}${x.carried || x.status === 'carried' ? '<span class="chip src"><i class="fa-solid fa-arrow-turn-down"></i> 저번 주에서</span>' : ''}</div><div class="muted">${escHtml(x.why)}</div><div class="done-meta">${doneMeta}</div>${carryBtn}</div>
     </div>`;
   };
   const hasWeek = Array.isArray(rp.week_actions) || Array.isArray(rp.week_highlights);
   const weekLabel = rp.week ? `${md(rp.week.start)} ~ ${md(rp.week.end)}` : '';
-  const weekActions = (hasWeek ? rp.week_actions : rp.actions) || [];
+  const weekActions0 = (hasWeek ? rp.week_actions : rp.actions) || [];
+  // 앱에서 '이번 주로 가져오기'한 저번 주 할 일(아직 보고서에 안 실린 것)을 바로 합친다
+  const carriedExtra = (hasWeek && rp.week) ? [...doneMap.values()].filter(c => c.agent === r.agent && c.carried_to === rp.week.start && !c.done && !weekActions0.some(a => a.id === c.action_id))
+    .map(c => ({ id: c.action_id, title: c.title, owner: c.owner, why: c.why || '', since: c.since || '', status: 'carried' })) : [];
+  const weekActions = [...weekActions0, ...carriedExtra];
   const lw = rp.last_week || null;
   const lwLabel = lw ? `${md(lw.start)} ~ ${md(lw.end)}` : '';
+  // 이번 주 흐름 표(2026-10-27): 주목(P)·주의(N) 항목 × 요일 점. 주 첫날은 오늘의 주목·주의와 같으니 숨김
+  const weekFlow = (() => {
+    if (!hasWeek || !rp.week) return '';
+    const items = [...(rp.week_highlights || []).map(x => ({ ...x, k: 'p' })), ...(rp.week_warnings || []).map(x => ({ ...x, k: 'n' }))];
+    if (!items.length) return '';
+    if (rp.week.start === rp.week.end) return `<div class="week-first muted small"><i class="fa-regular fa-calendar"></i> 이번 주 첫날 — 이번 주 주목·주의는 위 '오늘의 주목·주의'와 같아요. 내일부터 요일별 흐름 표로 쌓입니다.</div>`;
+    const days = []; for (let i = 0; i < 7; i++) { const dt = new Date(rp.week.start + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + i); days.push(dt.toISOString().slice(0, 10)); }
+    const DOW = ['월', '화', '수', '목', '금', '토', '일'];
+    const rows = items.map(x => `<tr class="wf ${x.k}"><td class="wf-t"><details><summary><span class="pn ${x.k}">${x.k === 'p' ? 'P' : 'N'}</span> <span class="wf-title">${escHtml(x.title)}</span>${x.status === 'new' ? ' <span class="chip new">NEW</span>' : ''}</summary><div class="wf-d">${escHtml(x.detail || '')}</div></details></td>${days.map(dd => `<td class="wf-c ${dd > rp.week.end ? 'future' : ''} ${dd === rp.week.end ? 'today' : ''}">${(x.dates || []).includes(dd) ? `<span class="dot ${x.k}"></span>` : ''}</td>`).join('')}</tr>`).join('');
+    return `<div class="box wf-box"><h3><i class="fa-regular fa-calendar" style="color:#4f46e5;"></i> 이번 주 흐름 <span class="muted small">${weekLabel} · 점 = 그날 보고서에 등장(며칠째 이어지는지) · 제목을 누르면 설명</span></h3>
+      <div class="tbl-wrap"><table class="wf-table"><thead><tr><th></th>${days.map((dd, i) => `<th class="${dd === rp.week.end ? 'today' : ''} ${dd > rp.week.end ? 'future' : ''}">${DOW[i]}<br><span class="muted">${md(dd)}</span></th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  })();
+  const doneCount = weekActions.filter(x => { const st = doneMap.get(r.agent + '|' + actionKey(x)); return st && st.done; }).length;
+  const owners = [...new Set(weekActions.map(x => x.owner).filter(Boolean))];
+  const actFilterBar = owners.length > 1 ? `<div class="act-filter"><button class="chip-btn on" data-o="" onclick="actFilter(this)">전체 ${weekActions.length}</button>${owners.map(o => `<button class="chip-btn" data-o="${escHtml(o)}" onclick="actFilter(this)">${escHtml(o)} ${weekActions.filter(x => x.owner === o).length}</button>`).join('')}</div>` : '';
+  const progress = weekActions.length ? `<span class="prog"><b>${doneCount}/${weekActions.length}</b> 완료</span><div class="prog-bar"><i style="width:${Math.round(doneCount / weekActions.length * 100)}%"></i></div>` : '';
+  const lwUndone = lw ? (lw.actions || []).filter(x => { const st = doneMap.get(r.agent + '|' + actionKey(x)); return !(st && st.done); }) : [];
   return head + `
     <div class="headline mood-${rp.mood || 'neutral'}">
       <div class="h-text">${escHtml(rp.headline)}</div>
@@ -503,13 +543,9 @@ function reportHtml(r) {
     </div>`}
     ${teamBox(rp, r.agent === 'strategy')}
     ${extraBoxes}
-    ${hasWeek ? `<div class="week-head"><i class="fa-regular fa-calendar"></i> 이번 주 누적 <span class="muted">${weekLabel} · 앞선 날 보고서와 합친 것. 그날 못 봤어도 여기서 확인</span></div>
-    <div class="two">
-      <div class="box wk-p"><h3><span class="pn p">P</span> 이번 주 주목</h3>${wlist(rp.week_highlights, 'up')}</div>
-      <div class="box wk-n"><h3><span class="pn n">N</span> 이번 주 주의</h3>${wlist(rp.week_warnings, 'down')}</div>
-    </div>` : ''}
-    ${(!weekActions.length && ['detail', 'creative'].includes(r.agent)) ? '' : `<div class="box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> ${r.agent === 'sales' && hasWeek ? '팀 통합 할 일' : '이번 주 할 일'}${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}</h3>${weekActions.length ? weekActions.map((x, i) => actRow(x, i, { week: rp.week?.start })).join('') : '<div class="muted">없음</div>'}<div class="muted small chk-hint">체크하면 완료로 기록되고, 다음 날 보고서의 할 일에서 빠집니다.</div></div>`}
-    ${lw ? `<div class="box past-box"><h3><i class="fa-regular fa-clock" style="color:#9ca3af;"></i> 저번 주 해야 했을 일 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''}</span></h3>${(lw.actions || []).length ? lw.actions.map((x, i) => actRow(x, i, { past: true, week: lw.start })).join('') : '<div class="muted">저번 주 보고서가 없어요</div>'}</div>` : ''}
+    ${hasWeek ? `<div class="week-head"><i class="fa-regular fa-calendar"></i> 이번 주 누적 <span class="muted">${weekLabel} · 앞선 날 보고서와 합친 것. 그날 못 봤어도 여기서 확인</span></div>${weekFlow}` : ''}
+    ${(!weekActions.length && ['detail', 'creative'].includes(r.agent)) ? '' : `<div class="box todo-box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> ${r.agent === 'sales' && hasWeek ? '팀 통합 할 일' : '이번 주 할 일'}${weekLabel ? ` <span class="muted small">${weekLabel}</span>` : ''}${progress}</h3>${actFilterBar}${weekActions.length ? weekActions.map((x, i) => actRow(x, i, { week: rp.week?.start })).join('') : '<div class="muted">없음</div>'}<div class="muted small chk-hint">체크하면 완료로 기록되고, 다음 날 보고서의 할 일에서 빠집니다.</div></div>`}
+    ${lw ? `<details class="fold past-fold"><summary><i class="fa-solid fa-chevron-right"></i> 저번 주 미완료 ${lwUndone.length}개 <span class="muted small">${lwLabel}${lw.from_report_date ? ` · ${md(lw.from_report_date)} 보고서 기준` : ''} · 이어서 할 것은 '이번 주로 가져오기'</span></summary><div class="box past-box">${lwUndone.length ? lwUndone.map((x, i) => actRow(x, i, { past: true, week: lw.start, carryTo: rp.week?.start || '' })).join('') : '<div class="muted">저번 주 할 일은 모두 끝났거나 없어요</div>'}</div></details>` : ''}
     ${rp.note ? `<div class="muted small"><i class="fa-regular fa-circle-question"></i> ${escHtml(rp.note)}</div>` : ''}
     ${dataErrors(r.data)}
     ${typeof askBoxHtml === 'function' ? askBoxHtml(r) : ''}

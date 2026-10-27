@@ -5,20 +5,20 @@
 //     1) 신상품 = 카페24 NEW ARRIVALS 카테고리(상품 관리 시스템 아님, 세일 카테고리 제외). 조회수×주문율 4분면으로
 //        어디에 집중할지 판정 — 주문율↑조회↓=노출 부족 / 둘 다↑=판매 확대 / 둘 다↓=집중도 낮춤 / 조회↑주문율↓=상세·가격 점검.
 //        마진율·적용 중인 혜택(1+1·기간할인)·등록일·품절을 함께 고려.
-//     2) 급상승 상품과 판매 TOP10은 Meta 광고관리자 데이터를 소재 단위로 분석: 어떤 소재가 견인하는지, 같은 카테고리
-//        우수 상품의 소재 특성(썸네일을 Claude가 직접 봄)을 바탕으로 추가 소재 컨셉·상세 강조점 제안(릴스 훅은 2026-10-27 뺌 — 광고 소재 담당이 따로 만듦).
+//     2) 급상승 상품과 판매 TOP10 = 집중 상품: (2026-10-27 개편) 소재 단위 분석·참고 소재·견인 소재·릴스 훅은 전부 뺌(광고 소재 담당 몫).
+//        대신 조회·주문율·판매·마진·ON 광고 수·14일 광고비·14일 ROAS·진행 중 이벤트를 숫자로 주고, Claude는 '현재 상태 한 줄 + 판매 확대 액션 2~3개'만 쓴다.
 //   수집(워크스페이스 함수, x-agent-secret): categorymap · category_products(33) · summary(14일/7일/직전7일) ·
 //     productinfo(+with_discount 후보만 — 91개 전부는 62초) · benefits(by_product) · activeads · adcards
 //   광고↔상품 매칭 = 워크스페이스 판매 성과 'ON 광고' 규칙(pa*)을 그대로 이식(핵심명·ver 토큰·자모 비교).
 // ═══════════════════════════════════════════════
-import { addDays, callFn, findByName, COMMON_RULES, dow, LLMImage, num, reportSchema, rest, Row, safeCollector, AgentDef } from "../_shared/agent.ts";
+import { addDays, callFn, findByName, COMMON_RULES, dow, num, reportSchema, rest, Row, safeCollector, AgentDef } from "../_shared/agent.ts";
 import { matchKeyword, NAVER_CATS, naverCategoryRanks, risingKeywords, seoulWeather } from "../_shared/trends.ts";
 import { json } from "../_shared/util.ts";
 
 const AGENT = "strategy";
 const NEW_CAT = 33;                 // NEW ARRIVALS
 const MIN_AGE_DAYS = 3, MIN_VIEWS = 30;
-const FOCUS_MAX = 5, REF_IMG_MAX = 5;   // 6→5 (2026-09-13): 작성 단계 150초 벽시계 한도 — 출력 토큰을 줄여 생성 시간 단축
+const FOCUS_MAX = 5;   // 6→5 (2026-09-13): 작성 단계 150초 벽시계 한도 — 출력 토큰을 줄여 생성 시간 단축
 const SPECIAL_CATS = /new arrivals|best|sale|세일|size pick|autumn|summer|winter|spring|🍁|🌞|⌛|🔎/i;
 
 // ── 광고명 ↔ 상품명 매칭 (워크스페이스 index.html의 pa* 이식) ──
@@ -304,17 +304,9 @@ async function collect(D: string) {
   for (const r of rows14) catOf.set(Number(r.product_no), leafCat(Number(r.product_no)));
   const adIds = new Set<string>();
   const focusDraft = focusNos.map((no) => {
-    const own = (adsByProduct.get(no) ?? []).slice(0, 4);
+    const own = suspectNos.has(no) ? [] : (adsByProduct.get(no) ?? []);   // ON 광고 전부(14일 지출·ROAS 합산용). 매칭 의심 상품은 비워 두고 active_ads=null('모름')
     own.forEach((a) => adIds.add(String(a.ad_id)));
-    const cat = catOf.get(no) ?? leafCat(no);
-    const peers = rows14.filter((r) => Number(r.product_no) !== no && catOf.get(Number(r.product_no)) === cat && num(r.order_qty) >= 10)
-      .sort((a, b) => num(b.order_qty) - num(a.order_qty)).slice(0, 3).map((r) => Number(r.product_no));
-    const refAds: Row[] = [];
-    for (const pn of peers) {
-      const best = (adsByProduct.get(pn) ?? []).filter((a) => num(a.spend) >= 100000).sort((a, b) => num(b.roas) - num(a.roas)).slice(0, 2);
-      best.forEach((a) => { adIds.add(String(a.ad_id)); refAds.push({ ...a, product_no: pn, product_name: nameOf(pn) }); });
-    }
-    return { no, cat, own, peers, refAds };
+    return { no, cat: catOf.get(no) ?? leafCat(no), own };
   });
   // ── 트렌드(네이버 데이터랩 순위표: 어제 vs 7일 전) — ⚠ 다른 요청과 겹치면 데이터랩 응답이 멈춰(엣지 실측) **혼자 먼저** 순차로 받는다 (약 5초) ──
   // ⚠ 2026-10-11: 네이버는 '어제' 순위표를 아침 08:30에는 아직 공개하지 않는다(빈 목록 → 0건, 이어지는 요청은 시간 초과; 실측 24회 중 22회 실패,
@@ -333,12 +325,15 @@ async function collect(D: string) {
   //   codi.share = 그 상품 14일 주문 중 부모(코디 상품으로 걸어 둔 잘 팔리는 상품)와 같은 주문에 담긴 비율. 높으면 주문율이 부모 덕.
   const codiParents = [...rows14].sort((a, b) => num(b.order_qty) - num(a.order_qty)).slice(0, 40).map((r) => Number(r.product_no));
   const codiChildren = [...new Set([...eligible.filter((p) => p.rate_14d >= medRate).map((p) => p.product_no), ...surge10.map((x) => x.no), ...focusNos])].slice(0, 60);
-  const [cards, weather, codiRes, ...surgeCardsArr] = await Promise.all([
-    adIds.size ? safe("광고 소재 카드", () => callFn("meta-ads", { action: "adcards", ad_ids: [...adIds].slice(0, 60).join(","), start_date: cur14[0], end_date: cur14[1] })) : Promise.resolve(null),
+  const focusAdIds = [...adIds]; const cardChunks: string[][] = []; for (let i = 0; i < focusAdIds.length; i += 60) cardChunks.push(focusAdIds.slice(i, i + 60));
+  const [weather, codiRes, ...restArr] = await Promise.all([
     safe("날씨(서울)", () => seoulWeather()),
     codiChildren.length ? safe("코디 상품(추가구성) 점검", () => callFn("cafe24-analytics", { action: "codi", parents: codiParents.join(","), children: codiChildren.join(","), start_date: cur14[0], end_date: cur14[1] })) : Promise.resolve(null),
+    ...cardChunks.map((ids, i) => safe(`집중 상품 광고 14일 성과(${i + 1})`, () => callFn("meta-ads", { action: "adcards", ad_ids: ids.join(","), start_date: cur14[0], end_date: cur14[1] }))),
     ...surgeChunks.map((ids, i) => safe(`급증 상품 광고 7일 성과(${i + 1})`, () => callFn("meta-ads", { action: "adcards", ad_ids: ids.join(","), start_date: cur7[0], end_date: cur7[1] }))),
   ]);
+  const cardsArr = restArr.slice(0, cardChunks.length), surgeCardsArr = restArr.slice(cardChunks.length);
+  const cardsKnown = adsKnown && cardsArr.every((x) => !!x);
   const codiKnown = !!codiRes;
   const codiMap = ((codiRes as Row | null)?.children ?? {}) as Record<string, Row>;
   const codiOf = (no: number) => {
@@ -391,13 +386,19 @@ async function collect(D: string) {
     });
     return { category: NAVER_CATS[x.cid], top10: [...x.cur.entries()].sort((a, b) => a[1] - b[1]).slice(0, 10).map(([k]) => k), rising };
   });
-  const cardMap = new Map(((cards?.ads ?? []) as Row[]).map((a) => [String(a.ad_id), a]));
+  const cardMap = new Map(cardsArr.flatMap((c) => (((c as Row | null)?.ads ?? []) as Row[])).map((a) => [String(a.ad_id), a]));
+  // 상품에 붙은 ON 광고 전부의 14일 합(지출·구매·구매액 → ROAS). 14일 행이 없는 광고 = 그 기간 지출 0
+  const adTotals = (no: number, ads: Row[]) => {
+    if (!cardsKnown || adCountOf(no) == null) return { ad_spend_14d: null as number | null, ad_purchases_14d: null as number | null, ad_roas_14d: null as number | null };
+    let sp = 0, v = 0, pu = 0;
+    for (const a of ads) { const p = (cardMap.get(String(a.ad_id))?.period ?? null) as Row | null; if (!p) continue; sp += num(p.spend); v += num(p.purchase_value); pu += num(p.purchases); }
+    return { ad_spend_14d: Math.round(sp), ad_purchases_14d: pu, ad_roas_14d: sp > 0 ? +(v / sp).toFixed(2) : null };
+  };
   const adView = (a: Row) => {
     const c = cardMap.get(String(a.ad_id)) ?? {};
     const p = (c.period ?? null) as Row | null;
     return {
       ad_id: String(a.ad_id), name: String(c.name ?? a.ad_name ?? ""), adset: String(c.adset_name ?? ""), is_video: !!c.is_video, created: c.created_time ?? null,
-      thumb: String(c.thumb ?? ""), body: String(c.body ?? "").slice(0, 160), title: String(c.title ?? ""),
       since_start: { spend: Math.round(num(a.spend)), purchases: num(a.purchases), roas: +num(a.roas).toFixed(2), frequency: +num(a.frequency).toFixed(2) },
       last14: p ? { spend: Math.round(num(p.spend)), purchases: num(p.purchases), roas: +num(p.roas).toFixed(2), ctr: +num(p.ctr).toFixed(2), frequency: +num(p.frequency).toFixed(2), impressions: num(p.impressions) } : null,
     };
@@ -412,8 +413,9 @@ async function collect(D: string) {
       price, discount_price: dprice && dprice < price ? dprice : null, margin_rate: marginRate(price, supply, p.cost_vat != null ? num(p.cost_vat) : null), promos: promosOf(f.no), sold_out: String(p.sold_out ?? "") === "T",
       is_new: newNos.includes(f.no),
       codi: codiOf(f.no),
-      own_ads: f.own.map(adView),
-      reference_ads: f.refAds.map((a) => ({ product_name: String(a.product_name), ...adView(a) })),
+      active_ads: adCountOf(f.no),
+      ...adTotals(f.no, f.own),
+      own_ads: f.own.map(adView).sort((a, b) => num(b.last14?.spend) - num(a.last14?.spend)).slice(0, 6),   // 14일 지출 상위 6개만(수집 숫자·질문 답변용)
     };
   });
 
@@ -425,7 +427,7 @@ async function collect(D: string) {
       margin: "마진율 = (판매가 − 공급가×1.1) ÷ 판매가. 낮으면 밀어도 남는 게 적음",
       surge: "surge_top10 = 판매량 급증 TOP10(최근 7일 vs 직전 7일, 이번 주 10개↑). ad_spend_7d·ad_roas_7d = 그 상품에 붙은 광고의 최근 7일 Meta 지출·ROAS(null = 광고 정보 없음/모름). sold_7d = 최근 7일 판매 상품 전체의 평균 마진율·구매 전환율",
       codi: codiKnown ? "codi = 코디 상품 점검. 그 상품이 잘 팔리는 상품(codi.parents)의 상품 페이지에 '코디 상품(추가구성)'으로 걸려 있으면 부모 페이지에서 함께 담긴 주문이 섞여 조회 대비 주문율이 높게 나온다. codi.share = 이 상품의 14일 주문 중 부모와 같은 주문에 들어간 비율(%). codi가 null이면 상위 40 판매 상품의 코디 상품이 아님" : "⚠ 코디 상품 점검 수집 실패 — 주문율이 높은 상품은 코디 구매가 섞였을 수 있다고만 쓸 것",
-      ads: "since_start = 광고 시작~어제 누적, last14 = 최근 14일. 빈도(frequency) 3 이상이면 같은 사람에게 반복 노출 = 소재 피로",
+      ads: "focus의 active_ads = 지금 ON인 광고 수, ad_spend_14d·ad_purchases_14d·ad_roas_14d = 그 광고 전부의 최근 14일 합(null = 광고 정보 모름). top_ads = 14일 지출 상위 3개(since_start 누적, last14 14일). 빈도(frequency) 3 이상이면 같은 사람에게 반복 노출 = 소재 피로",
       ads_status: adsKnown && matchAudit.status === "suspect" ? `⚠ 광고↔상품 매칭이 체계적으로 깨진 것으로 의심(매칭 ${matchAudit.matched_share}%, 의심 상품 ${matchAudit.suspects.length}개). 광고 개수·광고 착수 여부를 판단하지 말고 '광고 정보 확인 필요'로만 쓸 것`
         : adsKnown && matchAudit.suspects.length ? `정상. 단 active_ads가 null인 상품(${matchAudit.suspects.map((s) => s.name).join(", ")})은 광고명이 줄임말 등으로 달라 자동 연결이 안 된 것 — '광고 0개'가 아니라 '광고 연결 확인 필요'로 쓸 것`
         : adsKnown ? "정상" : "⚠ Meta 활성 광고 수집 실패 — 모든 상품의 active_ads·own_ads가 비어 있는 것은 '광고 없음'이 아니라 '모름'. 광고 개수·소재·광고 착수 여부를 판단하지 말고 필요하면 '광고 정보 확인 불가'라고만 쓸 것",
@@ -458,38 +460,18 @@ function forLLM(data: Row) {
     promos: (p.promos as string[]).length ? p.promos : undefined, active_ads: p.active_ads,
     codi: p.codi ? { share: (p.codi as Row).share, orders_14d: (p.codi as Row).orders_14d, parents: ((p.codi as Row).parents as Row[]).map((x) => `${x.name}(함께 ${x.orders_together}건)`).join(", ") } : undefined,
   }));
-  const slimAd = (a: Row) => ({ name: a.name, is_video: a.is_video, created: a.created, body: a.body, since_start: a.since_start, last14: a.last14 });
   const focus = ((data.focus ?? []) as Row[]).map((f) => ({
-    ...f, product_no: undefined,
-    own_ads: ((f.own_ads ?? []) as Row[]).map(slimAd),
-    reference_ads: ((f.reference_ads ?? []) as Row[]).map((a) => ({ product_name: a.product_name, ...slimAd(a) })),
+    name: f.name, why: f.why, category: f.category, is_new: f.is_new || undefined, sold_out: f.sold_out || undefined,
+    views_14d: f.views_14d, qty_14d: f.qty_14d, rate_14d: f.rate_14d, price: f.price, discount_price: f.discount_price ?? undefined, margin_rate: f.margin_rate,
+    promos: f.promos, codi: f.codi ?? undefined,
+    active_ads: f.active_ads, ad_spend_14d: f.ad_spend_14d, ad_purchases_14d: f.ad_purchases_14d, ad_roas_14d: f.ad_roas_14d,
+    top_ads: ((f.own_ads ?? []) as Row[]).slice(0, 3).map((a) => ({ name: a.name, is_video: a.is_video, created: a.created, since_start: a.since_start, last14: a.last14 })),
   }));
   const tr = (data.trends ?? {}) as Row;
   const w = (tr.weather ?? null) as Row | null;
   const trends = { ...tr, weather: w ? { summary: w.summary, next_7d: w.next_7d } : null };
   const surge = ((data.surge_top10 ?? []) as Row[]).map(({ product_no: _n, ...x }) => x);
   return { ...data, new_arrivals: { ...na, matrix }, focus, trends, surge_top10: surge };
-}
-
-// Claude가 봐야 할 이미지: 집중 상품별 자기 최상위 소재 1장 + 참고 소재 (총 12장 이내)
-function images(data: Row): LLMImage[] {
-  const out: LLMImage[] = [];
-  const fmtPerf = (a: Row) => { const l = (a.last14 ?? a.since_start) as Row | null; return l ? `14일 지출 ${Math.round(num(l.spend) / 10000)}만·구매 ${l.purchases}·ROAS ${l.roas}${l.ctr != null ? `·CTR ${l.ctr}%` : ""}` : ""; };
-  const focus = (data.focus ?? []) as Row[];
-  for (const f of focus) {
-    const own = ((f.own_ads ?? []) as Row[]).find((a) => a.thumb);
-    if (own) out.push({ url: String(own.thumb), label: `[집중 상품 소재] ${f.name} — 광고 '${own.name}' (${own.is_video ? "영상" : "이미지"}, ${fmtPerf(own)})` });
-  }
-  let refs = 0;
-  for (const f of focus) {
-    for (const a of ((f.reference_ads ?? []) as Row[])) {
-      if (refs >= REF_IMG_MAX || out.length >= 12) break;
-      if (!a.thumb) continue;
-      out.push({ url: String(a.thumb), label: `[같은 카테고리 우수 소재] ${a.product_name} — 광고 '${a.name}' (${a.is_video ? "영상" : "이미지"}, ${fmtPerf(a)}) ← ${f.name}의 참고용` });
-      refs++;
-    }
-  }
-  return out.slice(0, 12);
 }
 
 // Claude 판단에 숫자·판정을 코드가 붙인다
@@ -505,7 +487,10 @@ function postProcess(report: Row, data: Row): Row {
   const fc = ((report.focus ?? []) as Row[]).map((x) => {
     const f = findByName(focus, x.name);
     if (!f) return null;
-    return { ...x, name: f.name, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], codi: f.codi ?? null, own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
+    const grow = (Array.isArray(x.grow) ? (x.grow as unknown[]).map(String) : String(x.grow ?? "").split(/\s*[|｜\n]\s*/)).map((g) => g.trim()).filter(Boolean).slice(0, 4);
+    return { name: f.name, status: String(x.status ?? "").trim(), grow, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", is_new: !!f.is_new, sold_out: !!f.sold_out,
+      views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, price: num(f.price), discount_price: f.discount_price ?? null, promos: f.promos ?? [], codi: f.codi ?? null,
+      active_ads: f.active_ads ?? null, ad_spend_14d: f.ad_spend_14d ?? null, ad_purchases_14d: f.ad_purchases_14d ?? null, ad_roas_14d: f.ad_roas_14d ?? null };
   }).filter((x): x is NonNullable<typeof x> => !!x);
   // 오늘의 결론 칩(2026-10-27): 종류는 정해진 5가지만, 상품명은 데이터의 정식 이름으로(못 찾으면 쓴 그대로), 최대 5개
   const pool = [...matrix, ...focus, ...((data.surge_top10 ?? []) as Row[])] as Row[];
@@ -533,11 +518,11 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 - matrix에는 '판매 확대'·'노출 부족'·'상세·가격 점검' 중 중요한 순으로 최대 15개만 넣고, strategy는 30자 이내 한 줄. (보고서 생성 시간 제한이 있어 짧게)
 
 2) 집중 상품 (focus — 급상승 상품과 판매 TOP10, 최대 ${FOCUS_MAX}개):
-- own_ads(그 상품에 붙은 소재)의 since_start(누적)·last14(최근 14일) 성과를 소재 단위로 비교해 어떤 소재가 판매를 견인하는지 짚습니다. CTR은 첫 3초의 힘, ROAS는 판매력, 빈도 3 이상은 소재 피로입니다. 영상/이미지, 광고 문구(body)의 소구점을 근거로 씁니다.
-- reference_ads(같은 카테고리에서 이미 잘 되는 상품의 우수 소재)와 첨부한 썸네일 이미지를 직접 보고, 그 소재들의 공통 특성(착용컷/디테일컷, 모델 포즈, 색감, 문구 위치, 영상 구성)을 뽑아 이 상품에 추가할 소재 컨셉을 제안합니다.
-- detail_focus: 상세페이지에서 앞쪽에 내세우거나 강조할 것 한 줄(반품 사유·주문율·광고 반응을 근거로).
-- plan: 마진·혜택·재고(sold_out)를 고려한 판매 계획 한 줄 (예산 확대는 '대표 확인 후').
-- 광고가 하나도 없는 집중 상품은 "광고 착수" 제안이 첫 번째입니다(rules.ads_status가 '정상'일 때만).
+- (2026-10-27 대표 지시) 소재 분석은 하지 않습니다 — 광고 소재 담당이 따로 합니다. 소재 이름·견인 소재·소재 컨셉·릴스 훅을 쓰지 마세요.
+- status: 이 상품의 **현재 상태를 데이터로** 한 줄 — views_14d·rate_14d·qty_14d·margin_rate·active_ads·ad_spend_14d·ad_roas_14d·promos(진행 중 이벤트)·codi·동료 보고서의 반품률을 근거 숫자와 함께. sold_7d의 평균 마진(%)·전환율과 비교하면 좋습니다.
+- grow: **판매를 더 키우려면 무엇을 추가하거나 고칠지** 2~3개 — 예산·광고 착수(ad_spend_14d 0이면 착수, ROAS 높고 빈도 낮으면 확대 '대표 확인 후'), 이벤트(1+1·세트·기간할인, 지금 promos와 겹치지 않게), 진열·기획전·메인 노출, 상세페이지(주문율이 낮거나 떨어지면 사이즈·소재 결론을 앞에), 가격, 색상·사이즈 재고, 반품 사유 해결. 각 항목에 왜 그런지 숫자를 붙입니다. 뻔한 말("마케팅 강화") 금지.
+- top_ads(14일 지출 상위 3개)의 빈도 3 이상은 소재 피로 → grow에 '소재 교체 요청(광고 소재 담당)' 한 줄로만 씁니다.
+- 광고가 하나도 없는 집중 상품은 "광고 착수" 제안이 첫 번째입니다(rules.ads_status가 '정상'일 때만). codi.share 40% 이상이면 단독 확대보다 부모 상품과 세트·동반 노출을 제안합니다.
 
 3) 트렌드·날씨 (trends):
 - trends.naver[].rising = 네이버에서 새로 뜨거나 크게 오른 검색어(정해 둔 목록이 아니라 순위표에서 자동 발견). 브랜드명(에고이스트·시슬리·자라 등)은 무시하고 **품목·소재·스타일 키워드**만 봅니다.
@@ -572,13 +557,11 @@ const SCHEMA = reportSchema({
         type: "object",
         properties: {
           name: { type: "string", description: "focus[].name 그대로" },
-          driver: { type: "string", description: "어떤 소재가 판매를 견인하는지, 근거 포함 80자 이내" },
-          creative_plan: { type: "string", description: "추가할 소재 컨셉 (참고 소재 특성 근거) 100자 이내" },
-          // 배열 안의 배열은 구조화 출력 문법을 크게 키운다(2026-10-18 '문법이 너무 크다' 400) → 한 줄로 받고 postProcess가 배열로 나눈다(화면·상세 점검 담당은 배열 그대로 받음)
-          detail_focus: { type: "string", description: "상세페이지에서 강조할 것 80자 이내" },
-          plan: { type: "string", description: "마진·혜택·재고 고려한 판매 계획 80자 이내" },
+          status: { type: "string", description: "데이터로 본 현재 상태 한 줄, 70자 이내, 숫자 근거 포함 (예: '14일 1,226개 1위, ROAS 8.3·마진 57.8%·반품 9.9% — 효율 좋고 안전')" },
+          // 배열 안의 배열은 구조화 출력 문법을 크게 키운다(2026-10-18 '문법이 너무 크다' 400) → 한 줄로 받고 postProcess가 배열로 나눈다
+          grow: { type: "string", description: "판매를 더 키우기 위해 추가할 활동 또는 개선할 점 2~3개를 ' | '로 이어 한 줄. 각 45자 이내, 왜 그런지 숫자 근거 포함. 예: '광고 예산 확대(ROAS 8.3, 빈도 1.2 여유) | 상세 상단 사이즈 결론 배치(주문율 2.8%로 하락)'" },
         },
-        required: ["name", "driver", "creative_plan", "detail_focus", "plan"], additionalProperties: false,
+        required: ["name", "status", "grow"], additionalProperties: false,
       },
       description: "집중 상품 카드. focus 전부",
     },
@@ -619,4 +602,4 @@ const COLLEAGUE_RULES = `- '오늘 숫자판'(colleagues 첫 항목 — 코드�
 - 숫자판의 '조회 많고 안 팔림' 상품이 4분면에 있으면 '상세·가격 점검' 전략에 그 근거를 더하고, 상세페이지 점검 담당에게 handoff.
 - 밀어줄 상품(판매 확대·집중 상품) 중 광고 소재가 부족하거나 소재 피로(빈도 3↑)인 것은 광고 소재 담당에게 제작안 handoff(상품명 그대로).
 - 어제 광고 소재 담당 제작안이 있는 상품은 그 제작안의 1순위 훅과 내 소재 분석이 같은 방향인지 확인하고, 다르면 이유를 씁니다.`;
-export const DEF: AgentDef = { agent: AGENT, label: "상품 전략 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, images, effort: "low", actions: { trends: trendsAction }, colleagueRules: COLLEAGUE_RULES, notify: "warn" };
+export const DEF: AgentDef = { agent: AGENT, label: "상품 전략 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, effort: "low", actions: { trends: trendsAction }, colleagueRules: COLLEAGUE_RULES, notify: "warn" };

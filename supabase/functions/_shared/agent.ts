@@ -264,6 +264,11 @@ export async function weekContext(agent: string, D: string) {
   const latestPrior = prior.length ? prior[prior.length - 1] : null;
   const soFarRaw = ((latestPrior?.report as Row | undefined)?.week_actions ?? []) as Row[];
   const weekActionsSoFar = soFarRaw.map((a) => ({ ...a, done: a.id ? doneIds.has(String(a.id)) : false }));
+  // 저번 주에서 가져온 할 일(2026-10-27, 앱 '이번 주로 가져오기' 버튼 → agent_actions.carried_to = 이번 주 월요일): 미완료면 이번 주 할 일에 합쳐 다음 보고서에도 유지된다
+  const carRes = await rest(`agent_actions?agent=eq.${agent}&carried_to=eq.${wStart}&done=eq.false&select=action_id,title,owner,why,since`);
+  const carried = carRes.ok ? ((await carRes.json()) as Row[]) : [];
+  const haveIds = new Set(weekActionsSoFar.map((a) => String(a.id ?? "")));
+  for (const c of carried) if (c.action_id && !haveIds.has(String(c.action_id))) weekActionsSoFar.push({ id: String(c.action_id), title: String(c.title ?? ""), owner: String(c.owner ?? ""), why: String(c.why ?? ""), since: String(c.since ?? lwStart), status: "ongoing", done: false, carried: true });
   return {
     week: { start: wStart, end: D },
     prior_days: priorDays,
@@ -396,7 +401,7 @@ export const COMMON_RULES = `
 - this_week.prior_days(이번 주 앞선 날들의 주목·주의·할 일)와 오늘 것을 합쳐 씁니다. 같은 상품·같은 문제는 하나로 합치고 dates에 등장한 날짜를 전부 적습니다.
 - 오늘 처음 나온 항목은 status "new", 앞선 날에도 있었으면 "ongoing". 여러 날 이어진 항목은 detail에 흐름(나아지는지, 나빠지는지)을 씁니다.
 - 주의 항목 중 이미 해소된 것은 week_warnings에서 뺍니다.
-- week_actions는 this_week.week_actions_so_far(이번 주 지금까지의 할 일, done = 사람이 완료 체크한 것)에서 done=false인 항목을 id·since 그대로 유지하고 오늘의 새 제안을 더합니다. **done=true인 항목은 완료된 것이니 반드시 뺍니다.** 지난 일이거나 의미가 없어진 것도 뺍니다. 새 항목의 id는 '기준일YYYYMMDD-순번'. 중요한 순으로 최대 6개.
+- week_actions는 this_week.week_actions_so_far(이번 주 지금까지의 할 일, done = 사람이 완료 체크한 것)에서 done=false인 항목을 id·since 그대로 유지하고 오늘의 새 제안을 더합니다. carried=true인 항목은 대표가 저번 주에서 직접 가져온 것이니 반드시 유지합니다(id·since·title 그대로). **done=true인 항목은 완료된 것이니 반드시 뺍니다.** 지난 일이거나 의미가 없어진 것도 뺍니다. 새 항목의 id는 '기준일YYYYMMDD-순번'. 중요한 순으로 최대 6개.
 - prior_days가 비어 있으면(주 첫날) 주간 항목은 오늘 것과 같고 status는 전부 "new".
 - actions(오늘 새로 제안하는 것)는 주간 항목과 별개로 그대로 씁니다.
 

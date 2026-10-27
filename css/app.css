@@ -556,3 +556,44 @@ table.t-trend th:nth-child(1) { width: 22%; } table.t-trend th:nth-child(2) { wi
 .chip.codi.hi { color: #b91c1c; background: #fee2e2; border-color: #fecaca; }
 .chip.codi em { font-style: normal; font-weight: 600; opacity: .85; }
 .qchip .chip.codi { margin-left: 2px; }
+/* ---------- 이번 주 구간 개편 (2026-10-27): 흐름 표 · 할 일 진행률/담당 필터 · 저번 주 접기+가져오기 ---------- */
+.week-first { margin: -4px 0 12px; }
+.wf-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.wf-table th { font-size: .7rem; color: var(--muted); font-weight: 700; text-align: center; padding: 4px 2px; border-bottom: 1px solid var(--line); width: 44px; }
+.wf-table th:first-child { width: auto; text-align: left; }
+.wf-table th .muted { font-weight: 500; font-size: .64rem; }
+.wf-table th.today { color: var(--brand); } .wf-table th.future { opacity: .45; }
+.wf-table td { padding: 6px 2px; border-bottom: 1px dashed #f3f4f6; vertical-align: top; }
+.wf-table td.wf-c { text-align: center; } .wf-table td.wf-c.future { background: #fafafa; } .wf-table td.wf-c.today { background: #f5f3ff; }
+.wf-t details > summary { cursor: pointer; list-style: none; font-size: .82rem; font-weight: 700; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wf-t details > summary::-webkit-details-marker { display: none; }
+.wf-t .wf-d { font-size: .78rem; color: var(--ink-2); margin: 4px 0 0 26px; line-height: 1.5; }
+.dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-top: 4px; }
+.dot.p { background: var(--good); } .dot.n { background: var(--bad); }
+.todo-box h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.prog { font-size: .76rem; color: var(--muted); font-weight: 600; margin-left: auto; } .prog b { color: var(--ink); }
+.prog-bar { flex-basis: 100%; height: 6px; background: #f3f4f6; border-radius: 999px; overflow: hidden; margin-top: 2px; }
+.prog-bar i { display: block; height: 100%; background: var(--good); border-radius: 999px; transition: width .2s; }
+.act-filter { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 4px; }
+.act-filter .chip-btn { padding: 3px 10px; font-size: .74rem; }
+details.past-fold > summary { font-size: .84rem; }
+details.past-fold .box { margin-top: 8px; }
+.carry-btn { margin-top: 6px; }
+/* 집중 상품 카드 2차 (2026-10-27) */
+.fc-stats { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 10px; }
+.fs { border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px; background: #fafafa; min-width: 0; }
+.fs-l { font-size: .66rem; color: var(--muted); font-weight: 700; white-space: nowrap; }
+.fs-v { font-size: .98rem; font-weight: 800; margin-top: 2px; line-height: 1.2; }
+.fs-s { font-size: .64rem; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fs.good { background: var(--good-bg); border-color: #bbf7d0; } .fs.good .fs-v { color: var(--good); }
+.fs.bad { background: var(--bad-bg); border-color: #fecaca; } .fs.bad .fs-v { color: var(--bad); }
+.fc-ev { margin-top: 8px; font-size: .78rem; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.fc-ev i { color: #9a3412; }
+.fc-ev .chip.ev { white-space: normal; }
+.fc-status { margin-top: 8px; font-size: .84rem; line-height: 1.55; }
+.fc-status b, .fc-grow b { color: #0e7490; margin-right: 4px; }
+.fc-grow { margin-top: 6px; font-size: .84rem; line-height: 1.55; }
+.fc-grow ol { margin: 2px 0 0 20px; }
+.fc-grow li { margin: 2px 0; }
+@container rv (max-width: 860px) { .fc-stats { grid-template-columns: repeat(4, 1fr); } }
+@container rv (max-width: 520px) { .fc-stats { grid-template-columns: repeat(3, 1fr); } .wf-table th { width: 30px; } }
