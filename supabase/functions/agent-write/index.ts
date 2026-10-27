@@ -10,8 +10,9 @@ import { AgentDef, isCronRequest, writeStage } from "../_shared/agent.ts";
 import { DEF as SALES } from "../sales-agent/def.ts";
 import { DEF as RETURNS } from "../returns-agent/def.ts";
 import { DEF as STRATEGY } from "../strategy-agent/def.ts";
+import { DEF as ADS } from "../ads-agent/def.ts";
 
-const DEFS: Record<string, AgentDef> = { sales: SALES, returns: RETURNS, strategy: STRATEGY };
+const DEFS: Record<string, AgentDef> = { sales: SALES, returns: RETURNS, strategy: STRATEGY, ads: ADS };
 
 Deno.serve(async (req) => {
   const opt = handleOptions(req);

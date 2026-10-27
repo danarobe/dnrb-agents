@@ -355,6 +355,58 @@ function reportHtml(r) {
     }).join('');
     const scopeNote = d.review_scope_missing ? `<div class="notice warn"><b><i class="fa-solid fa-key"></i> 리뷰는 아직 반영되지 않았어요.</b> 카페24 개발자센터에서 게시판 읽기 권한을 켠 뒤, 워크스페이스의 <b>카페24 연동</b> 버튼으로 한 번 재연동하면 다음 분석부터 리뷰(고객이 실제로 쓰는 말)가 훅의 근거로 들어갑니다.</div>` : '';
     extraBoxes = scopeNote + fsBox + `<div class="box"><h3><i class="fa-solid fa-bullhorn" style="color:#b45309;"></i> 상품별 소재 제작안</h3>${cards || '<div class="muted">없음</div>'}</div>`;
+  } else if (r.agent === 'ads') {
+    // 광고 운영 담당(2026-10-27): 맨 위 = 상품별 운영 판단 칩 → 친구 대시보드의 '어제 광고 보고서' 그대로 → 판단 표. 타일 = 어제 KPI(친구 보고서, 없으면 우리 수집)
+    const fb = d.friend_brief || null, b = fb && fb.brief ? fb.brief : null;
+    const kpi = (b && b.kpi) || d.kpi_own || {};
+    const y = kpi.yesterday || null, y2 = kpi.day_before || null, a7 = kpi.avg_7d || null;
+    const dl = (cur, base, label, goodUp = true) => (cur == null || !base) ? '' : (() => { const pct = Math.round((cur - base) / base * 100); const cls = Math.abs(pct) < 1 ? '' : ((pct > 0) === goodUp ? 'up' : 'down'); return `<span class="${cls}">${label} ${pct > 0 ? '+' : ''}${pct}%</span>`; })();
+    const sub = (k, goodUp) => y ? [dl(y[k], y2 && y2[k], '그제', goodUp), dl(y[k], a7 && a7[k], '7일 평균', goodUp)].filter(Boolean).join(' · ') : '';
+    tiles = y ? [
+      tile('어제 광고비', fmtMan(y.spend), sub('spend', false) || (b ? '친구 보고서 기준' : '우리 수집')),
+      tile('어제 구매', `${fmt(y.purchases)}건`, sub('purchases', true)),
+      tile('어제 구매액', fmtMan(y.value), sub('value', true)),
+      tile('어제 ROAS', y.roas != null ? y.roas : '—', sub('roas', true)),
+    ].join('') : tile('어제 광고 KPI', '—', 'Meta 합계를 받지 못함');
+    const DK = { '힘주기': 'v-push', '증액 보류': 'v-hold', '다시 켜기': 'v-on', '줄이기': 'v-check', '유지': 'v-keep' };
+    const DI = { '힘주기': 'fa-arrow-up', '증액 보류': 'fa-pause', '다시 켜기': 'fa-power-off', '줄이기': 'fa-arrow-down', '유지': 'fa-equals' };
+    const dcs = rp.decisions || [];
+    if (dcs.length) headBody = `${(rp.summary || []).length ? `<div class="h-sub">${(rp.summary || []).slice(0, 2).map(escHtml).join('<br>')}</div>` : ''}
+        <div class="verdicts">${dcs.map(x => `<div class="vd ${DK[x.kind] || 'v-keep'}"><span class="vd-k"><i class="fa-solid ${DI[x.kind] || 'fa-circle'}"></i> ${escHtml(x.kind)}</span><div class="vd-body"><b>${escHtml(pn(x.product))}</b><span class="vd-r">${escHtml(x.reason)}</span></div></div>`).join('')}</div>`;
+    // 어제 광고 보고서(친구 대시보드) 그대로
+    if (fb) {
+      const secs = b ? (b.sections || []).filter(sx => (sx.items || []).length).map(sx => `<div class="fb-sec ${/할 일/.test(sx.title || '') ? 'todo' : ''}"><div class="fb-t">${escHtml(sx.title || '')}</div><ul>${(sx.items || []).map(it => `<li>${escHtml(it)}</li>`).join('')}</ul></div>`).join('') : '';
+      const c24 = b && b.cafe24 && b.cafe24.order_amount ? `<span class="chip">카페24 매출 ${fmtMan(b.cafe24.order_amount)}</span>` : '';
+      headExtra += `<div class="box fb-box"><h3><i class="fa-solid fa-newspaper" style="color:#ea580c;"></i> 어제 광고 보고서 <span class="muted small">친구 광고 대시보드 · 매일 9시 생성 · ${fb.date ? md(fb.date) + ' 기준' : ''}${b && b.written_at ? ` · 작성 ${timeLabel(b.written_at)}` : ''}</span></h3>
+        ${fb.stale ? `<div class="notice warn"><i class="fa-regular fa-clock"></i> ${escHtml(fb.note || '그날 보고서가 아직 없어 이전 보고서를 보여줘요')}</div>` : ''}
+        ${b ? `<div class="fb-head">${escHtml(b.headline || '')} ${c24}</div>${secs}` : '<div class="muted">친구 대시보드 보고서를 받지 못했어요</div>'}
+        <div class="muted small">친구 대시보드 메뉴 '어제 광고 보고서'와 같은 내용(소재 카드는 거기서). 아래 상품별 판단은 우리 담당자가 더한 것.</div></div>`;
+    } else {
+      headExtra += `<div class="box fb-box"><h3><i class="fa-solid fa-newspaper" style="color:#ea580c;"></i> 어제 광고 보고서</h3><div class="notice warn">친구 광고 대시보드 보고서를 받지 못했어요 — 아래 판단은 우리 수집(전략 보고서·Meta)만으로 썼어요.</div></div>`;
+    }
+    // 상품별 운영 판단 표
+    const prods = d.products || [];
+    const won = v => v == null ? '—' : v >= 10000 ? (v / 10000).toFixed(v >= 100000 ? 0 : 1).replace(/\.0$/, '') + '만' : Math.round(v).toLocaleString('ko-KR') + '원';
+    const perfCell = p => p ? `${won(p.spend)}<div class="muted">${p.roas != null ? `ROAS <b class="${p.roas >= 2 ? 'up' : p.roas < 1 ? 'down' : ''}">${p.roas}</b>` : '—'} · ${fmt(p.purchases)}건</div>` : '<span class="muted" title="광고 정보 없음">모름</span>';
+    const decided = new Map(dcs.map(x => [x.product, x]));
+    const rowsHtml = prods.map(p => {
+      const dcs1 = decided.get(p.name);
+      const kind = dcs1 ? dcs1.kind : (p.hint || '유지');
+      const rt = p.returns;
+      return `<tr class="${dcs1 ? '' : 'dim'}">
+        <td><b>${escHtml(pn(p.name))}</b>${p.is_new ? ' <span class="chip new">신상</span>' : ''}${p.codi_share != null && p.codi_share >= 20 ? ` <span class="chip codi ${p.codi_share >= 40 ? 'hi' : 'mid'}">코디 ${p.codi_share}%</span>` : ''}<div class="muted">${(p.src || []).map(escHtml).join(' · ')}${(p.promos || []).length ? ` · <span class="chip ev">${escHtml(p.promos[0])}</span>` : ''}</div></td>
+        <td><span class="vd-chip ${DK[kind] || 'v-keep'}"><i class="fa-solid ${DI[kind] || 'fa-circle'}"></i> ${escHtml(kind)}</span>${dcs1 ? '' : '<div class="muted small">규칙 판단</div>'}</td>
+        <td>${escHtml(dcs1 ? dcs1.reason : (p.hint_why || ''))}</td>
+        <td class="r">${p.active_ads == null ? '<span class="muted">모름</span>' : `${p.active_ads}개`}<div class="muted">${p.paused_ads ? `꺼짐 ${p.paused_ads}` : ''}</div></td>
+        <td class="r">${perfCell(p.ad_7d)}</td>
+        <td class="r">${perfCell(p.ad_14d)}</td>
+        <td class="r">${p.margin_rate != null ? p.margin_rate + '%' : '—'}<div class="muted">${rt ? `<b class="${String(rt.level) === '위험' ? 'down' : ''}">반품 ${rt.rate_14d ?? '—'}%</b>` : (p.rate_14d != null ? `주문율 ${p.rate_14d}%` : '')}</div></td>
+      </tr>`;
+    }).join('');
+    headExtra += `<div class="box"><h3><i class="fa-solid fa-sliders" style="color:#ea580c;"></i> 상품별 운영 판단 <span class="muted small">전략 담당 후보 + 반품 위험 상품 ${prods.length}개 · 광고비·ROAS = 그 상품 ON 광고 전부의 Meta 합 · 흐린 줄은 담당자가 따로 결론 내지 않은 상품(규칙 판단)</span></h3>
+      ${rowsHtml ? `<div class="tbl-wrap"><table class="risk stack t-ads"><thead><tr><th>상품</th><th>판단</th><th>근거</th><th class="r">ON 광고</th><th class="r">7일 광고비</th><th class="r">14일 광고비</th><th class="r">마진</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>` : '<div class="muted">후보 상품이 없어요</div>'}
+      ${d.ads_known === false ? '<div class="muted small warn-text">Meta 광고 정보를 받지 못해 광고 칸은 비어 있어요 (광고가 없다는 뜻이 아님)</div>' : ''}
+      <div class="muted small">판단은 제안이에요. 예산 변경·ON/OFF는 광고팀이 광고관리자에서 직접 합니다. 꺼진 광고를 켜기 전엔 왜 껐는지 확인하세요.</div></div>`;
   } else if (r.agent === 'strategy') {
     const na = d.new_arrivals || {}, mx = rp.matrix || [];
     const cnt = q => (na.matrix || []).filter(p => String(p.quadrant).startsWith(q)).length;
@@ -623,7 +675,7 @@ function rawTableStrategy(d) {
 
 /* ── 팀 협업 칸 (2026-10-17): 동료 보고서에서 가져온 것 · 받은 요청 · 동료에게 넘기는 요청 ──
    handoffs[].to 가 상세 점검·광고 소재 담당이고 상품 번호가 맞춰져 있으면 바로 실행 버튼, 아니면 담당자 카드로 가서 상품을 고르게. */
-const TEAM_KEY = { '오늘의 요약': 'sales', '매출 분석 담당': 'sales', '취소·반품 감시 담당': 'returns', '상품 전략 담당': 'strategy', '광고 소재 담당': 'creative', '상세페이지 점검 담당': 'detail' };
+const TEAM_KEY = { '오늘의 요약': 'sales', '매출 분석 담당': 'sales', '취소·반품 감시 담당': 'returns', '상품 전략 담당': 'strategy', '광고 운영 담당': 'ads', '광고 소재 담당': 'creative', '상세페이지 점검 담당': 'detail' };
 function teamChip(label) { const k = TEAM_KEY[label], a = k && agentOf(k); return a ? `<span class="chip team" style="color:${a.color};background:${a.color}1a;"><i class="fa-solid ${a.icon}"></i> ${escHtml(label)}</span>` : `<span class="chip">${escHtml(label || '')}</span>`; }
 /* 카페24 통계 상품명의 ' - Danarobe' 접미사는 화면에서 뗀다 */
 const pn = n => String(n || '').replace(/\s*[-–—|]\s*(danarobe|dana|다나로브|다나)\s*$/i, '');

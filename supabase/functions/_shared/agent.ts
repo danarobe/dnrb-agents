@@ -96,7 +96,7 @@ export function safeCollector() {
 //   각 담당자는 보고서를 쓰기 전에 다른 담당자들의 최근 보고서 요약(colleagues)과 자기에게 온 요청(handoffs_to_me)을 받는다.
 //   아침 순서가 매출(08:00) → 반품(08:15) → 전략(08:30)이라 반품은 오늘 매출 보고서를, 전략은 오늘 매출·반품 보고서를, 매출은 어제 전략·반품을 본다.
 //   보고서에는 colleague_notes(동료 것을 어떻게 반영했나)와 handoffs(동료에게 넘기는 요청)가 생기고, 다음 보고서가 그 요청에 답한다.
-export const AGENT_LABELS: Record<string, string> = { sales: "오늘의 요약", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", creative: "광고 소재 담당", detail: "상세페이지 점검 담당" };
+export const AGENT_LABELS: Record<string, string> = { sales: "오늘의 요약", returns: "취소·반품 감시 담당", strategy: "상품 전략 담당", ads: "광고 운영 담당", creative: "광고 소재 담당", detail: "상세페이지 점검 담당" };
 export const COLLEAGUE_TARGETS = Object.values(AGENT_LABELS);
 // 담당자 이름을 정확한 표시 이름으로 맞춘다 (2026-10-18) — 스키마의 enum을 뺐기 때문.
 //   이유: 상품 전략 담당 스키마에 협업 칸(colleague_notes·handoffs)의 담당자 enum이 더해지자 Claude API가
@@ -106,7 +106,7 @@ export function matchColleague(v: unknown): string | null {
   const s = String(v ?? "").normalize("NFC").replace(/\s+/g, "");
   if (!s) return null;
   for (const l of COLLEAGUE_TARGETS) if (l.replace(/\s+/g, "") === s) return l;
-  const keys: [RegExp, string][] = [[/상세/, AGENT_LABELS.detail], [/소재|광고/, AGENT_LABELS.creative], [/반품|취소/, AGENT_LABELS.returns], [/전략/, AGENT_LABELS.strategy], [/매출|요약|overview/i, AGENT_LABELS.sales]];
+  const keys: [RegExp, string][] = [[/상세/, AGENT_LABELS.detail], [/운영/, AGENT_LABELS.ads], [/소재|광고/, AGENT_LABELS.creative], [/반품|취소/, AGENT_LABELS.returns], [/전략/, AGENT_LABELS.strategy], [/매출|요약|overview/i, AGENT_LABELS.sales]];
   for (const [re, l] of keys) if (re.test(s)) return l;
   return null;
 }
@@ -126,9 +126,13 @@ function colleagueDigest(agent: string, rp: Row): Row {
   }
   if (agent === "strategy") {
     base.matrix = ((rp.matrix ?? []) as Row[]).slice(0, 8).map((m) => ({ name: m.name, quadrant: m.quadrant, rate_14d: m.rate_14d, views_14d: m.views_14d, active_ads: m.active_ads }));
-    base.focus = ((rp.focus ?? []) as Row[]).slice(0, 6).map((f) => ({ name: f.name, why: clip(f.why, 40), plan: clip(f.plan, 70), detail_focus: clip(f.detail_focus, 60) }));
+    base.focus = ((rp.focus ?? []) as Row[]).slice(0, 6).map((f) => ({ name: f.name, why: clip(f.why, 40), status: clip(f.status, 80), grow: ((f.grow ?? []) as unknown[]).slice(0, 3).map((g) => clip(g, 50)), plan: clip(f.plan, 70), detail_focus: clip(f.detail_focus, 60) }));
+    base.verdicts = ((rp.verdicts ?? []) as Row[]).slice(0, 5).map((v) => `${v.kind}: ${clip(v.product, 30)} — ${clip(v.reason, 30)}`);
     base.trend_actions = ((rp.trend_actions ?? []) as Row[]).slice(0, 3).map((t) => ({ keyword: t.keyword, our_products: t.our_products, suggestion: clip(t.suggestion, 50) }));
     base.weather_plan = clip(rp.weather_plan, 100);
+  }
+  if (agent === "ads") {
+    base.decisions = ((rp.decisions ?? []) as Row[]).slice(0, 10).map((d) => `${d.kind}: ${clip(d.product, 30)} — ${clip(d.reason, 40)}`);
   }
   if (agent === "creative") {
     base.briefs = ((rp.briefs ?? []) as Row[]).filter((b) => b.status === "ok" && b.brief).slice(0, 8).map((b) => {

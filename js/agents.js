@@ -20,8 +20,14 @@ const AGENTS = [
   {
     key: 'strategy', name: '상품 전략 담당', icon: 'fa-chess', color: '#0891b2', status: 'active', fn: 'strategy-agent',
     schedule: '매일 아침 8시 30분',
-    desc: '신상품을 조회수×주문율 4분면으로 나눠 어디에 힘을 실을지 정하고, 급상승·TOP10 상품은 광고 소재를 분석해 추가 소재 컨셉·릴스 훅 멘트·상세 강조점을 제안합니다. 마진과 1+1·할인 행사를 함께 봅니다.',
+    desc: '오늘의 결론 칩(밀기·보류·점검·시즌·소싱)과 판매량 급증 TOP10(광고 수·7일 광고비·ROAS·주문율)으로 시작해, 신상품을 조회수×주문율 4분면 격자로 나누고, 급상승·TOP10 집중 상품은 숫자(조회·주문율·판매·마진·ON 광고·14일 광고비·ROAS·이벤트)로 현재 상태와 판매 확대 액션을 씁니다. 잘 팔리는 상품의 코디 상품은 주문 동반 비율로 가려냅니다. 소재 분석은 광고 소재 담당 몫.',
     sources: ['카페24 NEW ARRIVALS', '조회수·주문율', '혜택(1+1·할인)', 'Meta 광고 소재'],
+  },
+  {
+    key: 'ads', name: '광고 운영 담당', icon: 'fa-sliders', color: '#ea580c', status: 'active', fn: 'ads-agent',
+    schedule: '매일 아침 9시 20분',
+    desc: '친구 광고 대시보드의 \'어제 광고 보고서\'(9시 생성)를 그대로 가져오고, 그 아래에 상품 전략 담당 보고서·반품 위험·Meta 광고 상태를 합쳐 상품별로 힘주기 / 증액 보류 / 다시 켜기 / 줄이기 / 유지를 판단해 광고 운영자의 결정을 돕습니다. 예산을 바꾸지는 않습니다.',
+    sources: ['어제 광고 보고서(친구 대시보드)', '오늘 상품 전략 보고서', '반품 위험 상품', 'Meta ON·꺼진 광고'],
   },
   {
     key: 'detail', name: '상세페이지 점검 담당', icon: 'fa-file-image', color: '#7c3aed', status: 'active', fn: 'detail-agent', onDemand: true,
@@ -92,6 +98,7 @@ const ORG_DESKS = {
   returns:  { time: '08:15', q: '반품은 괜찮나?' },
   strategy: { time: '08:30', q: '어떤 상품을 밀까?' },
   sales:    { time: '08:45', q: '오늘, 한 장으로?' },
+  ads:      { time: '09:20', q: '어떤 광고에 힘을 줄까?' },
   detail:   { time: '요청하면', q: '상세 어디를 고칠까?' },
   creative: { time: '월요일 · 요청하면', q: '어떤 소재로 팔까?' },
 };
@@ -111,14 +118,14 @@ function orgChartHtml() {
   return `<div class="org">
     <div class="org-head"><b><i class="fa-solid fa-building"></i> 매출 성장팀</b><span class="muted small">08:00 어제 매출 숫자판 → 반품·전략이 보고 일하고 → 요약이 한 장으로 마무리</span></div>
     <div class="org-rules">
-      <div class="rule"><span class="rule-k daily"><i class="fa-solid fa-sun"></i> 매일 자동</span><span>08:00 숫자판 → 08:15 취소·반품 → 08:30 상품 전략 → 08:45 오늘의 요약 <b class="muted">(알림은 요약 1번)</b></span></div>
+      <div class="rule"><span class="rule-k daily"><i class="fa-solid fa-sun"></i> 매일 자동</span><span>08:00 숫자판 → 08:15 취소·반품 → 08:30 상품 전략 → 08:45 오늘의 요약 → 09:20 광고 운영 <b class="muted">(알림은 요약 1번)</b></span></div>
       <div class="rule"><span class="rule-k weekly"><i class="fa-solid fa-calendar-week"></i> 매주 자동</span><span>월요일 09:00 광고 소재 — 급상승 5 + 베스트 5 상품 제작안</span></div>
       <div class="rule"><span class="rule-k ask"><i class="fa-solid fa-hand-pointer"></i> 요청할 때</span><span>상세페이지 점검 · 광고 소재 1개 · 담당자에게 질문 — 버튼으로만, 자동 실행 없음</span></div>
     </div>
     <div class="org-grid">
-      ${orgDesk('returns')}${right}${orgDesk('strategy')}${right}${orgDesk('sales')}
-      ${down('부탁', 'd1')}<div></div>${down('부탁', 'd2')}<div></div><div class="org-gap"></div>
-      ${orgDesk('detail')}<div></div>${orgDesk('creative')}<div></div><div class="org-gap"></div>
+      ${orgDesk('returns')}${right}${orgDesk('strategy')}${right}${orgDesk('sales')}${right}${orgDesk('ads')}
+      ${down('부탁', 'd1')}<div></div>${down('부탁', 'd2')}<div></div><div class="org-gap"></div><div class="org-gap"></div><div class="org-gap"></div>
+      ${orgDesk('detail')}<div></div>${orgDesk('creative')}<div></div><div class="org-gap"></div><div class="org-gap"></div><div class="org-gap"></div>
     </div>
     <details class="org-help"><summary><i class="fa-regular fa-circle-question"></i> 이 그림 읽는 법</summary>
       <ul>
