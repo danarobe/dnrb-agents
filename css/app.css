@@ -611,3 +611,26 @@ details.past-fold .box { margin-top: 8px; }
 .fb-sec ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .84rem; line-height: 1.55; color: var(--ink-2); }
 table.t-ads th:nth-child(2) { width: 92px; } table.t-ads th:nth-child(3) { width: 24%; } table.t-ads th:nth-child(4) { width: 64px; } table.t-ads th:nth-child(5), table.t-ads th:nth-child(6) { width: 84px; } table.t-ads th:nth-child(7) { width: 74px; }
 table.t-ads tr.dim { opacity: .62; }
+/* 광고 운영 담당 — 친구 '어제 광고 보고서' 화면 모양 그대로 (2026-10-27) */
+.fb-page { border: 1px solid #fed7aa; border-radius: 16px; padding: 14px 16px; margin-bottom: 14px; background: #fff; }
+.fb-title { font-size: .9rem; font-weight: 800; margin-bottom: 10px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.fb-title i { color: #ea580c; }
+.fb-head { font-size: 1.02rem; font-weight: 600; line-height: 1.55; padding: 14px 16px; border-radius: 12px; margin-bottom: 14px; background: #eef2ff; color: #1e1b4b; }
+.fb-head.err { background: #fef2f2; }
+.bf-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.bf-kt { background: #fff; border: 1px solid #e7e8ee; border-radius: 14px; padding: 12px 14px; position: relative; overflow: hidden; min-width: 0; }
+.bf-kt::before { content: ''; position: absolute; right: -16px; top: -16px; width: 62px; height: 62px; border-radius: 50%; background: rgba(99,102,241,.07); }
+.bf-kl { font-size: .72rem; font-weight: 700; color: #6b7280; margin-bottom: 6px; }
+.bf-kv { font-size: 1.2rem; font-weight: 800; line-height: 1.1; color: #1a1a2e; }
+.bf-ks { font-size: .7rem; color: #9ca3af; margin-top: 5px; font-weight: 600; display: flex; gap: 8px; flex-wrap: wrap; }
+.bf-ks b.up { color: #15803d; } .bf-ks b.down { color: #dc2626; }
+.bf-bars { border: 1px solid #e7e8ee; border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+.bf-bt { font-size: .8rem; font-weight: 800; color: #374151; margin-bottom: 6px; }
+.bf-bar-row { display: flex; align-items: flex-end; gap: 6px; height: 90px; }
+.bf-bar { flex: 1; min-width: 0; max-width: 40px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 3px; font-size: .62rem; color: #9ca3af; }
+.bf-bar.on { color: #111827; }
+.bf-bar i { display: block; width: 100%; background: #e0e7ff; border-radius: 3px 3px 0 0; }
+.bf-bar.on i { background: #4f46e5; }
+.ours-box { border-color: #fdba74; }
+.ours-head { font-size: 1rem; font-weight: 800; line-height: 1.5; margin: 6px 0 4px; }
+.ours-box .h-sub { margin-bottom: 8px; }

@@ -356,35 +356,42 @@ function reportHtml(r) {
     const scopeNote = d.review_scope_missing ? `<div class="notice warn"><b><i class="fa-solid fa-key"></i> 리뷰는 아직 반영되지 않았어요.</b> 카페24 개발자센터에서 게시판 읽기 권한을 켠 뒤, 워크스페이스의 <b>카페24 연동</b> 버튼으로 한 번 재연동하면 다음 분석부터 리뷰(고객이 실제로 쓰는 말)가 훅의 근거로 들어갑니다.</div>` : '';
     extraBoxes = scopeNote + fsBox + `<div class="box"><h3><i class="fa-solid fa-bullhorn" style="color:#b45309;"></i> 상품별 소재 제작안</h3>${cards || '<div class="muted">없음</div>'}</div>`;
   } else if (r.agent === 'ads') {
-    // 광고 운영 담당(2026-10-27): 맨 위 = 상품별 운영 판단 칩 → 친구 대시보드의 '어제 광고 보고서' 그대로 → 판단 표. 타일 = 어제 KPI(친구 보고서, 없으면 우리 수집)
+    // 광고 운영 담당(2026-10-27, 사용자 "친구 보고서 형식은 그대로 두고 내가 추가한 것만"): 위 = 친구 대시보드 '어제 광고 보고서' 화면 그대로(헤드라인 띠 → KPI 타일 6 + 카페24 매출 → 최근 ROAS 막대 → 섹션 상자),
+    //   아래 = 우리가 더한 '상품별 광고 운영 판단'(헤드라인·요약·판단 칩·표). 공통 타일은 쓰지 않는다.
     const fb = d.friend_brief || null, b = fb && fb.brief ? fb.brief : null;
-    const kpi = (b && b.kpi) || d.kpi_own || {};
-    const y = kpi.yesterday || null, y2 = kpi.day_before || null, a7 = kpi.avg_7d || null;
-    const dl = (cur, base, label, goodUp = true) => (cur == null || !base) ? '' : (() => { const pct = Math.round((cur - base) / base * 100); const cls = Math.abs(pct) < 1 ? '' : ((pct > 0) === goodUp ? 'up' : 'down'); return `<span class="${cls}">${label} ${pct > 0 ? '+' : ''}${pct}%</span>`; })();
-    const sub = (k, goodUp) => y ? [dl(y[k], y2 && y2[k], '그제', goodUp), dl(y[k], a7 && a7[k], '7일 평균', goodUp)].filter(Boolean).join(' · ') : '';
-    tiles = y ? [
-      tile('어제 광고비', fmtMan(y.spend), sub('spend', false) || (b ? '친구 보고서 기준' : '우리 수집')),
-      tile('어제 구매', `${fmt(y.purchases)}건`, sub('purchases', true)),
-      tile('어제 구매액', fmtMan(y.value), sub('value', true)),
-      tile('어제 ROAS', y.roas != null ? y.roas : '—', sub('roas', true)),
-    ].join('') : tile('어제 광고 KPI', '—', 'Meta 합계를 받지 못함');
+    const wonF = v => v == null ? '–' : Math.round(v).toLocaleString('ko-KR') + '원';
+    const delta = (cur, base, dir, label) => {
+      if (!base || cur == null) return `<span class="bf-dl muted">${label} –</span>`;
+      const p = (cur - base) / base * 100, cls = Math.abs(p) < 1 || dir === 0 ? '' : (p > 0) === (dir > 0) ? 'up' : 'down';
+      return `<span class="bf-dl">${label} <b class="${cls}">${p > 0 ? '+' : ''}${p.toFixed(0)}%</b></span>`;
+    };
+    const BK = [['spend', '지출', wonF, 0], ['value', '매출(전환값)', wonF, 1], ['roas', 'ROAS', n => (+n).toFixed(2), 1], ['purchases', '구매', n => fmt(Math.round(n)) + '건', 1], ['cpa', 'CPA', wonF, -1], ['cpc', 'CPC', wonF, -1]];
+    const recent = (fb && fb.recent) || [];
+    const amtOf = dt => { const x = recent.find(z => z.date === dt); return x && x.cafe24 ? x.cafe24.order_amount : null; };
+    const shift = (dt, n) => { const x = new Date(dt + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+    let friendHtml = '';
+    if (b) {
+      const k = b.kpi || {}, y = k.yesterday;
+      const kpis = y ? `<div class="bf-kpis">${BK.map(([key, name, f, dir]) => `<div class="bf-kt"><div class="bf-kl">${name}</div><div class="bf-kv">${y[key] == null ? '–' : f(y[key])}</div><div class="bf-ks">${delta(y[key], (k.day_before || {})[key], dir, '그제')}${delta(y[key], (k.avg_7d || {})[key], dir, '7일 평균')}</div></div>${key === 'value' && b.cafe24 ? (() => { const c = b.cafe24, d0 = c.date || b.date, prev = amtOf(shift(d0, -1)); const wk = [1, 2, 3, 4, 5, 6, 7].map(i => amtOf(shift(d0, -i))).filter(v => v != null), avg = wk.length >= 3 ? wk.reduce((t, v) => t + v, 0) / wk.length : null;
+        return `<div class="bf-kt"><div class="bf-kl">카페24 매출 (자사몰)${c.date && c.date !== b.date ? ` · ${md(c.date)}` : ''}</div><div class="bf-kv">${wonF(c.order_amount || 0)}</div><div class="bf-ks">${delta(c.order_amount, prev, 1, '그제')}${avg != null ? delta(c.order_amount, avg, 1, `${wk.length}일 평균`) : ''}<span class="bf-dl muted">주문 ${fmt(c.paid_qty || 0)}개 · 취소 ${fmt(c.cancel_qty || 0)}</span></div></div>`; })() : ''}`).join('')}</div>` : '';
+      const store = b.cafe24 && b.cafe24.note ? `<div class="muted small" style="margin:-6px 2px 10px;">카페24: ${escHtml(b.cafe24.note)}</div>` : '';
+      const rs = recent.filter(z => z.roas != null), mx = Math.max(1, ...rs.map(z => z.roas));
+      const bars = rs.length > 1 ? `<div class="bf-bars"><div class="bf-bt">최근 ROAS</div><div class="bf-bar-row">${rs.map(z => `<div class="bf-bar ${z.date === b.date ? 'on' : ''}" title="${md(z.date)} ROAS ${z.roas.toFixed(2)}"><span>${z.roas.toFixed(1)}</span><i style="height:${Math.max(4, z.roas / mx * 56)}px;"></i><span>${md(z.date)}</span></div>`).join('')}</div></div>` : '';
+      const secs = (b.sections || []).filter(sx => (sx.items || []).length).map(sx => `<div class="fb-sec ${/할 일/.test(sx.title || '') ? 'todo' : ''}"><div class="fb-t">${escHtml(sx.title || '')}</div><ul>${(sx.items || []).map(it => `<li>${escHtml(it)}</li>`).join('')}</ul></div>`).join('');
+      friendHtml = `${fb.stale ? `<div class="notice warn"><i class="fa-regular fa-clock"></i> ${escHtml(fb.note || '그날 보고서가 아직 없어 이전 보고서를 보여줘요')}</div>` : ''}
+        <div class="fb-head ${b.status === 'error' ? 'err' : ''}">${escHtml(b.headline || '')}</div>
+        ${kpis}${store}${bars}${secs}
+        ${b.written_at ? `<div class="muted small">작성 ${escHtml(new Date(b.written_at).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }))} · Meta 광고관리자 기준 (어트리뷰션 반영으로 이후 숫자가 조금 바뀔 수 있어요) · 읽기·제안 전용, 예산은 바꾸지 않아요</div>` : ''}`;
+    } else {
+      friendHtml = `<div class="notice warn">친구 광고 대시보드 보고서를 받지 못했어요 — ${escHtml((fb && fb.note) || '연결 실패')}. 아래 판단은 우리 수집(전략 보고서·Meta)만으로 썼어요.</div>`;
+    }
+    headBody = `<div class="fb-page"><div class="fb-title"><i class="fa-solid fa-newspaper"></i> 어제 광고 보고서 <span class="muted small">친구 광고 대시보드 · 매일 9시 생성${fb && fb.date ? ` · ${md(fb.date)} 기준` : ''}</span></div>${friendHtml}</div>`;
+    tilesCls = 'none';
+    // ── 우리가 더한 것: 상품별 광고 운영 판단 ──
     const DK = { '힘주기': 'v-push', '증액 보류': 'v-hold', '다시 켜기': 'v-on', '줄이기': 'v-check', '유지': 'v-keep' };
     const DI = { '힘주기': 'fa-arrow-up', '증액 보류': 'fa-pause', '다시 켜기': 'fa-power-off', '줄이기': 'fa-arrow-down', '유지': 'fa-equals' };
     const dcs = rp.decisions || [];
-    if (dcs.length) headBody = `${(rp.summary || []).length ? `<div class="h-sub">${(rp.summary || []).slice(0, 2).map(escHtml).join('<br>')}</div>` : ''}
-        <div class="verdicts">${dcs.map(x => `<div class="vd ${DK[x.kind] || 'v-keep'}"><span class="vd-k"><i class="fa-solid ${DI[x.kind] || 'fa-circle'}"></i> ${escHtml(x.kind)}</span><div class="vd-body"><b>${escHtml(pn(x.product))}</b><span class="vd-r">${escHtml(x.reason)}</span></div></div>`).join('')}</div>`;
-    // 어제 광고 보고서(친구 대시보드) 그대로
-    if (fb) {
-      const secs = b ? (b.sections || []).filter(sx => (sx.items || []).length).map(sx => `<div class="fb-sec ${/할 일/.test(sx.title || '') ? 'todo' : ''}"><div class="fb-t">${escHtml(sx.title || '')}</div><ul>${(sx.items || []).map(it => `<li>${escHtml(it)}</li>`).join('')}</ul></div>`).join('') : '';
-      const c24 = b && b.cafe24 && b.cafe24.order_amount ? `<span class="chip">카페24 매출 ${fmtMan(b.cafe24.order_amount)}</span>` : '';
-      headExtra += `<div class="box fb-box"><h3><i class="fa-solid fa-newspaper" style="color:#ea580c;"></i> 어제 광고 보고서 <span class="muted small">친구 광고 대시보드 · 매일 9시 생성 · ${fb.date ? md(fb.date) + ' 기준' : ''}${b && b.written_at ? ` · 작성 ${timeLabel(b.written_at)}` : ''}</span></h3>
-        ${fb.stale ? `<div class="notice warn"><i class="fa-regular fa-clock"></i> ${escHtml(fb.note || '그날 보고서가 아직 없어 이전 보고서를 보여줘요')}</div>` : ''}
-        ${b ? `<div class="fb-head">${escHtml(b.headline || '')} ${c24}</div>${secs}` : '<div class="muted">친구 대시보드 보고서를 받지 못했어요</div>'}
-        <div class="muted small">친구 대시보드 메뉴 '어제 광고 보고서'와 같은 내용(소재 카드는 거기서). 아래 상품별 판단은 우리 담당자가 더한 것.</div></div>`;
-    } else {
-      headExtra += `<div class="box fb-box"><h3><i class="fa-solid fa-newspaper" style="color:#ea580c;"></i> 어제 광고 보고서</h3><div class="notice warn">친구 광고 대시보드 보고서를 받지 못했어요 — 아래 판단은 우리 수집(전략 보고서·Meta)만으로 썼어요.</div></div>`;
-    }
-    // 상품별 운영 판단 표
+    const chips = dcs.length ? `<div class="verdicts">${dcs.map(x => `<div class="vd ${DK[x.kind] || 'v-keep'}"><span class="vd-k"><i class="fa-solid ${DI[x.kind] || 'fa-circle'}"></i> ${escHtml(x.kind)}</span><div class="vd-body"><b>${escHtml(pn(x.product))}</b><span class="vd-r">${escHtml(x.reason)}</span></div></div>`).join('')}</div>` : '';
     const prods = d.products || [];
     const won = v => v == null ? '—' : v >= 10000 ? (v / 10000).toFixed(v >= 100000 ? 0 : 1).replace(/\.0$/, '') + '만' : Math.round(v).toLocaleString('ko-KR') + '원';
     const perfCell = p => p ? `${won(p.spend)}<div class="muted">${p.roas != null ? `ROAS <b class="${p.roas >= 2 ? 'up' : p.roas < 1 ? 'down' : ''}">${p.roas}</b>` : '—'} · ${fmt(p.purchases)}건</div>` : '<span class="muted" title="광고 정보 없음">모름</span>';
@@ -403,10 +410,13 @@ function reportHtml(r) {
         <td class="r">${p.margin_rate != null ? p.margin_rate + '%' : '—'}<div class="muted">${rt ? `<b class="${String(rt.level) === '위험' ? 'down' : ''}">반품 ${rt.rate_14d ?? '—'}%</b>` : (p.rate_14d != null ? `주문율 ${p.rate_14d}%` : '')}</div></td>
       </tr>`;
     }).join('');
-    headExtra += `<div class="box"><h3><i class="fa-solid fa-sliders" style="color:#ea580c;"></i> 상품별 운영 판단 <span class="muted small">전략 담당 후보 + 반품 위험 상품 ${prods.length}개 · 광고비·ROAS = 그 상품 ON 광고 전부의 Meta 합 · 흐린 줄은 담당자가 따로 결론 내지 않은 상품(규칙 판단)</span></h3>
-      ${rowsHtml ? `<div class="tbl-wrap"><table class="risk stack t-ads"><thead><tr><th>상품</th><th>판단</th><th>근거</th><th class="r">ON 광고</th><th class="r">7일 광고비</th><th class="r">14일 광고비</th><th class="r">마진</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>` : '<div class="muted">후보 상품이 없어요</div>'}
+    headExtra += `<div class="box ours-box"><h3><i class="fa-solid fa-sliders" style="color:#ea580c;"></i> 상품별 광고 운영 판단 <span class="chip">우리 담당자가 더한 것</span> <span class="muted small">전략 담당 후보 + 반품 위험 상품 ${prods.length}개 · 광고비·ROAS = 그 상품 ON 광고 전부의 Meta 합</span></h3>
+      <div class="ours-head">${escHtml(rp.headline || '')}</div>
+      ${(rp.summary || []).length ? `<div class="h-sub">${(rp.summary || []).slice(0, 3).map(escHtml).join('<br>')}</div>` : ''}
+      ${chips}
+      ${rowsHtml ? `<div class="tbl-wrap" style="margin-top:10px;"><table class="risk stack t-ads"><thead><tr><th>상품</th><th>판단</th><th>근거</th><th class="r">ON 광고</th><th class="r">7일 광고비</th><th class="r">14일 광고비</th><th class="r">마진</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>` : '<div class="muted">후보 상품이 없어요</div>'}
       ${d.ads_known === false ? '<div class="muted small warn-text">Meta 광고 정보를 받지 못해 광고 칸은 비어 있어요 (광고가 없다는 뜻이 아님)</div>' : ''}
-      <div class="muted small">판단은 제안이에요. 예산 변경·ON/OFF는 광고팀이 광고관리자에서 직접 합니다. 꺼진 광고를 켜기 전엔 왜 껐는지 확인하세요.</div></div>`;
+      <div class="muted small">흐린 줄은 담당자가 따로 결론 내지 않은 상품(규칙 판단). 판단은 제안이에요 — 예산 변경·ON/OFF는 광고팀이 광고관리자에서 직접 하고, 꺼진 광고를 켜기 전엔 왜 껐는지 확인하세요.</div></div>`;
   } else if (r.agent === 'strategy') {
     const na = d.new_arrivals || {}, mx = rp.matrix || [];
     const cnt = q => (na.matrix || []).filter(p => String(p.quadrant).startsWith(q)).length;
@@ -583,12 +593,12 @@ function reportHtml(r) {
   const progress = weekActions.length ? `<span class="prog"><b>${doneCount}/${weekActions.length}</b> 완료</span><div class="prog-bar"><i style="width:${Math.round(doneCount / weekActions.length * 100)}%"></i></div>` : '';
   const lwUndone = lw ? (lw.actions || []).filter(x => { const st = doneMap.get(r.agent + '|' + actionKey(x)); return !(st && st.done); }) : [];
   return head + `
-    <div class="headline mood-${rp.mood || 'neutral'}">
+    ${r.agent === 'ads' ? headBody : `<div class="headline mood-${rp.mood || 'neutral'}">
       <div class="h-text">${escHtml(rp.headline)}</div>
       ${headBody || `<ul>${(rp.summary || []).map(s => `<li>${escHtml(s)}</li>`).join('')}</ul>`}
-    </div>
+    </div>`}
     ${headExtra}
-    <div class="tiles ${tilesCls}">${tiles}</div>
+    ${tilesCls === 'none' ? '' : `<div class="tiles ${tilesCls}">${tiles}</div>`}
     ${(['detail', 'creative'].includes(r.agent) && !(rp.highlights || []).length && !(rp.warnings || []).length) ? '' : `<div class="two">
       <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 오늘의 주목</h3>${list(rp.highlights, 'up')}</div>
       <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 오늘의 주의</h3>${list(rp.warnings, 'down')}</div>

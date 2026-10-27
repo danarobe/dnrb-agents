@@ -40,7 +40,9 @@ async function friendBrief(D: string, safe: <T>(l: string, f: () => Promise<T>) 
   const dates = Object.keys(items).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
   if (!dates.length) return { date: null, stale: true, brief: null, latest: null, note: "친구 대시보드에 저장된 보고서가 아직 없음" };
   const pick = items[D] ? D : (dates.filter((d) => d < D).pop() ?? dates[dates.length - 1]);
-  return { date: pick, stale: pick !== D, brief: items[pick], latest: dates[dates.length - 1], note: pick !== D ? `${D} 보고서가 아직 없어 ${pick} 보고서를 보여줌(친구 맥이 9시에 꺼져 있었거나 아직 생성 전)` : "" };
+  // 친구 화면의 '최근 ROAS' 막대·카페24 매출 타일(그제·7일 평균 대비)용 — 고른 날까지 최근 14일치 KPI만 짧게
+  const recent = dates.filter((d) => d <= pick).slice(-14).map((d) => { const it = items[d] ?? {}; const k = (((it.kpi ?? {}) as Row).yesterday ?? null) as Row | null; const c = (it.cafe24 ?? null) as Row | null; return { date: d, roas: k ? num(k.roas) : null, spend: k ? num(k.spend) : null, cafe24: c && String(c.date ?? d) === d ? { order_amount: num(c.order_amount), paid_qty: num(c.paid_qty), cancel_qty: num(c.cancel_qty) } : null }; });
+  return { date: pick, stale: pick !== D, brief: items[pick], recent, latest: dates[dates.length - 1], note: pick !== D ? `${D} 보고서가 아직 없어 ${pick} 보고서를 보여줌(친구 맥이 9시에 꺼져 있었거나 아직 생성 전)` : "" };
 }
 
 async function latestReport(agent: string, D: string): Promise<{ report: Row; data: Row; created_at: string } | null> {
@@ -164,7 +166,7 @@ async function collect(D: string) {
   return {
     base_date: D, base_dow: dow(D), generated_at: new Date().toISOString(),
     periods: { last7: cur7, last14: cur14, paused_window: cur30 },
-    friend_brief: fb ? { date: fb.date, stale: fb.stale, latest: fb.latest, note: fb.note, brief: b } : null,
+    friend_brief: fb ? { date: fb.date, stale: fb.stale, latest: fb.latest, note: fb.note, brief: b, recent: (fb as Row).recent ?? [] } : null,
     kpi_own: { yesterday: kpiOf(kY as Row | null), day_before: kpiOf(kY2 as Row | null), avg_7d: k7v ? { spend: Math.round(k7v.spend / 7), purchases: +(k7v.purchases / 7).toFixed(1), value: Math.round(k7v.value / 7), roas: k7v.roas } : null, note: "Meta 광고 계정 합계(우리 수집). 친구 보고서의 KPI와 어트리뷰션 반영 시점 차이로 조금 다를 수 있음" },
     strategy_report: st ? { created_at: st.created_at, headline: sr.headline, verdicts: sr.verdicts ?? [], summary: sr.summary ?? [] } : null,
     returns_report: rt ? { created_at: rt.created_at, headline: rr.headline, risk_count: riskRows.length } : null,
