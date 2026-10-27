@@ -6,7 +6,7 @@
 //        어디에 집중할지 판정 — 주문율↑조회↓=노출 부족 / 둘 다↑=판매 확대 / 둘 다↓=집중도 낮춤 / 조회↑주문율↓=상세·가격 점검.
 //        마진율·적용 중인 혜택(1+1·기간할인)·등록일·품절을 함께 고려.
 //     2) 급상승 상품과 판매 TOP10은 Meta 광고관리자 데이터를 소재 단위로 분석: 어떤 소재가 견인하는지, 같은 카테고리
-//        우수 상품의 소재 특성(썸네일을 Claude가 직접 봄)을 바탕으로 추가 소재 컨셉·릴스 첫 훅 멘트·상세 강조점 제안.
+//        우수 상품의 소재 특성(썸네일을 Claude가 직접 봄)을 바탕으로 추가 소재 컨셉·상세 강조점 제안(릴스 훅은 2026-10-27 뺌 — 광고 소재 담당이 따로 만듦).
 //   수집(워크스페이스 함수, x-agent-secret): categorymap · category_products(33) · summary(14일/7일/직전7일) ·
 //     productinfo(+with_discount 후보만 — 91개 전부는 62초) · benefits(by_product) · activeads · adcards
 //   광고↔상품 매칭 = 워크스페이스 판매 성과 'ON 광고' 규칙(pa*)을 그대로 이식(핵심명·ver 토큰·자모 비교).
@@ -487,8 +487,7 @@ function postProcess(report: Row, data: Row): Row {
   const fc = ((report.focus ?? []) as Row[]).map((x) => {
     const f = findByName(focus, x.name);
     if (!f) return null;
-    const hooks = Array.isArray(x.reels_hooks) ? (x.reels_hooks as unknown[]).map(String) : String(x.reels_hooks ?? "").split(/\s*[|｜\n]\s*/);
-    return { ...x, reels_hooks: hooks.map((h) => h.trim()).filter(Boolean).slice(0, 5), name: f.name, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
+    return { ...x, name: f.name, product_no: f.product_no ?? null, why: f.why ?? "", category: f.category ?? "", views_14d: num(f.views_14d), qty_14d: num(f.qty_14d), rate_14d: f.rate_14d ?? null, margin_rate: f.margin_rate ?? null, promos: f.promos ?? [], own_ads: ((f.own_ads ?? []) as Row[]).slice(0, 4), reference_ads: ((f.reference_ads ?? []) as Row[]).slice(0, 4) };
   }).filter((x): x is NonNullable<typeof x> => !!x);
   // 오늘의 결론 칩(2026-10-27): 종류는 정해진 5가지만, 상품명은 데이터의 정식 이름으로(못 찾으면 쓴 그대로), 최대 5개
   const pool = [...matrix, ...focus, ...((data.surge_top10 ?? []) as Row[])] as Row[];
@@ -517,7 +516,6 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 2) 집중 상품 (focus — 급상승 상품과 판매 TOP10, 최대 ${FOCUS_MAX}개):
 - own_ads(그 상품에 붙은 소재)의 since_start(누적)·last14(최근 14일) 성과를 소재 단위로 비교해 어떤 소재가 판매를 견인하는지 짚습니다. CTR은 첫 3초의 힘, ROAS는 판매력, 빈도 3 이상은 소재 피로입니다. 영상/이미지, 광고 문구(body)의 소구점을 근거로 씁니다.
 - reference_ads(같은 카테고리에서 이미 잘 되는 상품의 우수 소재)와 첨부한 썸네일 이미지를 직접 보고, 그 소재들의 공통 특성(착용컷/디테일컷, 모델 포즈, 색감, 문구 위치, 영상 구성)을 뽑아 이 상품에 추가할 소재 컨셉을 제안합니다.
-- reels_hooks: 릴스 첫 3초에 말할 훅 멘트 3개, 각 25자 이내, 상품의 실제 특징(핏·소재·활용)과 광고 문구에 나온 소구점에 근거. 과장·허위 금지.
 - detail_focus: 상세페이지에서 앞쪽에 내세우거나 강조할 것 한 줄(반품 사유·주문율·광고 반응을 근거로).
 - plan: 마진·혜택·재고(sold_out)를 고려한 판매 계획 한 줄 (예산 확대는 '대표 확인 후').
 - 광고가 하나도 없는 집중 상품은 "광고 착수" 제안이 첫 번째입니다(rules.ads_status가 '정상'일 때만).
@@ -558,11 +556,10 @@ const SCHEMA = reportSchema({
           driver: { type: "string", description: "어떤 소재가 판매를 견인하는지, 근거 포함 80자 이내" },
           creative_plan: { type: "string", description: "추가할 소재 컨셉 (참고 소재 특성 근거) 100자 이내" },
           // 배열 안의 배열은 구조화 출력 문법을 크게 키운다(2026-10-18 '문법이 너무 크다' 400) → 한 줄로 받고 postProcess가 배열로 나눈다(화면·상세 점검 담당은 배열 그대로 받음)
-          reels_hooks: { type: "string", description: "릴스 첫 3초 훅 멘트 3개를 ' | '로 이어 한 줄로 (각 25자 이내). 예: 훅1 | 훅2 | 훅3" },
           detail_focus: { type: "string", description: "상세페이지에서 강조할 것 80자 이내" },
           plan: { type: "string", description: "마진·혜택·재고 고려한 판매 계획 80자 이내" },
         },
-        required: ["name", "driver", "creative_plan", "reels_hooks", "detail_focus", "plan"], additionalProperties: false,
+        required: ["name", "driver", "creative_plan", "detail_focus", "plan"], additionalProperties: false,
       },
       description: "집중 상품 카드. focus 전부",
     },

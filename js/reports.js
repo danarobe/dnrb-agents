@@ -350,7 +350,6 @@ function reportHtml(r) {
     ].join('');
     tilesCls = 'five';
     // 맨 위 결론 칩 (verdicts) — 글 대신 종류 칩 + 상품 + 근거 한 줄. 옛 보고서(verdicts 없음)는 summary 그대로
-    const pn = n => String(n || '').replace(/\s*[-–—|]\s*(danarobe|dana|다나로브|다나)\s*$/i, '');   // 카페24 통계 상품명의 ' - Danarobe' 접미사는 화면에서 뗀다
     const vds = rp.verdicts || [];
     if (vds.length) {
       const VK = { '밀기': 'v-push', '보류': 'v-hold', '점검': 'v-check', '시즌': 'v-season', '소싱': 'v-source' };
@@ -386,50 +385,80 @@ function reportHtml(r) {
         <td class="r">${x.margin_rate != null ? x.margin_rate + '%' : '—'}<div class="muted">${x.discount_price ? `할인가 ${won(x.discount_price)}` : won(x.price)}</div></td>
         <td>${(x.promos || []).length ? (x.promos || []).map(p => `<span class="chip">${escHtml(p)}</span>`).join(' ') : '<span class="muted">—</span>'}</td>
         <td>${escHtml(x.strategy)}</td></tr>`).join('');
+    // 집중 상품 카드 압축(2026-10-27 대표 요청): 상품명 + 숫자 한 줄 + 광고 썸네일 띠 + 판매 계획만 보이고, 소재 본문·참고 소재·추가 컨셉·상세 강조는 '자세히'로 접는다. 릴스 훅은 뺐다(광고 소재 담당이 따로 만듦)
     const focusCards = (rp.focus || []).map(f => {
       const adRow = (a, ref) => `<div class="ad-row">
           ${a.thumb ? `<img src="${escHtml(a.thumb)}" alt="" loading="lazy">` : '<span class="ad-noimg"></span>'}
-          <div class="ad-info"><div class="ad-name">${ref ? `<span class="chip">${escHtml(a.product_name || '')}</span> ` : ''}${escHtml(a.name)} <span class="chip">${a.is_video ? '영상' : '이미지'}</span></div>
+          <div class="ad-info"><div class="ad-name">${ref ? `<span class="chip">${escHtml(pn(a.product_name || ''))}</span> ` : ''}${escHtml(a.name)} <span class="chip">${a.is_video ? '영상' : '이미지'}</span></div>
           <div class="muted">${a.last14 ? `14일 지출 ${fmtMan(a.last14.spend)} · 구매 ${fmt(a.last14.purchases)} · ROAS ${a.last14.roas} · CTR ${a.last14.ctr}% · 빈도 ${a.last14.frequency}` : (a.since_start ? `누적 지출 ${fmtMan(a.since_start.spend)} · 구매 ${fmt(a.since_start.purchases)} · ROAS ${a.since_start.roas}` : '성과 없음')}</div>
           ${a.body ? `<div class="ad-body">${escHtml(a.body)}</div>` : ''}</div></div>`;
-      return `<div class="focus-card">
-        <div class="focus-head"><div><b>${escHtml(f.name)}</b>${f.product_no ? ` <button class="btn ghost sm" onclick="detailRun(${Number(f.product_no)}, this.dataset.n)" data-n="${escHtml(f.name)}" title="상세페이지 점검 담당에게 이 상품을 맡깁니다"><i class="fa-solid fa-file-image"></i> 상세 점검</button>` : ''}<div class="muted">${escHtml(f.why)}${f.category ? ` · ${escHtml(f.category)}` : ''} · 14일 조회 ${fmt(f.views_14d)} · 주문율 ${f.rate_14d ?? '—'}% · 마진 ${f.margin_rate ?? '—'}%${(f.promos || []).length ? ' · ' + f.promos.map(escHtml).join(', ') : ''}</div></div></div>
-        <div class="focus-grid">
-          <div><h4>지금 붙은 소재${f.own_ads.length ? '' : (d.ads_known === false ? ' <span class="chip">광고 정보 없음</span>' : ' <span class="chip bad">광고 없음</span>')}</h4>${f.own_ads.map(a => adRow(a, false)).join('') || (d.ads_known === false ? '<div class="muted small">Meta 광고 정보를 받지 못해 소재를 볼 수 없어요 (수집 실패 — 광고가 없다는 뜻이 아님)</div>' : '<div class="muted small">이 상품에 붙은 활성 광고가 없어요</div>')}
-            <div class="fx"><b>견인 소재</b> ${escHtml(f.driver)}</div></div>
-          <div><h4>같은 카테고리 우수 소재</h4>${f.reference_ads.map(a => adRow(a, true)).join('') || '<div class="muted small">참고할 우수 소재가 없어요</div>'}
-            <div class="fx"><b>추가 소재 컨셉</b> ${escHtml(f.creative_plan)}</div></div>
-        </div>
-        <div class="fx-row">
-          <div class="fx"><b>릴스 첫 3초 훅</b><ol>${(f.reels_hooks || []).map(h => `<li>${escHtml(h)}</li>`).join('')}</ol></div>
+      const own = f.own_ads || [], ref = f.reference_ads || [];
+      let sp = 0, val = 0, seen = 0;
+      for (const a of own) { const x = a.last14; if (!x) continue; seen++; const spend = Number(x.spend) || 0; sp += spend; val += (Number(x.roas) || 0) * spend; }
+      const roas = sp > 0 ? Math.round(val / sp * 100) / 100 : null;
+      const adTxt = d.ads_known === false ? '<span class="warn">광고 정보 없음</span>' : own.length ? `광고 ${own.length}개 · 14일 광고비 ${seen ? fmtMan(sp) : '0원'}${roas != null ? ` · ROAS <b class="${roas >= 2 ? 'up' : roas < 1 ? 'down' : ''}">${roas}</b>` : ''}` : '<b class="down">광고 없음</b>';
+      const thumbs = own.length ? `<div class="fc-thumbs">${own.map(a => a.thumb ? `<img src="${escHtml(a.thumb)}" alt="" loading="lazy" title="${escHtml(a.name)}">` : '<span class="ad-noimg sm"></span>').join('')}<span class="muted small">${own.length}개 소재${d.ads_known === false ? '' : ''}</span></div>` : '';
+      return `<div class="focus-card fc">
+        <div class="fc-head"><div class="fc-title"><b>${escHtml(pn(f.name))}</b> <span class="chip new">${escHtml(f.why)}</span>${f.product_no ? ` <button class="icon-btn" onclick="detailRun(${Number(f.product_no)}, this.dataset.n)" data-n="${escHtml(f.name)}" title="상세페이지 점검 담당에게 이 상품을 맡깁니다"><i class="fa-solid fa-file-image"></i></button>` : ''}</div>
+          <div class="fc-nums">14일 조회 <b>${fmt(f.views_14d)}</b> · 주문율 <b>${f.rate_14d ?? '—'}%</b> · 판매 <b>${fmt(f.qty_14d)}개</b> · 마진 <b>${f.margin_rate ?? '—'}%</b> · ${adTxt}${(f.promos || []).length ? ` · ${f.promos.map(escHtml).join(', ')}` : ''}</div></div>
+        ${thumbs}
+        <div class="fx"><b>판매 계획</b> ${escHtml(f.plan)}</div>
+        <details class="fc-more"><summary><i class="fa-solid fa-chevron-right"></i> 자세히 <span class="muted small">소재 ${own.length} · 참고 소재 ${ref.length} · 견인 소재 · 추가 소재 컨셉 · 상세 강조</span></summary>
+          <div class="focus-grid">
+            <div><h4>지금 붙은 소재${own.length ? '' : (d.ads_known === false ? ' <span class="chip">광고 정보 없음</span>' : ' <span class="chip bad">광고 없음</span>')}</h4>${own.map(a => adRow(a, false)).join('') || (d.ads_known === false ? '<div class="muted small">Meta 광고 정보를 받지 못해 소재를 볼 수 없어요 (수집 실패 — 광고가 없다는 뜻이 아님)</div>' : '<div class="muted small">이 상품에 붙은 활성 광고가 없어요</div>')}
+              <div class="fx"><b>견인 소재</b> ${escHtml(f.driver)}</div></div>
+            <div><h4>같은 카테고리 우수 소재</h4>${ref.map(a => adRow(a, true)).join('') || '<div class="muted small">참고할 우수 소재가 없어요</div>'}
+              <div class="fx"><b>추가 소재 컨셉</b> ${escHtml(f.creative_plan)}</div></div>
+          </div>
           <div class="fx"><b>상세에서 강조</b> ${escHtml(f.detail_focus)}</div>
-          <div class="fx"><b>판매 계획</b> ${escHtml(f.plan)}</div>
-        </div></div>`;
+        </details></div>`;
     }).join('');
-    // 트렌드·날씨 (2026-09-13)
+    // 신상품 4분면 격자(2026-10-27): 표 대신 2×2 칸. 칸마다 개수 + 상품 칩(전략 있는 상품은 누르면 전략 한 줄). 15줄 표는 접음
+    const naM = na.matrix || [];
+    const inQ = (q, k) => String(q || '').startsWith(k);
+    const QUAD = [
+      { k: '노출 부족', cls: 'q-expose', sub: '주문율↑ 조회↓' }, { k: '판매 확대', cls: 'q-grow', sub: '조회↑ 주문율↑' },
+      { k: '집중도 낮춤', cls: 'q-low', sub: '둘 다 낮음' }, { k: '상세·가격 점검', cls: 'q-fix', sub: '조회↑ 주문율↓' },
+    ];
+    const quadCells = QUAD.map(q => {
+      const all = naM.filter(p => inQ(p.quadrant, q.k));
+      const withS = mx.filter(x => inQ(x.quadrant, q.k));
+      const sNames = new Set(withS.map(x => x.name));
+      const rest = all.filter(p => !sNames.has(p.name));
+      const sChip = x => `<button type="button" class="qchip ${q.cls}" onclick="this.classList.toggle('open')"><span>${escHtml(pn(x.name))}${x.active_ads ? ` <em class="ads">광고 ${x.active_ads}</em>` : ''}</span><small>${escHtml(x.strategy)}</small></button>`;
+      return `<div class="qcell ${q.cls}"><div class="qhead"><span class="qbadge ${q.cls}">${q.k}</span><span class="muted small">${q.sub}</span><b>${all.length}개</b></div>
+        <div class="qchips">${withS.map(sChip).join('')}${rest.slice(0, 6).map(p => `<span class="qchip plain" title="${escHtml(pn(p.name))}">${escHtml(pn(p.name))}</span>`).join('')}${rest.length > 6 ? `<span class="qchip plain more">+${rest.length - 6}</span>` : ''}</div></div>`;
+    }).join('');
+    const otherQ = {};
+    for (const p of naM) if (!QUAD.some(q => inQ(p.quadrant, q.k))) otherQ[p.quadrant] = (otherQ[p.quadrant] || 0) + 1;
+    const otherLine = Object.keys(otherQ).length ? `<div class="muted small" style="margin-top:6px;">격자 밖: ${Object.entries(otherQ).map(([k, v]) => `${escHtml(k)} ${v}개`).join(' · ')}</div>` : '';
+    const quadBox = `<div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값(조회 ${fmt(na.median_views_14d)} · 주문율 ${na.median_rate_14d ?? '—'}%) 기준 · 색 칩은 누르면 전략이 열려요</span></h3>
+      ${naM.length ? `<div class="quad-wrap"><div class="quad-y">주문율 ↑</div><div class="quad">${quadCells}</div><div class="quad-x">조회수 →</div></div>${otherLine}` : '<div class="muted">판정할 신상품이 없어요</div>'}
+      ${mxRows ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 표로 보기 <span class="muted small">전략 있는 ${mx.length}개 · 마진율 = (판매가 − 공급가×1.1) ÷ 판매가</span></summary><div class="tbl-wrap"><table class="risk stack t-matrix"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div></details>` : ''}
+    </div>`;
+    // 트렌드·날씨 (2026-09-13 → 2026-10-27 압축): 날씨 띠 + 날씨 계획, 우리 상품 있는 키워드만, 키워드 제안은 표. 전체 인기 검색어는 접음
     const tr = d.trends || {}, w = tr.weather, ws = w?.summary || {};
     const dayCell = (x, past) => `<div class="wday ${past ? 'past' : ''}"><div class="wd">${x.date.slice(5).replace('-', '/')}</div><div class="wt"><b>${Math.round(x.max)}°</b>/${Math.round(x.min)}°</div>${x.rain_prob >= 60 ? '<div class="wr">☔ ' + x.rain_prob + '%</div>' : ''}</div>`;
     const weatherStrip = w ? `<div class="wstrip">${(w.past_7d || []).map(x => dayCell(x, true)).join('')}<div class="wsep">오늘</div>${(w.next_7d || []).map(x => dayCell(x, false)).join('')}</div>
       <div class="muted small">지난 7일 평균 ${ws.past_avg_max}°/${ws.past_avg_min}° → 앞으로 7일 ${ws.next_avg_max}°/${ws.next_avg_min}°${ws.first_min_below_15 ? ` · 최저 15°↓ 첫날 ${ws.first_min_below_15.slice(5)}` : ''}${(ws.rainy_days_next || []).length ? ` · 비 ${ws.rainy_days_next.map(x => x.slice(5)).join(', ')}` : ''}</div>` : '<div class="muted">날씨 데이터 없음</div>';
-    const risingChips = (tr.naver || []).filter(c => (c.top10 || []).length || (c.rising || []).length).map(c => `<div class="tr-cat"><b>${escHtml(c.category)}</b> <span class="muted small">TOP10: ${c.top10.map(escHtml).join(' · ')}</span>
-        <div class="chips">${(c.rising || []).slice(0, 18).map(r => `<span class="kchip ${r.our_products.length ? 'hit' : ''}" title="${r.our_products.map(p => escHtml(p.name)).join('\n')}">${escHtml(r.keyword)} <em>${r.kind === 'new' ? 'NEW ' + r.rank + '위' : r.prev_rank + '→' + r.rank + '위'}</em>${r.our_products.length ? `<i>${r.our_products.length}</i>` : ''}</span>`).join('')}</div></div>`).join('');
-    const trendRows = (rp.trend_actions || []).map(x => `<div class="li"><div class="li-top"><b>${escHtml(x.keyword)}</b><span class="chip new">${escHtml(x.signal)}</span><span class="muted small">${escHtml(x.our_products)}</span></div><div>${escHtml(x.suggestion)}</div></div>`).join('');
-    const trendBox = `<div class="box"><h3><i class="fa-solid fa-arrow-trend-up" style="color:#0891b2;"></i> 트렌드 · 날씨 <span class="muted small">네이버 쇼핑 인기 검색어(여성) 어제 vs 7일 전 · 서울 날씨</span></h3>
+    const kchip = r => `<span class="kchip ${r.our_products.length ? 'hit' : ''}" title="${r.our_products.map(p => escHtml(pn(p.name))).join('\n')}">${escHtml(r.keyword)} <em>${r.kind === 'new' ? 'NEW ' + r.rank + '위' : r.prev_rank + '→' + r.rank + '위'}</em>${r.our_products.length ? `<i>${r.our_products.length}</i>` : ''}</span>`;
+    const naverCats = (tr.naver || []).filter(c => (c.top10 || []).length || (c.rising || []).length);
+    const hitChips = naverCats.map(c => { const hits = (c.rising || []).filter(r => r.our_products.length); return hits.length ? `<div class="tr-cat"><b>${escHtml(c.category)}</b> <span class="muted small">뜨는 검색어 ${c.rising.length}개 중 우리 상품 있는 ${hits.length}개</span><div class="chips">${hits.map(kchip).join('')}</div></div>` : ''; }).join('');
+    const allChips = naverCats.map(c => `<div class="tr-cat"><b>${escHtml(c.category)}</b> <span class="muted small">TOP10: ${c.top10.map(escHtml).join(' · ')}</span>
+        <div class="chips">${(c.rising || []).slice(0, 18).map(kchip).join('')}</div></div>`).join('');
+    const trendRows = (rp.trend_actions || []).map(x => `<tr><td><b>${escHtml(x.keyword)}</b></td><td><span class="chip new">${escHtml(x.signal)}</span></td><td class="muted">${escHtml(x.our_products || '—')}</td><td>${escHtml(x.suggestion)}</td></tr>`).join('');
+    const trendBox = `<div class="box"><h3><i class="fa-solid fa-arrow-trend-up" style="color:#0891b2;"></i> 트렌드 · 날씨 <span class="muted small">서울 날씨 · 네이버 쇼핑 인기 검색어(여성) 어제 vs 7일 전</span></h3>
       ${weatherStrip}
       ${rp.weather_plan ? `<div class="fx"><b>날씨 계획</b> ${escHtml(rp.weather_plan)}</div>` : ''}
-      ${risingChips || '<div class="muted small" style="margin-top:8px;">인기 검색어 순위표를 이날은 받지 못했어요 (네이버 데이터랩 응답 없음 — 다음 보고서에서 다시 시도)</div>'}
-      ${risingChips ? '<div class="muted small">색칠된 키워드 = 우리 상품이 있는 것(숫자는 개수, 마우스를 올리면 상품명). 브랜드명은 판단에서 뺍니다.</div>' : ''}
-      ${trendRows ? `<h4 style="margin-top:10px;">키워드 기반 제안</h4>${trendRows}` : ''}
+      ${naverCats.length ? (hitChips || '<div class="muted small" style="margin-top:8px;">뜨는 검색어 중 우리 상품이 있는 것은 없어요</div>') : '<div class="muted small" style="margin-top:8px;">인기 검색어 순위표를 이날은 받지 못했어요 (네이버 데이터랩 응답 없음 — 다음 보고서에서 다시 시도)</div>'}
+      ${trendRows ? `<div class="tbl-wrap" style="margin-top:10px;"><table class="risk stack t-trend"><thead><tr><th>키워드</th><th>순위 변화</th><th>우리 상품</th><th>할 일</th></tr></thead><tbody>${trendRows}</tbody></table></div>` : ''}
+      ${allChips ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 전체 인기 검색어 보기 <span class="muted small">숫자는 우리 상품 개수, 마우스를 올리면 상품명 · 브랜드명은 판단에서 뺍니다</span></summary>${allChips}</details>` : ''}
     </div>`;
     const ma = d.match_audit;
     const adsWarn = d.ads_known === false ? `<div class="notice warn"><b><i class="fa-solid fa-plug-circle-xmark"></i> Meta 광고 정보를 못 받았어요.</b> 이 보고서의 광고 개수·소재 분석은 비어 있습니다. 광고가 없다는 뜻이 아니라 수집이 실패한 것이니, 광고 관련 판단은 다음 보고서에서 확인하세요.</div>`
       : (ma && ma.status === 'suspect') ? `<div class="notice warn"><b><i class="fa-solid fa-link-slash"></i> 광고↔상품 연결이 깨진 것 같아요.</b> 활성 광고 ${fmt(ma.total_ads)}개 중 ${ma.matched_share}%만 상품에 연결됐고, 광고 이름에 상품명이 있는데 연결 0개인 상품이 ${ma.suspects.length}개입니다. 이 상품들은 '광고 정보 없음'으로 두었습니다. 상품명 표기 규칙(접미사 등)이 바뀌었는지 확인해 주세요.</div>`
       : (ma && (ma.suspects || []).length) ? `<div class="muted small" style="margin-bottom:10px;"><i class="fa-solid fa-link-slash"></i> 광고 이름이 줄임말이라 자동 연결이 안 된 상품 ${ma.suspects.length}개(${ma.suspects.slice(0, 3).map(s => escHtml(s.name.replace(/^\s*(?:\([^)]*\)|\[[^\]]*\])\s*/g, '').slice(0, 18))).join(', ')})는 '광고 정보 없음'으로 표시했어요. 광고 이름에 상품명을 그대로 쓰면 연결됩니다.</div>` : '';
-    extraBoxes = adsWarn + trendBox + `
-    <div class="box"><h3><i class="fa-solid fa-table-cells" style="color:#0891b2;"></i> 신상품 4분면 <span class="muted small">조회수 × 주문율, 신상품 중앙값 기준 · 마진율 = (판매가 − 공급가×1.1) ÷ 판매가</span></h3>
-      <div class="qlegend"><span class="ql"><span class="qbadge q-grow">판매 확대</span> 둘 다 높음</span> <span class="ql"><span class="qbadge q-expose">노출 부족</span> 주문율↑ 조회↓</span> <span class="ql"><span class="qbadge q-fix">상세·가격 점검</span> 조회↑ 주문율↓</span> <span class="ql"><span class="qbadge q-low">집중도 낮춤</span> 둘 다 낮음</span></div>
-      ${mxRows ? `<div class="tbl-wrap"><table class="risk stack t-matrix"><thead><tr><th>상품</th><th>판정</th><th class="r">조회 14일<br><span class="muted">주문율 · 판매</span></th><th class="r">마진율<br><span class="muted">가격</span></th><th>행사</th><th>전략</th></tr></thead><tbody>${mxRows}</tbody></table></div>` : '<div class="muted">판정할 신상품이 없어요</div>'}
-    </div>
+    extraBoxes = adsWarn + trendBox + quadBox + `
     <div class="box"><h3><i class="fa-solid fa-bullseye" style="color:#0891b2;"></i> 집중 상품 <span class="muted small">급상승 3 + 판매 TOP10 순환 3 · 광고 소재 분석</span></h3>${focusCards || '<div class="muted">없음</div>'}</div>`;
   } else {
     tiles = [
@@ -472,7 +501,7 @@ function reportHtml(r) {
       <div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 오늘의 주목</h3>${list(rp.highlights, 'up')}</div>
       <div class="box"><h3><i class="fa-solid fa-triangle-exclamation down"></i> 오늘의 주의</h3>${list(rp.warnings, 'down')}</div>
     </div>`}
-    ${teamBox(rp)}
+    ${teamBox(rp, r.agent === 'strategy')}
     ${extraBoxes}
     ${hasWeek ? `<div class="week-head"><i class="fa-regular fa-calendar"></i> 이번 주 누적 <span class="muted">${weekLabel} · 앞선 날 보고서와 합친 것. 그날 못 봤어도 여기서 확인</span></div>
     <div class="two">
@@ -560,7 +589,9 @@ function rawTableStrategy(d) {
    handoffs[].to 가 상세 점검·광고 소재 담당이고 상품 번호가 맞춰져 있으면 바로 실행 버튼, 아니면 담당자 카드로 가서 상품을 고르게. */
 const TEAM_KEY = { '오늘의 요약': 'sales', '매출 분석 담당': 'sales', '취소·반품 감시 담당': 'returns', '상품 전략 담당': 'strategy', '광고 소재 담당': 'creative', '상세페이지 점검 담당': 'detail' };
 function teamChip(label) { const k = TEAM_KEY[label], a = k && agentOf(k); return a ? `<span class="chip team" style="color:${a.color};background:${a.color}1a;"><i class="fa-solid ${a.icon}"></i> ${escHtml(label)}</span>` : `<span class="chip">${escHtml(label || '')}</span>`; }
-function teamBox(rp) {
+/* 카페24 통계 상품명의 ' - Danarobe' 접미사는 화면에서 뗀다 */
+const pn = n => String(n || '').replace(/\s*[-–—|]\s*(danarobe|dana|다나로브|다나)\s*$/i, '');
+function teamBox(rp, compact) {
   const notes = rp.colleague_notes || [], got = rp.handoffs_received || [], give = rp.handoffs || [], seen = rp.colleagues_seen || [];
   if (!notes.length && !got.length && !give.length && !seen.length) return '';
   const md = d => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
@@ -569,6 +600,17 @@ function teamBox(rp) {
     const label = k === 'detail' ? '지금 점검' : '제작안 만들기';
     return `<button class="btn ghost sm" onclick="handoffRun('${k}', ${Number(h.product_no) || 0}, this.dataset.name)" data-name="${escHtml(h.product || '')}"><i class="fa-solid fa-play"></i> ${label}</button>`;
   };
+  if (compact) {
+    // 압축형(2026-10-27, 전략 담당): 머리에 개수 칩, 받은 요청·넘기는 요청만 한 줄씩 펼치고 '가져온 것'은 접는다
+    const line = (chip, h, extra = '') => `<div class="team-line">${chip}<div><b>${escHtml(h.ask)}</b>${h.product ? ` <span class="muted">· ${escHtml(pn(h.product))}</span>` : ''}${h.why ? `<div class="muted small">${h.report_date ? md(h.report_date) + ' · ' : ''}${escHtml(h.why)}</div>` : ''}${extra}</div></div>`;
+    return `<div class="box team-box compact"><h3><i class="fa-solid fa-people-group" style="color:#0e7490;"></i> 팀 협업 <span class="tsum"><span class="chip">가져온 것 ${notes.length}</span><span class="chip warn">받은 요청 ${got.length}</span><span class="chip new">넘긴 요청 ${give.length}</span><span class="chip">읽은 보고서 ${seen.length}</span></span></h3>
+      <div class="team-cols">
+        ${got.length ? `<div><h5>받은 요청</h5>${got.map(h => line(teamChip(h.from), h)).join('')}</div>` : ''}
+        ${give.length ? `<div><h5>동료에게 넘기는 요청</h5>${give.map(h => line(teamChip(h.to), h, runBtn(h))).join('')}</div>` : ''}
+      </div>
+      ${(notes.length || seen.length) ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 동료에게서 가져온 것 ${notes.length}개 <span class="muted small">· 읽은 보고서 ${seen.length}개</span></summary>${notes.map(n => `<div class="team-line">${teamChip(n.from)}<div>${escHtml(n.took)}</div></div>`).join('') || '<div class="muted small">이번엔 반영한 것 없음</div>'}${seen.length ? `<div class="muted small" style="margin-top:6px;">읽은 보고서: ${seen.map(c => `${escHtml(c.agent)} ${md(c.report_date)}`).join(', ')}</div>` : ''}</details>` : ''}
+    </div>`;
+  }
   return `<div class="box team-box"><h3><i class="fa-solid fa-people-group" style="color:#0e7490;"></i> 팀 협업 <span class="muted small">동료 보고서를 읽고 함께 판단한 것${seen.length ? ' · 읽은 보고서: ' + seen.map(c => `${escHtml(c.agent)} ${md(c.report_date)}`).join(', ') : ''}</span></h3>
     <div class="team-grid">
       <div><h5>동료에게서 가져온 것</h5>${notes.length ? notes.map(n => `<div class="team-row">${teamChip(n.from)}<div>${escHtml(n.took)}</div></div>`).join('') : '<div class="muted small">이번엔 반영한 것 없음</div>'}</div>

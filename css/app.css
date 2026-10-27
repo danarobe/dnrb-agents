@@ -489,3 +489,64 @@ table.t-surge th:nth-child(6) { width: 82px; }
 table.t-surge th:nth-child(7) { width: 70px; }
 table.t-surge td:nth-child(2) .icon-btn { vertical-align: middle; }
 @media (max-width: 800px) { table.risk.stack.t-surge td:last-child { grid-column: auto; } }
+
+/* ---------- 전략 담당 하단 개편 (2026-10-27): 4분면 격자 · 집중 상품 압축 카드 · 접기 · 트렌드 표 · 팀 협업 압축 ---------- */
+details.fold { margin-top: 10px; }
+details.fold > summary { cursor: pointer; font-size: .8rem; font-weight: 800; color: var(--ink-2); list-style: none; padding: 6px 0; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary i { font-size: .66rem; color: var(--muted); margin-right: 4px; transition: transform .15s; }
+details.fold[open] > summary i { transform: rotate(90deg); }
+details.fold > summary .muted { font-weight: 600; }
+/* 4분면 격자 */
+.quad-wrap { display: grid; grid-template-columns: auto 1fr; grid-template-rows: 1fr auto; gap: 6px 8px; margin-top: 6px; }
+.quad-y { writing-mode: vertical-rl; transform: rotate(180deg); font-size: .7rem; color: var(--muted); font-weight: 700; text-align: center; }
+.quad-x { grid-column: 2; font-size: .7rem; color: var(--muted); font-weight: 700; text-align: right; }
+.quad { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.qcell { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: #fff; min-width: 0; }
+.qcell.q-grow { background: #f0fdf4; border-color: #bbf7d0; } .qcell.q-expose { background: #eff6ff; border-color: #bfdbfe; }
+.qcell.q-fix { background: #fff7ed; border-color: #fed7aa; } .qcell.q-low { background: #f9fafb; border-color: #e5e7eb; }
+.qhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.qhead b { margin-left: auto; font-size: .95rem; }
+.qchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.qchip { display: inline-flex; flex-direction: column; align-items: flex-start; border: 1px solid rgba(0,0,0,.08); background: #fff; border-radius: 10px; padding: 4px 9px; font-size: .76rem; font-weight: 700; color: var(--ink); cursor: pointer; text-align: left; max-width: 100%; min-width: 0; font-family: inherit; line-height: 1.35; }
+.qchip > span { display: inline-flex; gap: 4px; align-items: center; overflow-wrap: anywhere; }
+.qchip em.ads { font-style: normal; font-size: .64rem; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.qchip small { display: none; font-size: .72rem; font-weight: 500; color: var(--ink-2); margin-top: 2px; }
+.qchip.open { flex-basis: 100%; }
+.qchip.open small { display: block; }
+.qchip.q-grow { border-color: #86efac; } .qchip.q-expose { border-color: #93c5fd; } .qchip.q-fix { border-color: #fdba74; } .qchip.q-low { border-color: #d1d5db; }
+.qchip.plain { cursor: default; font-weight: 500; color: var(--muted); background: rgba(255,255,255,.6); border-style: dashed; }
+.qchip.plain.more { font-weight: 800; }
+/* 집중 상품 압축 카드 */
+.focus-card.fc { padding: 12px 14px; }
+.fc-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fc-title b { font-size: .95rem; }
+.fc-nums { font-size: .78rem; color: var(--ink-2); margin-top: 3px; line-height: 1.6; }
+.fc-nums b { color: var(--ink); }
+.fc-thumbs { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.fc-thumbs img, .ad-noimg.sm { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #f3f4f6; flex: none; }
+.fc .fx { margin-top: 8px; }
+details.fc-more { margin-top: 8px; border-top: 1px dashed #f3f4f6; padding-top: 4px; }
+details.fc-more > summary { cursor: pointer; font-size: .78rem; font-weight: 800; color: var(--ink-2); list-style: none; padding: 4px 0; }
+details.fc-more > summary::-webkit-details-marker { display: none; }
+details.fc-more > summary i { font-size: .64rem; color: var(--muted); margin-right: 4px; transition: transform .15s; }
+details.fc-more[open] > summary i { transform: rotate(90deg); }
+details.fc-more > summary .muted { font-weight: 600; }
+/* 트렌드 표 */
+table.t-trend th:nth-child(1) { width: 22%; } table.t-trend th:nth-child(2) { width: 14%; } table.t-trend th:nth-child(3) { width: 26%; }
+/* 팀 협업 압축 */
+.team-box.compact h3 { flex-wrap: wrap; }
+.team-box.compact .tsum { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: 6px; vertical-align: middle; }
+.team-box.compact .tsum .chip.warn { color: #b45309; background: #fef3c7; }
+.team-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.team-cols > * { min-width: 0; }
+.team-cols h5 { font-size: .78rem; font-weight: 800; color: var(--ink-2); margin: 0 0 4px; }
+.team-line { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; padding: 5px 0; border-top: 1px dashed #f3f4f6; font-size: .82rem; line-height: 1.5; }
+.team-line:first-of-type { border-top: 0; }
+.team-line .btn { margin-top: 4px; }
+@container rv (max-width: 620px) {
+  .quad { grid-template-columns: 1fr; }
+  .quad-y { display: none; }
+  .quad-wrap { grid-template-columns: 1fr; }
+  .quad-x { grid-column: 1; }
+}
