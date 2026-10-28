@@ -356,7 +356,7 @@ function reportHtml(r) {
     const scopeNote = d.review_scope_missing ? `<div class="notice warn"><b><i class="fa-solid fa-key"></i> 리뷰는 아직 반영되지 않았어요.</b> 카페24 개발자센터에서 게시판 읽기 권한을 켠 뒤, 워크스페이스의 <b>카페24 연동</b> 버튼으로 한 번 재연동하면 다음 분석부터 리뷰(고객이 실제로 쓰는 말)가 훅의 근거로 들어갑니다.</div>` : '';
     extraBoxes = scopeNote + fsBox + `<div class="box"><h3><i class="fa-solid fa-bullhorn" style="color:#b45309;"></i> 상품별 소재 제작안</h3>${cards || '<div class="muted">없음</div>'}</div>`;
   } else if (r.agent === 'ads') {
-    // 광고 운영 담당(2026-10-28 자체 발행): 요약 카드 7(친구 보고서와 같은 구성) → ① 전체 흐름(14일 꺾은선 3개 + 상위 5 ×3) → ② 신규 테스트(상품별) → ③ 치고 올라오는 소재 → ④ 하락하는 소재 → ⑤ 주의 → ⑥ 상품별 운영 판단
+    // 광고 운영 담당(2026-10-28 자체 발행): 요약 카드 7(친구 보고서와 같은 구성) → ① 전체 흐름(14일 꺾은선 3개 + 상위 5 ×3) → ② 치고 올라오는 소재 → ③ 하락하는 소재 → ④ 주의 → ⑤ 신규 테스트(상품별) → ⑥ 상품별 운영 판단
     const k = d.kpi || null, y = k && k.yesterday, y2 = k && k.day_before, a7 = k && k.avg_7d;
     const wonF = v => v == null ? '–' : Math.round(v).toLocaleString('ko-KR') + '원';
     const won = v => v == null ? '—' : v >= 10000 ? (v / 10000).toFixed(v >= 100000 ? 0 : 1).replace(/\.0$/, '') + '만' : Math.round(v).toLocaleString('ko-KR') + '원';
@@ -435,7 +435,7 @@ function reportHtml(r) {
         ${t.note ? `<div class="tc-note">${escHtml(t.note)}</div>` : ''}
         <details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 소재별 <span class="muted small">${t.ads}개</span></summary><table class="mini"><tbody>${(t.per_ad || []).map(a => `<tr><td>${escHtml(a.name)}</td><td class="r">${won(a.spend)}</td><td class="r">${fmt(a.purchases)}건</td><td class="r">ROAS ${a.roas ?? '—'}</td><td class="r">CTR ${a.ctr != null ? a.ctr + '%' : '—'}</td></tr>`).join('')}</tbody></table></details>
       </div>`).join('');
-    headExtra += `<div class="box"><h3><i class="fa-solid fa-flask" style="color:#7c3aed;"></i> 신규 테스트 <span class="muted small">테스트 소재(세트·광고명 test) 중 첫 지출 3일 안 · 상품별로 묶음</span></h3>${testCards || '<div class="muted">최근 3일 안에 시작한 테스트가 없어요</div>'}</div>`;
+    const testBox = `<div class="box"><h3><i class="fa-solid fa-flask" style="color:#7c3aed;"></i> 신규 테스트 <span class="muted small">테스트 소재(세트·광고명 test) 중 첫 지출 3일 안 · 상품별로 묶음</span></h3>${testCards || '<div class="muted">최근 3일 안에 시작한 테스트가 없어요</div>'}</div>`;
     // ③ 치고 올라오는 소재 / ④ 하락하는 소재
     const seriesCell = sr => `<div class="ser">${(sr || []).map(x => `<span title="${escHtml(x.date)}"><i>${escHtml(x.date.slice(3))}</i>${fmt(x.purchases)}건<em>${x.roas != null ? x.roas : '—'}</em></span>`).join('')}</div>`;
     const rising = rp.rising && rp.rising.length ? rp.rising : [];
@@ -452,6 +452,7 @@ function reportHtml(r) {
     const cautions = rp.cautions || [];
     headExtra += `<div class="box caution-box"><h3><i class="fa-solid fa-triangle-exclamation" style="color:#b45309;"></i> 주의할 상품 · 소재 <span class="muted small">잘 팔리고 효율 좋은데 취소율·순반품률(배송완료 대비 반품, 취소 제외)이 높은 것, 구매 0건·소재 피로·품절 등</span></h3>
       ${cautions.length ? cautions.map(c => `<div class="li"><b class="down">${escHtml(pn(c.target))}</b><div>${escHtml(c.why)}${c.action ? ` <span class="fx-act"><i class="fa-solid fa-arrow-right"></i> ${escHtml(c.action)}</span>` : ''}</div></div>`).join('') : '<div class="muted">오늘 주의할 것이 없어요</div>'}</div>`;
+    headExtra += testBox;   // 신규 테스트는 주의 아래(2026-10-28 사용자 요청)
     // ⑥ 상품별 광고 운영 판단 (유지)
     const DK = { '힘주기': 'v-push', '증액 보류': 'v-hold', '다시 켜기': 'v-on', '줄이기': 'v-check', '유지': 'v-keep' };
     const DI = { '힘주기': 'fa-arrow-up', '증액 보류': 'fa-pause', '다시 켜기': 'fa-power-off', '줄이기': 'fa-arrow-down', '유지': 'fa-equals' };
