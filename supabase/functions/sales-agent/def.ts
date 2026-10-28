@@ -161,7 +161,8 @@ const SCHEMA = reportSchema({
 });
 
 // 동료 보고서 활용 규칙 (2026-10-22) — 요약은 아침 맨 마지막이라 오늘 반품·전략 보고서를 모두 본다
-const COLLEAGUE_RULES = `- 오늘(is_today) 반품·전략 보고서의 headline·summary·warnings·actions가 요약의 재료입니다. 같은 상품을 두 담당이 다르게 봤으면(급등인데 반품 위험) 합쳐서 한 줄로 씁니다.
+const COLLEAGUE_RULES = `- 오늘(is_today) 반품·전략·광고 운영 보고서의 headline·summary·warnings·actions가 요약의 재료입니다. 같은 상품을 두 담당이 다르게 봤으면(급등인데 반품 위험) 합쳐서 한 줄로 씁니다.
+- 광고 운영 담당(오늘, 08:35)의 headline·decisions(힘주기/증액 보류/다시 켜기/줄이기)·주의 항목도 재료입니다 — 광고 관련 결론·할 일은 광고 운영 담당 기준으로 인용하고("광고 운영 담당 기준"), 전략 담당과 다르면 둘 다 적습니다.
 - 숫자판의 급등·하락 상품은 전략·반품 담당이 이미 다뤘으면 그 판단을 인용하고, 다루지 않았으면 handoffs로 넘깁니다(해석을 직접 만들지 않습니다).
 - 동료 할 일을 통합할 때 중복(같은 상품·같은 일)은 하나로 합치고 source에 처음 낸 담당을 적습니다. 완료 체크된 것은 뺍니다.`;
 export const DEF: AgentDef = { agent: AGENT, label: "오늘의 요약", system: SYSTEM, schema: SCHEMA, collect, colleagueRules: COLLEAGUE_RULES, notify: "always" };

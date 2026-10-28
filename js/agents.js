@@ -25,9 +25,9 @@ const AGENTS = [
   },
   {
     key: 'ads', name: '광고 운영 담당', icon: 'fa-sliders', color: '#ea580c', status: 'active', fn: 'ads-agent',
-    schedule: '매일 아침 9시 20분',
-    desc: '친구 광고 대시보드의 \'어제 광고 보고서\'(9시 생성)를 그대로 가져오고, 그 아래에 상품 전략 담당 보고서·반품 위험·Meta 광고 상태를 합쳐 상품별로 힘주기 / 증액 보류 / 다시 켜기 / 줄이기 / 유지를 판단해 광고 운영자의 결정을 돕습니다. 예산을 바꾸지는 않습니다.',
-    sources: ['어제 광고 보고서(친구 대시보드)', '오늘 상품 전략 보고서', '반품 위험 상품', 'Meta ON·꺼진 광고'],
+    schedule: '매일 아침 8시 35분 (오늘의 요약 바로 앞)',
+    desc: 'Meta 소재별 일별 성과와 카페24 매출로 어제 광고 보고서를 직접 씁니다: 요약 카드 7 → 14일 흐름(광고비·ROAS·자연 매출 비율) → 신규 테스트(상품별 3일차까지) → 치고 올라오는 소재 → 하락 소재 → 주의 → 상품별 힘주기 / 증액 보류 / 다시 켜기 / 줄이기 / 유지. 예산을 바꾸지는 않습니다.',
+    sources: ['Meta 소재별 일별 성과 14일', '카페24 일별 매출·어제 판매', '오늘 상품 전략·반품 보고서', 'Meta ON·꺼진 광고'],
   },
   {
     key: 'detail', name: '상세페이지 점검 담당', icon: 'fa-file-image', color: '#7c3aed', status: 'active', fn: 'detail-agent', onDemand: true,
@@ -98,7 +98,7 @@ const ORG_DESKS = {
   returns:  { time: '08:15', q: '반품은 괜찮나?' },
   strategy: { time: '08:30', q: '어떤 상품을 밀까?' },
   sales:    { time: '08:45', q: '오늘, 한 장으로?' },
-  ads:      { time: '09:20', q: '어떤 광고에 힘을 줄까?' },
+  ads:      { time: '08:35', q: '어떤 광고에 힘을 줄까?' },
   detail:   { time: '요청하면', q: '상세 어디를 고칠까?' },
   creative: { time: '월요일 · 요청하면', q: '어떤 소재로 팔까?' },
 };
@@ -116,14 +116,14 @@ function orgChartHtml() {
   const right = `<div class="org-arrow"><i class="fa-solid fa-arrow-right-long"></i></div>`;
   const down = (label, cls) => `<div class="org-down ${cls}"><i class="fa-solid fa-arrow-down-long"></i><span>${escHtml(label)}</span></div>`;
   return `<div class="org">
-    <div class="org-head"><b><i class="fa-solid fa-building"></i> 매출 성장팀</b><span class="muted small">08:00 어제 매출 숫자판 → 반품·전략이 보고 일하고 → 요약이 한 장으로 마무리</span></div>
+    <div class="org-head"><b><i class="fa-solid fa-building"></i> 매출 성장팀</b><span class="muted small">08:00 어제 매출 숫자판 → 반품·전략·광고 운영이 보고 일하고 → 요약이 한 장으로 마무리</span></div>
     <div class="org-rules">
-      <div class="rule"><span class="rule-k daily"><i class="fa-solid fa-sun"></i> 매일 자동</span><span>08:00 숫자판 → 08:15 취소·반품 → 08:30 상품 전략 → 08:45 오늘의 요약 → 09:20 광고 운영 <b class="muted">(알림은 요약 1번)</b></span></div>
+      <div class="rule"><span class="rule-k daily"><i class="fa-solid fa-sun"></i> 매일 자동</span><span>08:00 숫자판 → 08:15 취소·반품 → 08:30 상품 전략 → 08:35 광고 운영 → 08:45 오늘의 요약 <b class="muted">(알림은 요약 1번)</b></span></div>
       <div class="rule"><span class="rule-k weekly"><i class="fa-solid fa-calendar-week"></i> 매주 자동</span><span>월요일 09:00 광고 소재 — 급상승 5 + 베스트 5 상품 제작안</span></div>
       <div class="rule"><span class="rule-k ask"><i class="fa-solid fa-hand-pointer"></i> 요청할 때</span><span>상세페이지 점검 · 광고 소재 1개 · 담당자에게 질문 — 버튼으로만, 자동 실행 없음</span></div>
     </div>
     <div class="org-grid">
-      ${orgDesk('returns')}${right}${orgDesk('strategy')}${right}${orgDesk('sales')}${right}${orgDesk('ads')}
+      ${orgDesk('returns')}${right}${orgDesk('strategy')}${right}${orgDesk('ads')}${right}${orgDesk('sales')}
       ${down('부탁', 'd1')}<div></div>${down('부탁', 'd2')}<div></div><div class="org-gap"></div><div class="org-gap"></div><div class="org-gap"></div>
       ${orgDesk('detail')}<div></div>${orgDesk('creative')}<div></div><div class="org-gap"></div><div class="org-gap"></div><div class="org-gap"></div>
     </div>

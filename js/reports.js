@@ -372,8 +372,10 @@ function reportHtml(r) {
     headExtra += kpis;
     // ① 전체 흐름: 14일 꺾은선 3개(광고비 / 메타 ROAS·카페24 ROAS / 자연 매출 비율) + 상위 5 ×3
     const flow = d.flow || [];
+    const DOWK = ['일', '월', '화', '수', '목', '금', '토'];
+    const mdw = dt => `${md(dt)}(${DOWK[new Date(dt + 'T00:00:00Z').getUTCDay()]})`;
     const miniLine = (title, series, opt) => {
-      const pts = flow.map((f, i) => ({ i, f })), W = 640, H = 150, pl = 40, pr = 16, pt = 22, pb = 26;
+      const pts = flow.map((f, i) => ({ i, f })), W = 640, H = 156, pl = 48, pr = 52, pt = 22, pb = 28;
       const vals = series.flatMap(sr => flow.map(f => f[sr.key]).filter(v => v != null));
       if (!vals.length) return '';
       const maxV = Math.max(...vals) * 1.15 || 1, minV = 0;
@@ -382,12 +384,16 @@ function reportHtml(r) {
       const lines = series.map(sr => {
         const ps = pts.filter(p => p.f[sr.key] != null);
         const path = ps.map((p, j) => `${j ? 'L' : 'M'}${x(p.i).toFixed(1)},${yv(p.f[sr.key]).toFixed(1)}`).join(' ');
-        const dots = ps.map(p => `<circle cx="${x(p.i)}" cy="${yv(p.f[sr.key])}" r="3" fill="${sr.color}"><title>${escHtml(md(p.f.date))} ${escHtml(sr.label)} ${escHtml(opt.fmt(p.f[sr.key]))}</title></circle>`).join('');
+        const dots = ps.map(p => `<circle cx="${x(p.i)}" cy="${yv(p.f[sr.key])}" r="3" fill="${sr.color}"/>`).join('');
         const last = ps[ps.length - 1];
         return `<path d="${path}" fill="none" stroke="${sr.color}" stroke-width="2" stroke-linejoin="round"/>${dots}${last ? `<text x="${x(last.i) + 5}" y="${yv(last.f[sr.key]) + 4}" font-size="10" font-weight="700" fill="${sr.color}">${escHtml(opt.fmt(last.f[sr.key]))}</text>` : ''}`;
       }).join('');
-      const xl = flow.map((f, i) => i % 2 === flow.length % 2 ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="9.5" fill="#6b7280">${md(f.date)}</text>` : '').join('');
-      return `<div class="fl-chart"><div class="fl-t">${title} <span class="cc-legend">${series.map(sr => `<i style="background:${sr.color}"></i>${sr.label}`).join(' ')}</span></div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escHtml(title)}">${ticks}${lines}${xl}</svg></div>`;
+      const xl = flow.map((f, i) => i % 2 === flow.length % 2 ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="9.5" fill="#6b7280">${mdw(f.date)}</text>` : '').join('');
+      // 마우스를 올리면 그 날짜의 값(모든 선) — 세로 안내선 + 말풍선 (2026-10-28 사용자 요청)
+      const hit = flow.map((f, i) => `<rect class="fl-hit" data-i="${i}" x="${i === 0 ? pl : (x(i - 1) + x(i)) / 2}" y="0" width="${(i === flow.length - 1 ? W - pr : (x(i) + x(i + 1)) / 2) - (i === 0 ? pl : (x(i - 1) + x(i)) / 2)}" height="${H}" fill="transparent"/>`).join('');
+      const tipData = escHtml(JSON.stringify(flow.map(f => ({ d: mdw(f.date), v: series.map(sr => `${sr.label} ${f[sr.key] == null ? '—' : opt.fmt(f[sr.key])}`) }))));
+      const xs = escHtml(JSON.stringify(flow.map((f, i) => +x(i).toFixed(1))));
+      return `<div class="fl-chart" data-tip="${tipData}" data-xs="${xs}" data-pl="${pl}" data-pr="${pr}"><div class="fl-t">${title} <span class="cc-legend">${series.map(sr => `<i style="background:${sr.color}"></i>${sr.label}`).join(' ')}</span></div><div class="fl-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escHtml(title)}">${ticks}${lines}${xl}<line class="fl-cursor" x1="0" x2="0" y1="${pt}" y2="${H - pb}" stroke="#9ca3af" stroke-dasharray="3 3" style="display:none"/>${hit}</svg><div class="fl-tip" style="display:none"></div></div></div>`;
     };
     const charts = flow.length >= 2 ? miniLine('광고비', [{ key: 'spend', color: '#4f46e5', label: '광고비' }], { fmt: v => won(v), tick: v => v >= 10000 ? Math.round(v / 10000) + '만' : Math.round(v) })
       + miniLine('ROAS', [{ key: 'meta_roas', color: '#2563eb', label: '메타 ROAS' }, { key: 'cafe24_roas', color: '#b45309', label: '카페24 ROAS' }], { fmt: v => (+v).toFixed(2), tick: v => (+v).toFixed(1) })
@@ -416,18 +422,18 @@ function reportHtml(r) {
     // ③ 치고 올라오는 소재 / ④ 하락하는 소재
     const seriesCell = sr => `<div class="ser">${(sr || []).map(x => `<span title="${escHtml(x.date)}"><i>${escHtml(x.date.slice(3))}</i>${fmt(x.purchases)}건<em>${x.roas != null ? x.roas : '—'}</em></span>`).join('')}</div>`;
     const rising = rp.rising && rp.rising.length ? rp.rising : [];
-    const risingRows = rising.map(a => `<tr><td><b>${escHtml(a.name)}</b>${a.product ? `<div class="muted">${escHtml(pn(a.product))}</div>` : ''}</td>
+    const risingRows = rising.map(a => `<tr><td><b>${escHtml(a.name)}</b>${a.strong === false ? ' <span class="chip">약한 신호</span>' : ''}${a.product ? `<div class="muted">${escHtml(pn(a.product))}</div>` : ''}</td>
         <td class="r"><b>${fmt(a.purchases_y)}건</b><div class="muted">3일 평균 ${a.avg3_purchases}</div></td><td class="r"><b class="up">${a.roas_y ?? '—'}</b><div class="muted">3일 평균 ${a.avg3_roas ?? '—'}</div></td><td class="r">${won(a.spend_y)}<div class="muted">빈도 ${a.frequency_y ?? '—'}</div></td><td>${seriesCell(a.series)}</td><td>${escHtml(a.why || '')}</td></tr>`).join('');
-    headExtra += `<div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 치고 올라오는 소재 <span class="muted small">어제 지출 3만↑·구매 3건↑·ROAS 3↑ 이면서 직전 3일 평균 대비 구매 1.5배↑ 또는 ROAS 1.3배↑ (테스트 제외)</span></h3>
+    headExtra += `<div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 치고 올라오는 소재 <span class="muted small">어제 지출 3만↑·구매 3건↑·ROAS 3↑ 이면서 직전 3일 평균 대비 구매 1.5배↑ 또는 ROAS 1.3배↑ (테스트 제외) · 3개가 안 되면 약한 신호로 채움</span></h3>
       ${risingRows ? `<div class="tbl-wrap"><table class="risk stack t-rise"><thead><tr><th>소재</th><th class="r">어제 구매</th><th class="r">어제 ROAS</th><th class="r">어제 광고비</th><th>최근 4일</th><th>해석 · 할 일</th></tr></thead><tbody>${risingRows}</tbody></table></div>` : `<div class="muted">기준을 넘는 소재가 없어요${(d.rising || []).length ? ` (후보 ${d.rising.length}개는 담당자가 의미 없다고 봄)` : ''}</div>`}</div>`;
     const falling = rp.falling && rp.falling.length ? rp.falling : [];
-    const fallingRows = falling.map(a => `<tr><td><b>${escHtml(a.name)}</b>${a.product ? `<div class="muted">${escHtml(pn(a.product))}</div>` : ''}<div class="muted">7일 ${won(a.spend_7d)} · ${fmt(a.purchases_7d)}건 · ROAS ${a.roas_7d ?? '—'}</div></td>
+    const fallingRows = falling.map(a => `<tr><td><b>${escHtml(a.name)}</b>${a.strong === false ? ' <span class="chip">약한 신호</span>' : ''}${a.product ? `<div class="muted">${escHtml(pn(a.product))}</div>` : ''}<div class="muted">7일 ${won(a.spend_7d)} · ${fmt(a.purchases_7d)}건 · ROAS ${a.roas_7d ?? '—'}</div></td>
         <td class="r"><b class="down">${a.last2_roas ?? '—'}</b><div class="muted">앞 5일 ${a.prev5_roas ?? '—'}${a.roas_drop_pct ? ` (−${a.roas_drop_pct}%)` : ''}</div></td><td class="r"><b class="down">${a.last2_purchases_avg}</b><div class="muted">앞 5일 ${a.prev5_purchases_avg}${a.purchase_drop_pct ? ` (−${a.purchase_drop_pct}%)` : ''}</div></td><td class="r">${a.frequency_y ?? '—'}<div class="muted">CPA ${a.cpa_y != null ? won(a.cpa_y) : '—'}</div></td><td>${seriesCell(a.series)}</td><td>${escHtml(a.why || '')}${a.action ? `<div class="fx-act"><i class="fa-solid fa-arrow-right"></i> ${escHtml(a.action)}</div>` : ''}</td></tr>`).join('');
-    headExtra += `<div class="box"><h3><i class="fa-solid fa-arrow-trend-down down"></i> 하락하는 소재 <span class="muted small">주축 소재(7일 지출 상위 15 또는 7일 구매 20↑) 중 최근 2일 평균이 앞선 5일 평균보다 ROAS 30%↓ 또는 구매 40%↓</span></h3>
+    headExtra += `<div class="box"><h3><i class="fa-solid fa-arrow-trend-down down"></i> 하락하는 소재 <span class="muted small">주축 소재(7일 지출 상위 15 또는 7일 구매 20↑) 중 최근 2일 평균이 앞선 5일 평균보다 ROAS 30%↓ 또는 구매 40%↓ · 3개가 안 되면 약한 신호로 채움</span></h3>
       ${fallingRows ? `<div class="tbl-wrap"><table class="risk stack t-fall"><thead><tr><th>소재</th><th class="r">최근 2일 ROAS</th><th class="r">하루 구매</th><th class="r">어제 빈도</th><th>최근 4일</th><th>원인 · 할 일</th></tr></thead><tbody>${fallingRows}</tbody></table></div>` : `<div class="muted">꺾인 주축 소재가 없어요${(d.falling || []).length ? ` (후보 ${d.falling.length}개는 담당자가 일시적이라고 봄)` : ''}</div>`}</div>`;
     // ⑤ 주의
     const cautions = rp.cautions || [];
-    headExtra += `<div class="box caution-box"><h3><i class="fa-solid fa-triangle-exclamation" style="color:#b45309;"></i> 주의할 상품 · 소재 <span class="muted small">잘 팔리고 효율 좋은데 취소·순반품률이 높은 것, 구매 0건·소재 피로·품절 등</span></h3>
+    headExtra += `<div class="box caution-box"><h3><i class="fa-solid fa-triangle-exclamation" style="color:#b45309;"></i> 주의할 상품 · 소재 <span class="muted small">잘 팔리고 효율 좋은데 취소율·순반품률(배송완료 대비 반품, 취소 제외)이 높은 것, 구매 0건·소재 피로·품절 등</span></h3>
       ${cautions.length ? cautions.map(c => `<div class="li"><b class="down">${escHtml(pn(c.target))}</b><div>${escHtml(c.why)}${c.action ? ` <span class="fx-act"><i class="fa-solid fa-arrow-right"></i> ${escHtml(c.action)}</span>` : ''}</div></div>`).join('') : '<div class="muted">오늘 주의할 것이 없어요</div>'}</div>`;
     // ⑥ 상품별 광고 운영 판단 (유지)
     const DK = { '힘주기': 'v-push', '증액 보류': 'v-hold', '다시 켜기': 'v-on', '줄이기': 'v-check', '유지': 'v-keep' };
@@ -448,7 +454,7 @@ function reportHtml(r) {
         <td class="r">${p.active_ads == null ? '<span class="muted">모름</span>' : `${p.active_ads}개`}<div class="muted">${p.paused_ads ? `꺼짐 ${p.paused_ads}` : ''}</div></td>
         <td class="r">${perfCell(p.ad_7d)}</td>
         <td class="r">${perfCell(p.ad_14d)}</td>
-        <td class="r">${p.margin_rate != null ? p.margin_rate + '%' : '—'}<div class="muted">${rt ? `<b class="${String(rt.level) === '위험' ? 'down' : ''}">반품 ${rt.rate_14d ?? '—'}%</b>` : cn ? `취소 ${cn.rate}%` : (p.rate_14d != null ? `주문율 ${p.rate_14d}%` : '')}</div></td>
+        <td class="r">${p.margin_rate != null ? p.margin_rate + '%' : '—'}<div class="muted">${rt ? `<b class="${String(rt.level) === '위험' ? 'down' : ''}">순반품 ${rt.rate_14d ?? '—'}%</b>` : cn ? `취소율 ${cn.rate}%` : (p.rate_14d != null ? `주문율 ${p.rate_14d}%` : '')}</div></td>
       </tr>`;
     }).join('');
     headExtra += `<div class="box ours-box"><h3><i class="fa-solid fa-sliders" style="color:#ea580c;"></i> 상품별 광고 운영 판단 <span class="muted small">전략 담당 후보 + 반품·취소 위험 상품 ${prods.length}개 · 광고비·ROAS = 그 상품 광고 전부의 Meta 합</span></h3>
@@ -652,6 +658,20 @@ function reportHtml(r) {
     ${typeof askBoxHtml === 'function' ? askBoxHtml(r) : ''}
     <details class="raw"><summary>수집한 숫자 보기</summary>${rawTable(r.data, r.agent)}</details>`;
 }
+
+/* 꺾은선 그래프 마우스 툴팁 (2026-10-28): .fl-chart 안에서 가장 가까운 날짜의 값을 말풍선으로 */
+document.addEventListener('mousemove', e => {
+  const ch = e.target.closest && e.target.closest('.fl-chart'); if (!ch) return;
+  const svg = ch.querySelector('svg'), tip = ch.querySelector('.fl-tip'), cur = ch.querySelector('.fl-cursor'); if (!svg || !tip) return;
+  const r = svg.getBoundingClientRect(), W = svg.viewBox.baseVal.width, vx = (e.clientX - r.left) / r.width * W;
+  const xs = JSON.parse(ch.dataset.xs || '[]'), data = JSON.parse(ch.dataset.tip || '[]'); if (!xs.length) return;
+  let i = 0; for (let k = 1; k < xs.length; k++) if (Math.abs(xs[k] - vx) < Math.abs(xs[i] - vx)) i = k;
+  cur.setAttribute('x1', xs[i]); cur.setAttribute('x2', xs[i]); cur.style.display = '';
+  tip.innerHTML = `<b>${escHtml(data[i].d)}</b>${data[i].v.map(v => `<div>${escHtml(v)}</div>`).join('')}`;
+  const px = xs[i] / W * r.width; tip.style.display = '';
+  tip.style.left = Math.min(Math.max(px - tip.offsetWidth / 2, 0), r.width - tip.offsetWidth) + 'px';
+});
+document.addEventListener('mouseout', e => { const ch = e.target.closest && e.target.closest('.fl-chart'); if (!ch || (e.relatedTarget && ch.contains(e.relatedTarget))) return; const t = ch.querySelector('.fl-tip'), c = ch.querySelector('.fl-cursor'); if (t) t.style.display = 'none'; if (c) c.style.display = 'none'; });
 
 /* 모바일용 표 → 카드: th 제목을 td의 data-label로 옮겨 두면 CSS(max-width 800px)가 행을 세로 카드로 펼친다 (2026-09-18) */
 function stackTables(root) {

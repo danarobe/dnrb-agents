@@ -105,7 +105,7 @@ async function collect(D: string) {
     if (p.rank14) tag(p.product_no, `TOP10 ${p.rank14}위`);
     const q = String(p.quadrant ?? "");
     if (/^(판매 확대|노출 부족|상세·가격 점검)/.test(q)) tag(p.product_no, q.replace(/\(.*\)$/, ""));
-    if (p.returns) tag(p.product_no, `반품 ${String((p.returns as Row).level ?? "")}`);
+    if (p.returns) tag(p.product_no, `순반품 ${String((p.returns as Row).level ?? "")}`);
     if (p.cancel) tag(p.product_no, `취소율 ${String((p.cancel as Row).rate ?? "")}%`);
   }
   const allProds: PaProd[] = allP().filter((p) => p.name && !p.no_match).map((p) => ({ no: Number(p.product_no), name: String(p.name), key: paNorm(paKey(String(p.name))), ver: paVerTok(String(p.name)) ? paNorm(paVerTok(String(p.name))!) : null, qty: num(p.qty_14d ?? p.qty_y) })).filter((p) => p.key.length >= 3);
@@ -164,9 +164,10 @@ async function collect(D: string) {
     const p3 = adPerf(a, prev3), avgP = p3.purchases / 3, avgS = p3.spend / 3, yR = roasOf(y.spend, y.value), p3R = p3.roas;
     const purchaseLift = avgP > 0 ? y.purchases / avgP : (y.purchases >= 3 ? 9 : 0);
     const roasLift = p3R != null && p3R > 0 && yR != null ? yR / p3R : (yR != null && yR >= 3 && p3.spend === 0 ? 9 : 0);
-    const ok = y.purchases >= 3 && yR != null && yR >= 3 && (purchaseLift >= 1.5 || roasLift >= 1.3);
-    if (!ok) return null;
-    return { ...adBrief(a), spend_y: Math.round(y.spend), purchases_y: y.purchases, roas_y: yR, ctr_y: y.impressions > 0 ? r2(y.clicks / y.impressions * 100) : null, frequency_y: r2(y.frequency), avg3_purchases: r2(avgP), avg3_spend: Math.round(avgS), avg3_roas: p3R, purchase_lift: r2(purchaseLift), roas_lift: r2(roasLift), first_spend: firstSpendDay(a), series: series4(a), score: purchaseLift + roasLift + y.purchases / 10 };
+    const strong = y.purchases >= 3 && yR != null && yR >= 3 && (purchaseLift >= 1.5 || roasLift >= 1.3);
+    const weak = !strong && y.purchases >= 2 && yR != null && yR >= 2 && (purchaseLift >= 1.2 || roasLift >= 1.15);   // 약한 신호 — 강한 것이 3개 안 되면 채운다(사용자: 적어도 3개)
+    if (!strong && !weak) return null;
+    return { ...adBrief(a), strong, spend_y: Math.round(y.spend), purchases_y: y.purchases, roas_y: yR, ctr_y: y.impressions > 0 ? r2(y.clicks / y.impressions * 100) : null, frequency_y: r2(y.frequency), avg3_purchases: r2(avgP), avg3_spend: Math.round(avgS), avg3_roas: p3R, purchase_lift: r2(purchaseLift), roas_lift: r2(roasLift), first_spend: firstSpendDay(a), series: series4(a), score: (strong ? 10 : 0) + purchaseLift + roasLift + y.purchases / 10 };
   }).filter((x): x is NonNullable<typeof x> => !!x).sort((a, b) => b.score - a.score).slice(0, 8);
 
   // ── 하락하는 소재: 주축(직전 7일 지출 상위 15 또는 7일 구매 20↑) 중 최근 2일 평균이 앞선 5일 평균보다 ROAS 30%↓ 또는 구매 40%↓ ──
@@ -179,9 +180,11 @@ async function collect(D: string) {
     const l2R = l2.roas, p5R = p5.roas, l2P = l2.purchases / 2, p5P = p5.purchases / 5;
     const roasDrop = l2R != null && p5R != null && p5R > 0 ? 1 - l2R / p5R : (p5R != null && p5R > 0 && l2.purchases === 0 ? 1 : 0);
     const purDrop = p5P > 0 ? 1 - l2P / p5P : 0;
-    if (!(roasDrop >= 0.3 || purDrop >= 0.4)) return null;
+    const strong = roasDrop >= 0.3 || purDrop >= 0.4;
+    const weak = !strong && (roasDrop >= 0.15 || purDrop >= 0.2);   // 약한 신호 — 강한 것이 3개 안 되면 채운다
+    if (!strong && !weak) return null;
     const y = dayOf(a, D);
-    return { ...adBrief(a), spend_7d: p7.spend, purchases_7d: p7.purchases, roas_7d: p7.roas, prev5_roas: p5R, prev5_purchases_avg: r2(p5P), last2_roas: l2R, last2_purchases_avg: r2(l2P), roas_drop_pct: Math.round(roasDrop * 100), purchase_drop_pct: Math.round(purDrop * 100), frequency_y: y ? r2(y.frequency) : null, cpa_y: y && y.purchases > 0 ? Math.round(y.spend / y.purchases) : null, series: series4(a), score: Math.max(roasDrop, purDrop) * p7.spend };
+    return { ...adBrief(a), strong, spend_7d: p7.spend, purchases_7d: p7.purchases, roas_7d: p7.roas, prev5_roas: p5R, prev5_purchases_avg: r2(p5P), last2_roas: l2R, last2_purchases_avg: r2(l2P), roas_drop_pct: Math.round(roasDrop * 100), purchase_drop_pct: Math.round(purDrop * 100), frequency_y: y ? r2(y.frequency) : null, cpa_y: y && y.purchases > 0 ? Math.round(y.spend / y.purchases) : null, series: series4(a), score: (strong ? 1e9 : 0) + Math.max(roasDrop, purDrop) * p7.spend };
   }).filter((x): x is NonNullable<typeof x> => !!x).sort((a, b) => b.score - a.score).slice(0, 8);
 
   // ── 상품별 광고 숫자(ON 광고 전부의 7일·14일 합은 일별 자료에서, 꺼진 광고 30일은 adcards) + 운영 판단 후보 ──
@@ -204,7 +207,7 @@ async function collect(D: string) {
     const ret = (p.returns ?? null) as Row | null, cn = (p.cancel ?? null) as Row | null, codiShare = (p.codi as Row | null)?.share ?? null;
     let hint = "유지", why = "";
     const roas7 = perf7?.roas ?? null, spend7 = perf7?.spend ?? 0, verdict = String(p.verdict ?? "");
-    if (ret && String(ret.level) === "위험") { hint = "증액 보류"; why = `반품 ${ret.rate_14d}%(위험)`; }
+    if (ret && String(ret.level) === "위험") { hint = "증액 보류"; why = `순반품률 ${ret.rate_14d}%(위험)`; }
     else if (cn && num(cn.rate) >= 10) { hint = "증액 보류"; why = `취소율 ${cn.rate}%`; }
     else if (codiShare != null && num(codiShare) >= 40) { hint = "증액 보류"; why = `코디 구매 ${codiShare}% — 부모 상품 따라감`; }
     else if (verdict === "보류" || verdict === "점검") { hint = "증액 보류"; why = `전략 담당 '${verdict}' — ${p.verdict_reason ?? ""}`; }
@@ -230,7 +233,7 @@ async function collect(D: string) {
   const cautionCands: Row[] = [];
   for (const p of products) {
     const sp7 = p.ad_7d?.spend ?? 0, ret = p.returns as Row | null, cn = p.cancel as Row | null;
-    if (ret && sp7 >= 100000 && (String(ret.level) === "위험" || String(ret.level) === "주의")) cautionCands.push({ kind: "반품", target: p.name, why: `7일 광고비 ${Math.round(sp7 / 10000)}만·ROAS ${p.ad_7d?.roas ?? "—"}인데 순반품률 ${ret.rate_14d}%(${ret.level})${ret.cause ? ` — ${ret.cause}` : ""}` });
+    if (ret && sp7 >= 100000 && (String(ret.level) === "위험" || String(ret.level) === "주의")) cautionCands.push({ kind: "순반품", target: p.name, why: `7일 광고비 ${Math.round(sp7 / 10000)}만·ROAS ${p.ad_7d?.roas ?? "—"}인데 순반품률 ${ret.rate_14d}%(${ret.level}, 배송완료 ${ret.delivered_14d ?? "—"}개 기준)${ret.cause ? ` — ${ret.cause}` : ""}` });
     if (cn && sp7 >= 100000 && num(cn.rate) >= 8) cautionCands.push({ kind: "취소", target: p.name, why: `7일 광고비 ${Math.round(sp7 / 10000)}만인데 14일 취소율 ${cn.rate}%(결제 ${cn.paid}개 중 ${cn.cancel}개)` });
     if (p.sold_out && (p.active_ads ?? 0) > 0) cautionCands.push({ kind: "품절", target: p.name, why: `품절인데 ON 광고 ${p.active_ads}개` });
   }
@@ -254,8 +257,9 @@ async function collect(D: string) {
       kpi: "kpi.yesterday·day_before·avg_7d(직전 7일 하루 평균): spend·value(Meta 전환값)·purchases·clicks·roas·cpa·cpc + cafe24(카페24 결제 매출)·cafe24_orders·cafe24_roas(= 카페24 매출 ÷ 광고비). 친구 대시보드 요약 카드와 같은 구성",
       flow: "flow = 최근 14일 일별: spend, meta_roas, cafe24_roas, organic_share(%) = (카페24 매출 − Meta 전환값) ÷ 카페24 매출. 자연 매출 비율이 오르면 광고 없이도 팔리는 힘이 커진 것, 떨어지면 광고 의존이 커진 것",
       tests: "tests = 테스트 소재(세트·광고명에 test/테스트) 중 첫 지출이 3일 안인 것을 상품별로 묶음. day = n일차. per_ad·by_day로 소재·날짜별 흐름",
-      rising: "rising = 어제 지출 3만↑·구매 3건↑·ROAS 3↑이면서 직전 3일 평균 대비 구매 1.5배↑ 또는 ROAS 1.3배↑ (테스트 제외). series = 최근 4일",
-      falling: "falling = 직전 7일 지출 상위 15 또는 7일 구매 20↑인 주축 소재 중 최근 2일 평균이 앞선 5일 평균보다 ROAS 30%↓ 또는 구매 40%↓",
+      rising: "rising = 어제 지출 3만↑·구매 3건↑·ROAS 3↑이면서 직전 3일 평균 대비 구매 1.5배↑ 또는 ROAS 1.3배↑(strong=true, 테스트 제외) + 그보다 약한 신호(strong=false: 구매 2↑·ROAS 2↑·1.2배/1.15배). 점수순. series = 최근 4일",
+      falling: "falling = 직전 7일 지출 상위 15 또는 7일 구매 20↑인 주축 소재 중 최근 2일 평균이 앞선 5일 평균보다 ROAS 30%↓ 또는 구매 40%↓(strong=true) + 약한 신호(strong=false: 15%↓/20%↓)",
+      returns: "returns.rate_14d·caution의 반품 수치는 전부 **순반품률**(배송완료 수량 대비 반품 수량, 취소 제외, 반품 담당 기준). 보고서에서도 '반품률'이 아니라 '순반품률'이라고 쓴다",
       cautions: "caution_cands = 코드가 모은 주의 후보(반품·취소·품절·구매 0·소재 피로). 이 밖에 데이터에서 보이는 주의점이 있으면 더한다",
       kinds: "decisions.kind는 5가지만: 힘주기 / 증액 보류 / 다시 켜기 / 줄이기 / 유지. products[].hint·hint_why = 코드 규칙의 기본 판단",
       perf: "products[].ad_7d·ad_14d = 그 상품 광고 전부의 최근 7일·14일 Meta 합(일별 자료), paused_30d = 꺼진 광고 30일 합. null = 광고 정보 모름",
@@ -305,11 +309,12 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 광고 운
 
 1) 전체 흐름 (flow_note, 2줄 이내): kpi(어제 vs 그제 vs 7일 평균)와 flow(14일 광고비·메타 ROAS·카페24 ROAS·자연 매출 비율)에서 **방향**을 짚습니다 — 광고비를 늘렸는데 ROAS가 유지됐는지, 자연 매출 비율이 오르는지(광고 의존이 줄면 좋은 신호), 카페24 ROAS와 메타 ROAS의 차이가 벌어지는지. 숫자 2~3개로.
 2) 신규 테스트 (tests — data.tests 상품마다 1개, product는 그대로): day(n일차)·소재 수·지출·구매·ROAS·CTR·by_day 흐름으로 verdict(확대 / 계속 / 지켜보기 / 중단)와 note(45자 이내, 숫자 근거). 1일차는 지출·CTR만으로 성급히 결론 내지 말고 '지켜보기', 3일차는 결론을 냅니다. 마진(margin_rate)이 낮으면 ROAS 기준을 높입니다.
-3) 치고 올라오는 소재 (rising — data.rising 중 진짜 의미 있는 것만 최대 5, ad는 name 그대로): why에 어제 구매·ROAS가 직전 3일 평균 대비 얼마나 뛰었는지와 이유 추정(새 소재의 초반 반응인지, 빈도가 낮아 확장 여지가 있는지, 상품 자체가 급증인지). "좋아졌다"가 아니라 **무엇을 해야 하는지**가 드러나게(예: "구매 3→9건·ROAS 7.1, 빈도 1.4 — 예산 2배 여지").
-4) 하락하는 소재 (falling — data.falling 중 최대 5): 주축 소재가 꺾이기 시작한 것. why에 앞선 5일 평균 대비 최근 2일 ROAS·구매 하락 폭과 원인 추정(빈도 3↑ = 소재 피로, CPA 상승, 상품 재고·가격·반품 문제인지), action에 할 일(소재 교체 요청·예산 축소·며칠 더 관찰).
+3) 치고 올라오는 소재 (rising — data.rising에서 **최소 3개**(후보가 3개 이상이면), 최대 5. strong=true(강한 신호)를 먼저, 부족하면 strong=false(약한 신호)로 채우되 why에 '약한 신호'라고 적습니다. ad는 name 그대로): why에 어제 구매·ROAS가 직전 3일 평균 대비 얼마나 뛰었는지와 이유 추정(새 소재의 초반 반응인지, 빈도가 낮아 확장 여지가 있는지, 상품 자체가 급증인지). "좋아졌다"가 아니라 **무엇을 해야 하는지**가 드러나게(예: "구매 3→9건·ROAS 7.1, 빈도 1.4 — 예산 2배 여지").
+4) 하락하는 소재 (falling — data.falling에서 **최소 3개**(후보가 3개 이상이면), 최대 5. strong=true 먼저, 부족하면 strong=false로 채우고 why에 '약한 신호'. 후보가 하나도 없으면 빈 배열): 주축 소재가 꺾이기 시작한 것. why에 앞선 5일 평균 대비 최근 2일 ROAS·구매 하락 폭과 원인 추정(빈도 3↑ = 소재 피로, CPA 상승, 상품 재고·가격·반품 문제인지), action에 할 일(소재 교체 요청·예산 축소·며칠 더 관찰).
 5) 주의할 상품·소재 (cautions, 최대 6): caution_cands(반품·취소·품절·구매 0·소재 피로)에서 중요한 것 + 데이터에서 보이는 다른 주의점(코디 구매 비율 높은 상품의 광고 확대, 이벤트 종료 직전, 전략 담당 '보류' 상품에 광고비 집중 등). target(상품명 또는 소재명 그대로)·why(숫자)·action.
 6) 상품별 광고 운영 판단 (decisions, 중요한 순 최대 10 — 광고팀이 오늘 손댈 것만): kind는 5가지만 — 힘주기(7일 ROAS 2↑·반품 낮음·마진 좋음·전략 '밀기'·광고 없는 급증 상품의 착수) / 증액 보류(반품 위험·취소율 높음·코디 구매 40%↑·주문율 하락·전략 '점검'·'보류') / 다시 켜기(ON 광고 0개인데 꺼진 광고가 있고 팔리는 상품 — paused_list의 광고 이름, "켜기 전 왜 껐는지 확인") / 줄이기(7일 ROAS 1 미만이 지출 10만↑) / 유지. product는 products[].name 그대로, reason 45자 이내·숫자 하나 이상. ad_7d가 null인 상품은 '광고 없음'이라 쓰지 말고 '광고 연결 확인 필요'. 반품 위험 상품은 힘주기 금지.
 
+용어: 반품 수치는 전부 **순반품률**(배송완료 대비 반품, 취소 제외)입니다 — "반품 22%"가 아니라 "순반품률 22%"라고 씁니다. 취소는 '취소율'로 따로.
 공통: headline = 오늘 광고 운영 한 줄 결론(숫자 1개). summary 2줄(계정 흐름 + 오늘 할 일 요약). highlights/warnings 각 3개 이내(치고 올라오는·하락·주의와 겹치지 않게 계정 단위 신호 위주). actions = 광고팀 오늘 할 일 3개(예산 변경은 '대표 확인 후'). 소재 제작이 필요한 상품은 광고 소재 담당에게 handoff, 상세 문제는 상세페이지 점검 담당에게 handoff.`;
 
 const SCHEMA = reportSchema({
@@ -328,7 +333,7 @@ const SCHEMA = reportSchema({
 });
 
 const COLLEAGUE_RULES = `- 상품 전략 담당(오늘)의 결론 칩·집중 상품 status·grow는 data.products에 합쳐져 있습니다. 전략이 '밀기'라도 광고 숫자(ROAS·구매 0건·소재 피로)가 반대면 광고 관점의 판단을 쓰고 colleague_notes에 적습니다.
-- 취소·반품 감시 담당(오늘)의 위험 상품·Best30 취소율 TOP5는 '주의할 상품'과 판단에 반영(힘주기 금지).
+- 취소·반품 감시 담당(오늘)의 위험 상품(순반품률)·Best30 취소율 TOP5는 '주의할 상품'과 판단에 반영(힘주기 금지). 수치를 인용할 때 '순반품률'·'취소율'을 구분합니다.
 - 소재가 필요한 상품(하락 소재의 교체, 광고 없는 급증 상품)은 광고 소재 담당에게 handoff. 상세 문제(주문율 하락)는 상세페이지 점검 담당에게 handoff.`;
 
 export const DEF: AgentDef = { agent: AGENT, label: "광고 운영 담당", system: SYSTEM, schema: SCHEMA, collect, forLLM, postProcess, effort: "low", colleagueRules: COLLEAGUE_RULES, notify: "warn" };

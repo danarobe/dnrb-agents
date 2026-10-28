@@ -660,3 +660,7 @@ table.mini td.r { text-align: right; white-space: nowrap; }
 .fx-act { color: #0e7490; font-weight: 700; font-size: .8rem; margin-top: 3px; display: inline-block; }
 .caution-box { border-color: #fde68a; }
 table.t-rise th:nth-child(1), table.t-fall th:nth-child(1) { width: 24%; } table.t-rise th:nth-child(2), table.t-rise th:nth-child(3), table.t-rise th:nth-child(4), table.t-fall th:nth-child(2), table.t-fall th:nth-child(3), table.t-fall th:nth-child(4) { width: 80px; } table.t-rise th:nth-child(5), table.t-fall th:nth-child(5) { width: 200px; }
+.fl-wrap { position: relative; }
+.fl-tip { position: absolute; top: 4px; background: #111827; color: #fff; font-size: .72rem; line-height: 1.45; padding: 6px 9px; border-radius: 8px; pointer-events: none; white-space: nowrap; z-index: 2; box-shadow: 0 4px 12px rgba(0,0,0,.18); }
+.fl-tip b { display: block; margin-bottom: 2px; color: #e0e7ff; }
+.fl-hit { cursor: crosshair; }
