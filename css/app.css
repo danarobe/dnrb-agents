@@ -634,3 +634,29 @@ table.t-ads tr.dim { opacity: .62; }
 .ours-box { border-color: #fdba74; }
 .ours-head { font-size: 1rem; font-weight: 800; line-height: 1.5; margin: 6px 0 4px; }
 .ours-box .h-sub { margin-bottom: 8px; }
+/* 광고 운영 담당 자체 발행 화면 (2026-10-28) */
+.fl-chart { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px 4px; margin-top: 8px; }
+.fl-t { font-size: .78rem; font-weight: 800; color: var(--ink-2); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fl-chart svg { width: 100%; height: auto; display: block; }
+.t5-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 10px; }
+.t5 { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.t5-t { font-size: .78rem; font-weight: 800; color: var(--ink-2); margin-bottom: 4px; }
+.t5 ol { margin: 0; padding-left: 20px; font-size: .8rem; line-height: 1.5; }
+.t5 li { margin: 3px 0; overflow-wrap: anywhere; }
+.t5-n { display: block; font-size: .74rem; color: var(--muted); }
+.test-card { border: 1px solid #ddd6fe; background: #faf5ff; border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
+.tc-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: .9rem; }
+.tc-nums { font-size: .8rem; color: var(--ink-2); margin-top: 4px; }
+.tc-days { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.tc-days span { font-size: .7rem; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 2px 7px; }
+.tc-note { margin-top: 6px; font-size: .84rem; line-height: 1.5; }
+table.mini { width: 100%; border-collapse: collapse; margin-top: 4px; }
+table.mini td { padding: 4px 6px; font-size: .76rem; border-bottom: 1px dashed #f3f4f6; }
+table.mini td.r { text-align: right; white-space: nowrap; }
+.ser { display: flex; gap: 4px; flex-wrap: wrap; }
+.ser span { display: inline-flex; flex-direction: column; align-items: center; font-size: .68rem; background: #f9fafb; border: 1px solid var(--line); border-radius: 8px; padding: 2px 6px; line-height: 1.3; min-width: 40px; }
+.ser span i { font-style: normal; color: var(--muted); font-size: .62rem; }
+.ser span em { font-style: normal; color: #1d4ed8; font-weight: 700; }
+.fx-act { color: #0e7490; font-weight: 700; font-size: .8rem; margin-top: 3px; display: inline-block; }
+.caution-box { border-color: #fde68a; }
+table.t-rise th:nth-child(1), table.t-fall th:nth-child(1) { width: 24%; } table.t-rise th:nth-child(2), table.t-rise th:nth-child(3), table.t-rise th:nth-child(4), table.t-fall th:nth-child(2), table.t-fall th:nth-child(3), table.t-fall th:nth-child(4) { width: 80px; } table.t-rise th:nth-child(5), table.t-fall th:nth-child(5) { width: 200px; }
