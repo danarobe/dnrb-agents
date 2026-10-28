@@ -395,8 +395,25 @@ function reportHtml(r) {
       const xs = escHtml(JSON.stringify(flow.map((f, i) => +x(i).toFixed(1))));
       return `<div class="fl-chart" data-tip="${tipData}" data-xs="${xs}" data-pl="${pl}" data-pr="${pr}"><div class="fl-t">${title} <span class="cc-legend">${series.map(sr => `<i style="background:${sr.color}"></i>${sr.label}`).join(' ')}</span></div><div class="fl-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escHtml(title)}">${ticks}${lines}${xl}<line class="fl-cursor" x1="0" x2="0" y1="${pt}" y2="${H - pb}" stroke="#9ca3af" stroke-dasharray="3 3" style="display:none"/>${hit}</svg><div class="fl-tip" style="display:none"></div></div></div>`;
     };
-    const charts = flow.length >= 2 ? miniLine('광고비', [{ key: 'spend', color: '#4f46e5', label: '광고비' }], { fmt: v => won(v), tick: v => v >= 10000 ? Math.round(v / 10000) + '만' : Math.round(v) })
-      + miniLine('ROAS', [{ key: 'meta_roas', color: '#2563eb', label: '메타 ROAS' }, { key: 'cafe24_roas', color: '#b45309', label: '카페24 ROAS' }], { fmt: v => (+v).toFixed(2), tick: v => (+v).toFixed(1) })
+    // 광고비(막대, 왼쪽 축) + 메타·카페24 ROAS(꺾은선, 오른쪽 축)를 한 그래프에 (2026-10-28 사용자 요청 "광고비가 나뉘어져 있다")
+    const comboChart = () => {
+      const W = 640, H = 170, pl = 48, pr = 52, pt = 22, pb = 28, n = flow.length;
+      const maxS = Math.max(...flow.map(f => f.spend || 0)) * 1.2 || 1, rv = flow.flatMap(f => [f.meta_roas, f.cafe24_roas]).filter(v => v != null), maxR = (rv.length ? Math.max(...rv) : 1) * 1.2 || 1;
+      const x = i => pl + (W - pl - pr) * (n === 1 ? 0.5 : i / (n - 1)), bw = Math.max(6, (W - pl - pr) / n * 0.55);
+      const ys = v => pt + (H - pt - pb) * (1 - v / maxS), yr = v => pt + (H - pt - pb) * (1 - v / maxR);
+      const tickS = [0, maxS / 2, maxS].map(v => `<line x1="${pl}" x2="${W - pr}" y1="${ys(v)}" y2="${ys(v)}" stroke="#eef0f3"/><text x="${pl - 5}" y="${ys(v) + 4}" text-anchor="end" font-size="9.5" fill="#6366f1">${v >= 10000 ? Math.round(v / 10000) + '만' : Math.round(v)}</text>`).join('');
+      const tickR = [0, maxR / 2, maxR].map(v => `<text x="${W - pr + 5}" y="${yr(v) + 4}" font-size="9.5" fill="#b45309">${(+v).toFixed(1)}</text>`).join('');
+      const bars = flow.map((f, i) => `<rect x="${x(i) - bw / 2}" y="${ys(f.spend || 0)}" width="${bw}" height="${Math.max(0, ys(0) - ys(f.spend || 0))}" fill="#c7d2fe" rx="2"/>`).join('');
+      const line = (key, color) => { const ps = flow.map((f, i) => ({ i, v: f[key] })).filter(p => p.v != null); const last = ps[ps.length - 1]; return `<path d="${ps.map((p, j) => `${j ? 'L' : 'M'}${x(p.i).toFixed(1)},${yr(p.v).toFixed(1)}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>${ps.map(p => `<circle cx="${x(p.i)}" cy="${yr(p.v)}" r="3" fill="${color}"/>`).join('')}${last ? `<text x="${x(last.i) + 5}" y="${yr(last.v) + 4}" font-size="10" font-weight="700" fill="${color}">${(+last.v).toFixed(2)}</text>` : ''}`; };
+      const lastS = flow[n - 1];
+      const spendLbl = lastS ? `<text x="${x(n - 1)}" y="${ys(lastS.spend || 0) - 4}" text-anchor="middle" font-size="9.5" font-weight="700" fill="#4f46e5">${won(lastS.spend)}</text>` : '';
+      const xl = flow.map((f, i) => i % 2 === n % 2 ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="9.5" fill="#6b7280">${mdw(f.date)}</text>` : '').join('');
+      const hit = flow.map((f, i) => `<rect class="fl-hit" data-i="${i}" x="${i === 0 ? pl : (x(i - 1) + x(i)) / 2}" y="0" width="${(i === n - 1 ? W - pr : (x(i) + x(i + 1)) / 2) - (i === 0 ? pl : (x(i - 1) + x(i)) / 2)}" height="${H}" fill="transparent"/>`).join('');
+      const tipData = escHtml(JSON.stringify(flow.map(f => ({ d: mdw(f.date), v: [`광고비 ${won(f.spend)}`, `메타 ROAS ${f.meta_roas == null ? '—' : f.meta_roas.toFixed(2)}`, `카페24 ROAS ${f.cafe24_roas == null ? '—' : f.cafe24_roas.toFixed(2)}`, `메타 전환값 ${won(f.value)} · 카페24 매출 ${won(f.cafe24_revenue)}`] }))));
+      const xs = escHtml(JSON.stringify(flow.map((f, i) => +x(i).toFixed(1))));
+      return `<div class="fl-chart" data-tip="${tipData}" data-xs="${xs}"><div class="fl-t">광고비 · ROAS <span class="cc-legend"><i style="background:#c7d2fe"></i>광고비(왼쪽 축) <i style="background:#2563eb"></i>메타 ROAS(오른쪽 축) <i style="background:#b45309"></i>카페24 ROAS(오른쪽 축)</span></div><div class="fl-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="최근 14일 광고비와 ROAS">${tickS}${tickR}${bars}${spendLbl}${line('meta_roas', '#2563eb')}${line('cafe24_roas', '#b45309')}${xl}<line class="fl-cursor" x1="0" x2="0" y1="${pt}" y2="${H - pb}" stroke="#9ca3af" stroke-dasharray="3 3" style="display:none"/>${hit}</svg><div class="fl-tip" style="display:none"></div></div></div>`;
+    };
+    const charts = flow.length >= 2 ? comboChart()
       + miniLine('자연 매출 비율', [{ key: 'organic_share', color: '#15803d', label: '자연 매출 비율(카페24 매출 중 메타 전환 밖)' }], { fmt: v => v + '%', tick: v => Math.round(v) + '%' }) : '<div class="muted">14일 흐름 데이터가 없어요</div>';
     const t5 = d.top5 || {};
     const list5 = (title, rows, line) => `<div class="t5"><div class="t5-t">${title}</div>${(rows || []).length ? `<ol>${rows.map(line).join('')}</ol>` : '<div class="muted small">없음</div>'}</div>`;
@@ -422,7 +439,7 @@ function reportHtml(r) {
     // ③ 치고 올라오는 소재 / ④ 하락하는 소재
     const seriesCell = sr => `<div class="ser">${(sr || []).map(x => `<span title="${escHtml(x.date)}"><i>${escHtml(x.date.slice(3))}</i>${fmt(x.purchases)}건<em>${x.roas != null ? x.roas : '—'}</em></span>`).join('')}</div>`;
     const rising = rp.rising && rp.rising.length ? rp.rising : [];
-    const risingRows = rising.map(a => `<tr><td><b>${escHtml(a.name)}</b>${a.strong === false ? ' <span class="chip">약한 신호</span>' : ''}${a.product ? `<div class="muted">${escHtml(pn(a.product))}</div>` : ''}</td>
+    const risingRows = rising.map(a => `<tr><td><b>${escHtml(a.name)}</b>${a.strong === false ? ` <span class="chip">${a.tier === 'fill' ? '기준 미달 · 상승 중' : '약한 신호'}</span>` : ''}${a.product ? `<div class="muted">${escHtml(pn(a.product))}</div>` : ''}</td>
         <td class="r"><b>${fmt(a.purchases_y)}건</b><div class="muted">3일 평균 ${a.avg3_purchases}</div></td><td class="r"><b class="up">${a.roas_y ?? '—'}</b><div class="muted">3일 평균 ${a.avg3_roas ?? '—'}</div></td><td class="r">${won(a.spend_y)}<div class="muted">빈도 ${a.frequency_y ?? '—'}</div></td><td>${seriesCell(a.series)}</td><td>${escHtml(a.why || '')}</td></tr>`).join('');
     headExtra += `<div class="box"><h3><i class="fa-solid fa-arrow-trend-up up"></i> 치고 올라오는 소재 <span class="muted small">어제 지출 3만↑·구매 3건↑·ROAS 3↑ 이면서 직전 3일 평균 대비 구매 1.5배↑ 또는 ROAS 1.3배↑ (테스트 제외) · 3개가 안 되면 약한 신호로 채움</span></h3>
       ${risingRows ? `<div class="tbl-wrap"><table class="risk stack t-rise"><thead><tr><th>소재</th><th class="r">어제 구매</th><th class="r">어제 ROAS</th><th class="r">어제 광고비</th><th>최근 4일</th><th>해석 · 할 일</th></tr></thead><tbody>${risingRows}</tbody></table></div>` : `<div class="muted">기준을 넘는 소재가 없어요${(d.rising || []).length ? ` (후보 ${d.rising.length}개는 담당자가 의미 없다고 봄)` : ''}</div>`}</div>`;
