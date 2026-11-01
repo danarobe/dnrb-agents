@@ -578,6 +578,11 @@ export function serveAgent(def: AgentDef) {
       if (action === "run") {
         const trigger = viaCron ? "cron" : "manual";
         const t0 = Date.now();
+        // 루틴 안전장치(2026-11-01): 클라우드 루틴이 이미 오늘 보고서를 냈으면 API로 다시 쓰지 않는다 (cron이 only_if_missing=1로 부름)
+        if (url.searchParams.get("only_if_missing") === "1") {
+          const ex = await rest(`agent_reports?agent=eq.${def.agent}&report_date=eq.${D}&status=eq.ok&select=id&limit=1`);
+          if (ex.ok && (((await ex.json()) as Row[]).length)) return json({ skipped: true, reason: "이미 오늘 보고서가 있음(루틴이 작성)", report_date: D });
+        }
         let data: Row | null = null;
         let snapshotId: string | null = null;
         try {
@@ -666,3 +671,57 @@ export async function writeStage(def: AgentDef, D: string, key: string, opts: { 
   }
 }
 export const isCronRequest = (req: Request) => !!CRON_SECRET && req.headers.get("x-cron-secret") === CRON_SECRET;
+
+// ── 클라우드 루틴용 (2026-11-01, 사용자 "API 비용 없이 내 계정 사용량으로 매일 아침 보고서"): Claude 호출만 바깥(claude.ai 예약 루틴의 Claude Code 세션)에서 하고
+//    수집·프롬프트·후처리·저장·알림은 여기서. prepare = run의 1단계 + Claude에 보낼 재료(system·schema·user_text)를 그대로 돌려줌 / submit = writeStage의 뒷부분.
+//    앱의 '지금 실행'(run)은 그대로 API를 쓴다(사용자 결정).
+export async function routinePrepare(def: AgentDef, D: string): Promise<Row> {
+  const t0 = Date.now();
+  let data: Row | null = null, snapshotId: string | null = null;
+  const snap = await rest(`agent_reports?agent=eq.${def.agent}&report_date=eq.${D}&status=eq.collected&select=id,data&order=created_at.desc&limit=1`);
+  const snapRow = snap.ok ? (((await snap.json()) as Row[])[0] ?? null) : null;
+  if (snapRow) { snapshotId = String(snapRow.id); data = snapRow.data as Row; } else data = await def.collect(D);
+  const key = `agentrun:${def.agent}:${D}:${crypto.randomUUID()}`;
+  const put = await rest(`api_cache?on_conflict=cache_key`, { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ cache_key: key, payload: { data, trigger: "routine", created_by: null, snapshot_id: snapshotId }, created_at: new Date().toISOString() }) });
+  if (!put.ok) throw new Error(`수집 데이터 임시 저장 실패 ${put.status}`);
+  const [wc, cc] = await Promise.all([weekContext(def.agent, D), colleagueContext(def.agent, D)]);
+  const llmData = def.forLLM ? def.forLLM(data) : data;
+  const week = { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far, colleagues: cc.colleagues, handoffs_to_me: cc.handoffs_to_me };
+  const system = def.colleagueRules ? `${def.system}\n\n이 담당자의 협업 규칙:\n${def.colleagueRules}` : def.system;
+  const userText = `아래는 기준일(어제)까지의 수집 데이터, 이번 주 앞선 날들의 보고 항목(this_week), 동료 담당자들의 최근 보고서 요약(colleagues)과 나에게 온 요청(handoffs_to_me)입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(llmData)}\n\n[this_week · colleagues]\n${JSON.stringify(week)}`;
+  return { key, agent: def.agent, label: def.label, report_date: D, snapshot_reused: !!snapshotId, collect_ms: Date.now() - t0, errors: data.errors ?? [], system, schema: def.schema, user_text: userText };
+}
+export async function routineSubmit(def: AgentDef, D: string, key: string, report0: unknown, usage: Row | null, model: string): Promise<Response> {
+  const keyQ = `api_cache?cache_key=eq.${encodeURIComponent(key)}`;
+  const got = await rest(`${keyQ}&select=payload`);
+  const row = got.ok ? ((await got.json())[0] ?? null) : null;
+  if (!row) return json({ error: "수집 데이터를 찾을 수 없습니다 (key) — prepare부터 다시" }, 400);
+  const payload = row.payload as { data: Row; snapshot_id?: string | null };
+  const data = payload.data, snapshotId = payload.snapshot_id ?? null;
+  // 형식 검사: 객체 + 스키마 필수 칸 — 빠진 칸은 400으로 돌려보내 루틴이 고쳐 다시 보내게 한다
+  if (!report0 || typeof report0 !== "object" || Array.isArray(report0)) return json({ error: "report는 JSON 객체여야 합니다" }, 400);
+  const required = (((def.schema ?? {}) as Row).required ?? []) as string[];
+  const missing = required.filter((k) => !(k in (report0 as Row)));
+  if (missing.length) return json({ error: `필수 칸 누락: ${missing.join(", ")}`, missing }, 400);
+  const store = async (body: Row): Promise<Row> => {
+    if (!snapshotId) return await saveRow(body);
+    const res = await rest(`agent_reports?id=eq.${encodeURIComponent(snapshotId)}&status=eq.collected`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...body, created_at: new Date().toISOString() }) });
+    const rows = res.ok ? ((await res.json()) as Row[]) : [];
+    return rows[0] ?? await saveRow(body);
+  };
+  const t0 = Date.now();
+  try {
+    const [wc, cc] = await Promise.all([weekContext(def.agent, D), colleagueContext(def.agent, D)]);
+    const lean0 = leanFix(report0 as Row);
+    const written = resolveProductNos(def.postProcess ? def.postProcess(lean0, data) : lean0, data);
+    const report = { ...written, week: wc.week, last_week: wc.last_week, colleagues_seen: cc.seen, handoffs_received: cc.handoffs_to_me };
+    const saved = await store({ agent: def.agent, report_date: D, trigger: "routine", status: "ok", data, report, model: model || "routine", usage: { ...(usage ?? {}), source: "routine" }, created_by: null });
+    await rest(keyQ, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => {});
+    const wantNotify = (def.notify ?? "always") === "always" || String(report.mood) === "bad";
+    const notified = wantNotify ? await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 })) : { saved: 0, pushed: 0, skipped: true };
+    return json({ ok: true, id: saved.id, report_date: D, headline: report.headline, notified, write_ms: Date.now() - t0 });
+  } catch (e) {
+    return json({ error: `후처리·저장 실패: ${String((e as Error)?.message ?? e).slice(0, 300)}` }, 500);
+  }
+}
