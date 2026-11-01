@@ -74,12 +74,20 @@ export const rest = (path: string, init: RequestInit = {}) =>
 // ── 다른 Edge Function 호출 (x-agent-secret → 그쪽에서 admin으로 인정) ──
 export async function callFn(name: string, params: Record<string, string>): Promise<Row> {
   const qs = new URLSearchParams(params).toString();
-  const res = await fetch(`${SB_URL}/functions/v1/${name}?${qs}`, {
-    headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, "x-agent-secret": AGENT_SECRET },
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || body?.error) throw new Error(`${name}(${params.action ?? ""}) ${res.status}: ${body?.error ?? ""}`);
-  return body as Row;
+  // 워크스페이스 함수가 같은 순간 여러 요청을 받으면 게이트웨이가 503(빈 본문)을 돌려주는 일이 잦다(2026-11-01 실측: returnwatch·summary·addaily·pausedads).
+  //   502/503/546이면 3초·6초 뒤 두 번까지 다시 부른다. 그래도 실패하면 오류(항목별 safe가 errors에 남김).
+  let last = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, attempt * 3000));
+    const res = await fetch(`${SB_URL}/functions/v1/${name}?${qs}`, {
+      headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, "x-agent-secret": AGENT_SECRET },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok && !body?.error) return body as Row;
+    last = `${name}(${params.action ?? ""}) ${res.status}: ${body?.error ?? ""}`;
+    if (![502, 503, 546].includes(res.status)) break;
+  }
+  throw new Error(last);
 }
 
 // 항목별 실패를 삼키고 errors[]에 남기는 도우미 — 한 소스가 죽어도 나머지로 보고서를 쓴다
