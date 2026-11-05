@@ -77,6 +77,20 @@ async function collect(D: string) {
     if (!m) { m = new Map(); reasonsByProduct.set(no, m); }
     m.set(reason, (m.get(reason) ?? 0) + num(it.qty));
   }
+  // 화면용(2026-11-05 사용자 요청 "Best 30 상품을 눌러 사유 보기"): 자르지 않은 사유 문장 + 옵션별 수량 — Claude에는 안 보냄
+  const fullReasons = new Map<number, Map<string, number>>(), optsByProduct = new Map<number, Map<string, number>>();
+  const bumpM = (outer: Map<number, Map<string, number>>, no: number, k: string, q: number) => {
+    let m = outer.get(no); if (!m) { m = new Map(); outer.set(no, m); }
+    m.set(k, (m.get(k) ?? 0) + q);
+  };
+  for (const it of ((rr?.items ?? []) as Row[])) {
+    const no = Number(it.product_no); if (!no) continue;
+    bumpM(fullReasons, no, (String(it.request || it.accept || "사유 미기재").replace(/\s+/g, " ").trim() || "사유 미기재").slice(0, 120), num(it.qty));
+    const opt = String(it.option ?? "").trim();
+    if (opt) bumpM(optsByProduct, no, opt, num(it.qty));
+  }
+  const listOf = <K extends string>(m: Map<string, number> | undefined, key: K, n: number) =>
+    [...(m ?? new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, qty]) => ({ [key]: k, qty }) as Record<K, string> & { qty: number });
   const topReasons = (no: number, n = 3) => [...(reasonsByProduct.get(no) ?? new Map()).entries()]
     .sort((a, b) => b[1] - a[1]).slice(0, n).map(([reason, qty]) => `${reason} ${qty}개`);
 
@@ -119,10 +133,13 @@ async function collect(D: string) {
   const cwProducts = ((cw?.products ?? []) as Row[]);
   const cancelTop5 = cwProducts.filter((p) => num(p.paid_qty) >= MIN_QTY && num(p.cancel_qty) > 0)
     .sort((a, b) => num(b.cancel_rate) - num(a.cancel_rate)).slice(0, 5)
-    .map((p) => ({ product_no: Number(p.product_no), name: String(p.product_name ?? ""), rank: num(p.rank), paid_qty: num(p.paid_qty), cancel_qty: num(p.cancel_qty), cancel_rate: p.cancel_rate }));
+    .map((p) => ({ product_no: Number(p.product_no), name: String(p.product_name ?? ""), rank: num(p.rank), paid_qty: num(p.paid_qty), cancel_qty: num(p.cancel_qty), cancel_rate: p.cancel_rate,
+      reasons: Array.isArray(p.reasons) ? (p.reasons as Row[]).map((x) => ({ reason: String(x.reason ?? ""), qty: num(x.qty) })) : null,
+      options: Array.isArray(p.options) ? (p.options as Row[]).map((x) => ({ option: String(x.option ?? ""), qty: num(x.qty) })) : null }));
   const returnTop5 = ranked.filter((p) => p.win14.delivered >= MIN_QTY && p.win14.returned > 0)
     .sort((a, b) => b.win14.rate - a.win14.rate).slice(0, 5)
-    .map((p) => ({ product_no: p.product_no, name: p.name, rank: p.rank14 || p.rank7, delivered_14d: p.win14.delivered, returned_14d: p.win14.returned, rate_14d: p.win14.rate, level: p.win14.level }));
+    .map((p) => ({ product_no: p.product_no, name: p.name, rank: p.rank14 || p.rank7, delivered_14d: p.win14.delivered, returned_14d: p.win14.returned, rate_14d: p.win14.rate, level: p.win14.level,
+      reasons: rr ? listOf(fullReasons.get(p.product_no), "reason", 8) : null, options: rr ? listOf(optsByProduct.get(p.product_no), "option", 6) : null }));
   const best30 = {
     basis: `취소율 = 결제일 기준 최근 14일 결제수량 상위 30 상품의 취소완료 수량 ÷ 결제 수량 / 순반품률 = 배송완료일 기준 14일 창(E=${E}) 결제수량 상위 30 상품`,
     cancel_total: cw ? { paid_qty: num((cw.total as Row)?.paid_qty), cancel_qty: num((cw.total as Row)?.cancel_qty), cancel_rate: (cw.total as Row)?.cancel_rate ?? null } : null,
@@ -237,12 +254,20 @@ const SCHEMA = reportSchema({
 });
 
 // Claude에 보낼 때는 표시 전용 원자료를 뺀다 (일별 코호트 14행, 위험 옵션 2개 초과, 상품 8개 초과)
+// 화면용 사유·옵션 목록은 Claude에 2개만(40자) — 토큰 절약
+function slimBest30(b: Row | undefined) {
+  if (!b) return b;
+  const slim = (xs: unknown) => ((xs ?? []) as Row[]).map((x) => ({ ...x, options: undefined,
+    reasons: Array.isArray(x.reasons) ? (x.reasons as Row[]).slice(0, 2).map((r) => `${String(r.reason).slice(0, 40)} ${num(r.qty)}개`) : undefined }));
+  return { ...b, cancel_top5: slim(b.cancel_top5), return_top5: slim(b.return_top5) };
+}
 function forLLM(data: Row) {
   const co = (data.cohorts ?? {}) as Row;
   const ts = (data.top_sellers_return ?? {}) as Row;
   return {
     ...data,
     cohorts: { ...co, days_last14: undefined, days_note: "일별 코호트는 생략 — 주차 표로 판단" },
+    best30: slimBest30(data.best30 as Row | undefined),
     top_sellers_return: {
       ...ts,
       risk_products: ((ts.risk_products ?? []) as Row[]).slice(0, 8).map((p) => ({ ...p, risk_options: ((p.risk_options ?? []) as Row[]).slice(0, 2), product_no: undefined, rank7: undefined, paid_14d: undefined })),

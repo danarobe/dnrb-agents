@@ -446,6 +446,24 @@ table.risk .r { white-space: normal; }
 .b30-row:first-of-type { border-top: 0; }
 .b30-row .num { width: 20px; height: 20px; border-radius: 50%; background: #fee2e2; color: #991b1b; font-weight: 800; font-size: .7rem; display: inline-flex; align-items: center; justify-content: center; }
 .b30-val { font-size: .95rem; white-space: nowrap; }
+/* Best 30 사유 펼치기 (2026-11-05) */
+.b30-item { border-top: 1px dashed #f3f4f6; }
+.b30-item:first-of-type { border-top: 0; }
+.b30-item > .b30-row { border-top: 0; cursor: pointer; list-style: none; border-radius: 6px; }
+.b30-item > .b30-row::-webkit-details-marker { display: none; }
+.b30-item > .b30-row:hover { background: #fafafa; }
+.b30-chev { font-size: .62rem; color: var(--muted); margin-left: 6px; transition: transform .15s; }
+.b30-item[open] .b30-chev { transform: rotate(180deg); }
+.b30-why { margin: 0 0 8px 30px; padding: 8px 10px; background: #fafafa; border-radius: 8px; font-size: .8rem; }
+.b30-why-h { font-weight: 800; color: var(--ink-2); margin-bottom: 4px; font-size: .78rem; }
+.b30-reason { display: grid; grid-template-columns: minmax(0, 1fr) 70px 38px; gap: 8px; align-items: center; padding: 3px 0; line-height: 1.35; }
+.b30-rtxt { overflow-wrap: anywhere; }
+.b30-bar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
+.b30-bar > i { display: block; height: 100%; background: #f87171; border-radius: 3px; }
+.b30-reason > b { text-align: right; font-size: .78rem; }
+.b30-opts { display: flex; flex-wrap: wrap; gap: 4px; }
+.b30-opts .chip b { margin-left: 2px; }
+@media (max-width: 520px) { .b30-why { margin-left: 0; } .b30-reason { grid-template-columns: minmax(0, 1fr) 40px 34px; } }
 .t-sub-inline { font-size: .72rem; font-weight: 700; color: var(--muted); }
 
 /* ── 반품 담당: 최근 6주 취소율·반품률 그래프 (2026-10-27) ── */

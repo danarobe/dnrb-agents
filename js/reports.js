@@ -190,12 +190,49 @@ function reportHtml(r) {
       const b30 = d.best30;
       if (b30 && ((b30.cancel_top5 || []).length || (b30.return_top5 || []).length)) {
         const lvl = l => l === '위험' ? 'bad' : l === '주의' ? 'warn' : 'good';
-        const row = (i, name, main, sub, chip = '') => `<div class="b30-row"><span class="num">${i + 1}</span><div><b>${escHtml(name)}</b><div class="muted small">${sub}</div></div><div class="b30-val">${main}${chip}</div></div>`;
+        // 상품을 누르면 사유·옵션이 펼쳐진다 (2026-11-05 사용자 요청). 사유 문장은 고객이 쓴 원문이라 escHtml 필수.
+        // 같은 뜻의 띄어쓰기 차이('배송 지연'·'배송지연')는 합치고, 문장부호뿐인 사유('.')는 '사유 미기재'로.
+        const mergeReasons = xs => {
+          const m = new Map();
+          for (const x of xs || []) {
+            let t = String(x.reason || '').trim();
+            if (!/[0-9A-Za-z가-힣]/.test(t)) t = '사유 미기재';
+            const k = t.replace(/\s+/g, '');
+            const cur = m.get(k);
+            if (cur) cur.qty += Number(x.qty) || 0; else m.set(k, { reason: t, qty: Number(x.qty) || 0 });
+          }
+          return [...m.values()].sort((a, b) => b.qty - a.qty);
+        };
+        const optLabel = o => String(o || '').split(',').map(t => t.split('=').pop().trim()).filter(Boolean).join(' / ');
+        const riskByNo = new Map(((d.top_sellers_return || {}).risk_products || []).map(p => [Number(p.product_no), p]));
+        const whyBox = (x, kind) => {
+          let reasons = x.reasons, note = '';
+          if (!Array.isArray(reasons) && kind === 'return') {   // 사유 칸 도입 전 보고서: 위험 후보 표의 사유 TOP3로 대신
+            const rp = riskByNo.get(Number(x.product_no));
+            if (rp && (rp.reasons_top3 || []).length) {
+              reasons = rp.reasons_top3.map(t => { const m = String(t).match(/^(.*)\s(\d+)개$/); return m ? { reason: m[1], qty: +m[2] } : { reason: t, qty: 0 }; });
+              note = '이 보고서는 사유 TOP3만 저장돼 있어요';
+            }
+          }
+          if (!Array.isArray(reasons)) return `<div class="b30-why"><div class="muted small">이 보고서에는 사유 자료가 없어요. 11월 6일 아침 보고서부터 보입니다.</div></div>`;
+          const rs = mergeReasons(reasons);
+          const max = Math.max(1, ...rs.map(r => r.qty));
+          const label = kind === 'cancel' ? '취소 사유' : '반품 사유';
+          const basis = kind === 'cancel' ? '취소완료 품목 · 고객이 고른 사유' : '배송완료 14일 창 · 고객이 쓴 사유';
+          const opts = (x.options || []).filter(o => o.option);
+          return `<div class="b30-why">
+            <div class="b30-why-h">${label} <span class="muted small">${basis}</span></div>
+            ${rs.length ? rs.map(r => `<div class="b30-reason"><span class="b30-rtxt">${escHtml(r.reason)}</span><span class="b30-bar"><i style="width:${Math.round(r.qty / max * 100)}%"></i></span><b>${r.qty ? fmt(r.qty) + '개' : ''}</b></div>`).join('') : '<div class="muted small">기록된 사유 없음</div>'}
+            ${opts.length ? `<div class="b30-why-h" style="margin-top:8px;">옵션별 ${kind === 'cancel' ? '취소' : '반품'} 수량</div><div class="b30-opts">${opts.map(o => `<span class="chip">${escHtml(optLabel(o.option))} <b>${fmt(o.qty)}</b></span>`).join('')}</div>` : ''}
+            ${note ? `<div class="muted small" style="margin-top:6px;">${note}</div>` : ''}
+          </div>`;
+        };
+        const row = (i, x, kind, main, sub, chip = '') => `<details class="b30-item"><summary class="b30-row"><span class="num">${i + 1}</span><div><b>${escHtml(x.name)}</b><div class="muted small">${sub}</div></div><div class="b30-val">${main}${chip}<i class="fa-solid fa-chevron-down b30-chev"></i></div></summary>${whyBox(x, kind)}</details>`;
         headExtra += `<div class="two b30">
-          <div class="box"><h3><i class="fa-solid fa-ban" style="color:#b91c1c;"></i> Best 30 중 취소율 TOP 5 <span class="muted small">결제일 기준 14일 · 취소완료</span></h3>
-            ${(b30.cancel_top5 || []).map((x, i) => row(i, x.name, `<b>${pr(x.cancel_rate)}</b>`, `판매 ${x.rank}위 · 취소 ${fmt(x.cancel_qty)}개 / 결제 ${fmt(x.paid_qty)}개`)).join('') || '<div class="muted">취소가 있는 상품 없음</div>'}</div>
-          <div class="box"><h3><i class="fa-solid fa-rotate-left" style="color:#b91c1c;"></i> Best 30 중 순반품률 TOP 5 <span class="muted small">배송완료 기준 14일 창</span></h3>
-            ${(b30.return_top5 || []).map((x, i) => row(i, x.name, `<b>${pr(x.rate_14d)}</b>`, `판매 ${x.rank}위 · 반품 ${fmt(x.returned_14d)}개 / 배송완료 ${fmt(x.delivered_14d)}개`, ` <span class="chip ${lvl(x.level)}">${escHtml(x.level)}</span>`)).join('') || '<div class="muted">반품이 있는 상품 없음</div>'}</div>
+          <div class="box"><h3><i class="fa-solid fa-ban" style="color:#b91c1c;"></i> Best 30 중 취소율 TOP 5 <span class="muted small">결제일 기준 14일 · 취소완료 · 눌러서 사유 보기</span></h3>
+            ${(b30.cancel_top5 || []).map((x, i) => row(i, x, 'cancel', `<b>${pr(x.cancel_rate)}</b>`, `판매 ${x.rank}위 · 취소 ${fmt(x.cancel_qty)}개 / 결제 ${fmt(x.paid_qty)}개`)).join('') || '<div class="muted">취소가 있는 상품 없음</div>'}</div>
+          <div class="box"><h3><i class="fa-solid fa-rotate-left" style="color:#b91c1c;"></i> Best 30 중 순반품률 TOP 5 <span class="muted small">배송완료 기준 14일 창 · 눌러서 사유 보기</span></h3>
+            ${(b30.return_top5 || []).map((x, i) => row(i, x, 'return', `<b>${pr(x.rate_14d)}</b>`, `판매 ${x.rank}위 · 반품 ${fmt(x.returned_14d)}개 / 배송완료 ${fmt(x.delivered_14d)}개`, ` <span class="chip ${lvl(x.level)}">${escHtml(x.level)}</span>`)).join('') || '<div class="muted">반품이 있는 상품 없음</div>'}</div>
         </div>`;
       }
     } else {
