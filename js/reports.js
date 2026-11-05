@@ -817,33 +817,71 @@ const codiChip = (c, long) => {
   const lvl = c.share == null ? '' : c.share >= 40 ? ' hi' : c.share >= 20 ? ' mid' : '';
   return `<span class="chip codi${lvl}" title="${escHtml(tip)}"><i class="fa-solid fa-link"></i> 코디 ${c.share ?? '—'}%${long && top ? ` <em>↳ ${escHtml(pn(top.name).slice(0, 14))}</em>` : ''}</span>`;
 };
+/* 팀 협업 칸 개편(2026-11-05): 받은 요청은 상품별 카드로 묶고, 이 보고서의 '요청에 답함' 문장을 그 카드 안에 답으로 붙인다.
+   답을 못 찾은 요청(앞선 보고서에서 이미 답했을 수 있음)은 접어 둔다. 넘긴 요청도 상품 카드, 그 외 참고한 의견은 맨 아래 목록. */
+const tcCore = n => { const s = pn(n).replace(/^\s*(?:[\[(][^\])]*[\])]\s*)+/, '').replace(/\s*\([^)]*colors?[^)]*\)\s*$/i, '').trim(); return s || pn(n); };
+const tcKey = n => { const t = tcCore(n).split(/\s+/); return ((t[0] || '').length >= 2 ? t[0] : t.slice(0, 2).join(' ')).replace(/\s+/g, ''); };
+const ANS_RE = /^\s*요청에\s*답함\s*[:：]\s*/;
 function teamBox(rp, compact) {
   const notes = rp.colleague_notes || [], got = rp.handoffs_received || [], give = rp.handoffs || [], seen = rp.colleagues_seen || [];
   if (!notes.length && !got.length && !give.length && !seen.length) return '';
   const md = d => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
+  const sq = s => String(s || '').replace(/\s+/g, '');
   const runBtn = h => {
     const k = TEAM_KEY[h.to]; if (!['detail', 'creative'].includes(k) || !isAdmin()) return '';
     const label = k === 'detail' ? '지금 점검' : '제작안 만들기';
     return `<button class="btn ghost sm" onclick="handoffRun('${k}', ${Number(h.product_no) || 0}, this.dataset.name)" data-name="${escHtml(h.product || '')}"><i class="fa-solid fa-play"></i> ${label}</button>`;
   };
-  if (compact) {
-    // 압축형(2026-10-27, 전략 담당): 머리에 개수 칩, 받은 요청·넘기는 요청만 한 줄씩 펼치고 '가져온 것'은 접는다
-    const line = (chip, h, extra = '') => `<div class="team-line">${chip}<div><b>${escHtml(h.ask)}</b>${h.product ? ` <span class="muted">· ${escHtml(pn(h.product))}</span>` : ''}${h.why ? `<div class="muted small">${h.report_date ? md(h.report_date) + ' · ' : ''}${escHtml(h.why)}</div>` : ''}${extra}</div></div>`;
-    return `<div class="box team-box compact"><h3><i class="fa-solid fa-people-group" style="color:#0e7490;"></i> 팀 협업 <span class="tsum"><span class="chip">가져온 것 ${notes.length}</span><span class="chip warn">받은 요청 ${got.length}</span><span class="chip new">넘긴 요청 ${give.length}</span><span class="chip">읽은 보고서 ${seen.length}</span></span></h3>
-      <div class="team-cols">
-        ${got.length ? `<div><h5>받은 요청</h5>${got.map(h => line(teamChip(h.from), h)).join('')}</div>` : ''}
-        ${give.length ? `<div><h5>동료에게 넘기는 요청</h5>${give.map(h => line(teamChip(h.to), h, runBtn(h))).join('')}</div>` : ''}
-      </div>
-      ${(notes.length || seen.length) ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 동료에게서 가져온 것 ${notes.length}개 <span class="muted small">· 읽은 보고서 ${seen.length}개</span></summary>${notes.map(n => `<div class="team-line">${teamChip(n.from)}<div>${escHtml(n.took)}</div></div>`).join('') || '<div class="muted small">이번엔 반영한 것 없음</div>'}${seen.length ? `<div class="muted small" style="margin-top:6px;">읽은 보고서: ${seen.map(c => `${escHtml(c.agent)} ${md(c.report_date)}`).join(', ')}</div>` : ''}</details>` : ''}
-    </div>`;
+  const coreN = new Map(); [...got, ...give].forEach(h => { if (h.product) { const c = sq(tcCore(h.product)), f = sq(pn(h.product)); if (!coreN.has(c)) coreN.set(c, new Set()); coreN.get(c).add(f); } });
+  const prod = h => h.product ? `<b class="tc-prod" title="${escHtml(pn(h.product))}">${escHtml(coreN.get(sq(tcCore(h.product)))?.size > 1 ? pn(h.product) : tcCore(h.product))}</b>` : '';   // 짧은 이름이 겹치는 다른 상품이면 전체 이름
+  // 받은 요청: 상품별로 묶기 (상품 없는 요청은 각각 따로)
+  const answers = notes.map((n, i) => ({ i, from: n.from, text: String(n.took || ''), ans: ANS_RE.test(String(n.took || '')) })).filter(a => a.ans);
+  const used = new Set(), groups = [], byCore = new Map();
+  for (const h of got) {
+    const c = h.product ? sq(pn(h.product)) : '';
+    let g = c && byCore.get(c);
+    if (!g) { g = { product: h.product, reqs: [] }; groups.push(g); if (c) byCore.set(c, g); }
+    g.reqs.push(h);
   }
-  return `<div class="box team-box"><h3><i class="fa-solid fa-people-group" style="color:#0e7490;"></i> 팀 협업 <span class="muted small">동료 보고서를 읽고 함께 판단한 것${seen.length ? ' · 읽은 보고서: ' + seen.map(c => `${escHtml(c.agent)} ${md(c.report_date)}`).join(', ') : ''}</span></h3>
-    <div class="team-grid">
-      <div><h5>동료에게서 가져온 것</h5>${notes.length ? notes.map(n => `<div class="team-row">${teamChip(n.from)}<div>${escHtml(n.took)}</div></div>`).join('') : '<div class="muted small">이번엔 반영한 것 없음</div>'}</div>
-      <div><h5>받은 요청${got.length ? ` <span class="chip warn">${got.length}</span>` : ''}</h5>${got.length ? got.map(h => `<div class="team-row">${teamChip(h.from)}<div><b>${escHtml(h.ask)}</b>${h.product ? ` <span class="muted">· ${escHtml(h.product)}</span>` : ''}<div class="muted small">${md(h.report_date)} · ${escHtml(h.why)}</div></div></div>`).join('') : '<div class="muted small">없음</div>'}</div>
-      <div><h5>동료에게 넘기는 요청${give.length ? ` <span class="chip new">${give.length}</span>` : ''}</h5>${give.length ? give.map(h => `<div class="team-row">${teamChip(h.to)}<div><b>${escHtml(h.ask)}</b>${h.product ? ` <span class="muted">· ${escHtml(h.product)}</span>` : ''}<div class="muted small">${escHtml(h.why)}</div>${runBtn(h)}</div></div>`).join('') : '<div class="muted small">없음</div>'}</div>
-    </div>
-    <div class="muted small chk-hint">자동 담당자(매출·반품·전략)는 다음 아침 보고서에서 받은 요청에 답해요. 상세 점검·광고 소재 요청은 버튼으로 바로 실행할 수 있어요.</div></div>`;
+  const tks = n => (pn(n).match(/[가-힣]{2,}|[a-zA-Z]{2,}/g) || []).filter(t => !/^colou?rs?$/i.test(t));
+  const score = (g, a) => { const t = sq(a.text).toLowerCase(); return tks(g.product).filter(w => t.includes(w.toLowerCase())).length; };
+  for (const g of groups) { g.reqs.sort((a, b) => String(b.report_date || '').localeCompare(String(a.report_date || ''))); g.key = g.product ? tcKey(g.product) : ''; g.ans = []; }
+  for (const a of answers) {
+    const hit = groups.filter(g => g.key && sq(a.text).includes(g.key));
+    for (const k of new Set(hit.map(g => g.key))) {   // 첫 단어가 같은 다른 상품(예: 클레르 블라우스 두 종류)은 더 잘 맞는 쪽에만
+      const same = hit.filter(g => g.key === k), best = Math.max(...same.map(g => score(g, a)));
+      same.filter(g => score(g, a) === best).forEach(g => { g.ans.push(a); used.add(a.i); });
+    }
+  }
+  const reqRow = (h, who) => `<div class="tc-req"><div class="tc-meta">${who}${h.report_date ? `<span class="tc-date">${md(h.report_date)} 요청</span>` : ''}</div>${h.product ? `<div class="tc-ask">${escHtml(h.ask)}</div>` : ''}${h.why ? `<div class="tc-why">${escHtml(h.why)}</div>` : ''}</div>`;
+  const gotCard = g => {
+    const first = g.reqs[0];
+    const title = g.product ? prod(g) : `<b class="tc-prod">${escHtml(first.ask)}</b>`;
+    const st = g.ans.length ? '<span class="tc-st ok"><i class="fa-solid fa-check"></i> 답함</span>' : '<span class="tc-st">답 없음</span>';
+    return `<div class="tc-card${g.ans.length ? ' ok' : ''}"><div class="tc-top">${title}${st}</div>
+      ${g.reqs.map(h => reqRow(h, teamChip(h.from))).join('')}
+      ${g.ans.map(a => `<div class="tc-ans"><span class="tc-ans-h"><i class="fa-solid fa-reply"></i> 이 보고서의 답</span>${escHtml(a.text.replace(ANS_RE, ''))}</div>`).join('')}</div>`;
+  };
+  const answered = groups.filter(g => g.ans.length), open = groups.filter(g => !g.ans.length);
+  // 넘긴 요청도 같은 상품이면 한 카드 (예: 같은 상품을 전략·상세 점검 담당에게 각각)
+  const gGroups = [], gByCore = new Map();
+  for (const h of give) { const c = h.product ? sq(pn(h.product)) : ''; let g = c && gByCore.get(c); if (!g) { g = { product: h.product, reqs: [] }; gGroups.push(g); if (c) gByCore.set(c, g); } g.reqs.push(h); }
+  const giveCard = g => `<div class="tc-card out"><div class="tc-top">${g.product ? prod(g) : `<b class="tc-prod">${escHtml(g.reqs[0].ask)}</b>`}</div>
+    ${g.reqs.map(h => reqRow({ ...h, report_date: '' }, `<span class="tc-to"><i class="fa-solid fa-arrow-right"></i></span>${teamChip(h.to)}`) + (runBtn(h) ? `<div class="tc-run">${runBtn(h)}</div>` : '')).join('')}</div>`;
+  const refs = notes.map((n, i) => ({ ...n, i })).filter(n => !used.has(n.i));
+  const refList = refs.map(n => `<div class="tc-ref">${teamChip(n.from)}<div>${ANS_RE.test(String(n.took || '')) ? '<span class="tc-st ok sm"><i class="fa-solid fa-check"></i> 답함</span> ' : ''}${escHtml(String(n.took || '').replace(ANS_RE, ''))}</div></div>`).join('');
+  const sec = (cls, icon, title, count, sub, body) => `<section class="tc-sec ${cls}"><div class="tc-sec-h"><span class="tc-ic"><i class="fa-solid ${icon}"></i></span><b>${title}</b>${count != null ? `<span class="tc-n">${count}</span>` : ''}${sub ? `<span class="tc-sub">${sub}</span>` : ''}</div>${body}</section>`;
+  const gotSub = groups.length ? `${answered.length}개 답함${open.length ? ` · ${open.length}개는 이번 보고서에 답이 없어요` : ''}` : '';
+  const gotBody = groups.length ? `${answered.length ? `<div class="tc-grid">${answered.map(gotCard).join('')}</div>` : ''}
+      ${open.length ? (answered.length ? `<details class="tc-fold"><summary><i class="fa-solid fa-chevron-right"></i> 이번 보고서에 답이 없는 요청 ${open.length}개 <span class="muted small">· 앞선 보고서에서 이미 답했을 수 있어요</span></summary><div class="tc-grid">${open.map(gotCard).join('')}</div></details>` : `<div class="tc-grid">${open.map(gotCard).join('')}</div>`) : ''}` : '';
+  return `<div class="box team-box tc"><h3><i class="fa-solid fa-people-group" style="color:#0e7490;"></i> 팀 협업 <span class="muted small">동료 보고서${seen.length ? ` ${seen.length}개` : ''}를 읽고 함께 판단한 것</span></h3>
+    ${groups.length ? sec('in', 'fa-inbox', '동료가 물어본 것', groups.length, gotSub, gotBody) : ''}
+    ${give.length ? sec('out', 'fa-paper-plane', '동료에게 부탁한 것', give.length, '자동 담당자는 다음 아침 보고서에서 답해요 · 상세 점검·광고 소재는 버튼으로 바로 실행', `<div class="tc-grid">${gGroups.map(giveCard).join('')}</div>`) : ''}
+    ${refs.length ? (compact
+      ? `<details class="tc-fold"><summary><i class="fa-solid fa-chevron-right"></i> <i class="fa-solid fa-lightbulb" style="color:#0e7490;"></i> 동료 보고서에서 참고한 것 ${refs.length}개</summary>${refList}</details>`
+      : sec('ref', 'fa-lightbulb', '동료 보고서에서 참고한 것', refs.length, '', refList)) : ''}
+    ${seen.length ? `<div class="tc-seen">읽은 보고서 · ${seen.map(c => `${escHtml(c.agent)} ${md(c.report_date)}`).join(' · ')}</div>` : ''}
+  </div>`;
 }
 async function handoffRun(key, no, name) {
   if (!isAdmin()) return;
