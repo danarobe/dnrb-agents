@@ -205,25 +205,31 @@ function reportHtml(r) {
         };
         const optLabel = o => String(o || '').split(',').map(t => t.split('=').pop().trim()).filter(Boolean).join(' / ');
         const riskByNo = new Map(((d.top_sellers_return || {}).risk_products || []).map(p => [Number(p.product_no), p]));
+        const reasonLines = (rs, max, withCol) => rs.map(r => `<div class="b30-reason${withCol ? ' sh' : ''}"><span class="b30-rtxt">${escHtml(r.reason)}${withCol && (r.with || []).length ? `<span class="b30-with">함께: ${escHtml(r.with.join(', '))}${r.with_more ? ` 외 ${r.with_more}개` : ''}</span>` : ''}</span><span class="b30-bar"><i style="width:${Math.round(r.qty / max * 100)}%"></i></span><b>${r.qty ? fmt(r.qty) + '개' : ''}</b></div>`).join('');
         const whyBox = (x, kind) => {
           let reasons = x.reasons, note = '';
           if (!Array.isArray(reasons) && kind === 'return') {   // 사유 칸 도입 전 보고서: 위험 후보 표의 사유 TOP3로 대신
             const rp = riskByNo.get(Number(x.product_no));
             if (rp && (rp.reasons_top3 || []).length) {
               reasons = rp.reasons_top3.map(t => { const m = String(t).match(/^(.*)\s(\d+)개$/); return m ? { reason: m[1], qty: +m[2] } : { reason: t, qty: 0 }; });
-              note = '이 보고서는 사유 TOP3만 저장돼 있어요';
+              note = '이 보고서는 사유 TOP3만 저장돼 있고, 여러 상품을 함께 반품한 사유도 섞여 있을 수 있어요';
             }
           }
           if (!Array.isArray(reasons)) return `<div class="b30-why"><div class="muted small">이 보고서에는 사유 자료가 없어요. 11월 6일 아침 보고서부터 보입니다.</div></div>`;
-          const rs = mergeReasons(reasons);
-          const max = Math.max(1, ...rs.map(r => r.qty));
-          const label = kind === 'cancel' ? '취소 사유' : '반품 사유';
-          const basis = kind === 'cancel' ? '취소완료 품목 · 고객이 고른 사유' : '배송완료 14일 창 · 고객이 쓴 사유';
+          const split = Array.isArray(x.shared_reasons);   // 2026-11-05 2차부터: 확실 / 불확실(여러 상품 함께 신청) 구분
+          if (!split && !note) note = '이 보고서는 여러 상품을 함께 신청한 사유를 아직 구분하지 않았어요';
+          const rs = mergeReasons(reasons), sh = split ? mergeReasons(x.shared_reasons).map(r => ({ ...r, ...(x.shared_reasons.find(s => String(s.reason).replace(/\s+/g, '') === r.reason.replace(/\s+/g, '')) || {}), qty: r.qty })) : [];
+          const max = Math.max(1, ...rs.map(r => r.qty), ...sh.map(r => r.qty));
+          const word = kind === 'cancel' ? '취소' : '반품';
+          const basis = kind === 'cancel' ? '취소완료 품목' : '배송완료 14일 창';
+          const c = x.reason_counts;
           const opts = (x.options || []).filter(o => o.option);
           return `<div class="b30-why">
-            <div class="b30-why-h">${label} <span class="muted small">${basis}</span></div>
-            ${rs.length ? rs.map(r => `<div class="b30-reason"><span class="b30-rtxt">${escHtml(r.reason)}</span><span class="b30-bar"><i style="width:${Math.round(r.qty / max * 100)}%"></i></span><b>${r.qty ? fmt(r.qty) + '개' : ''}</b></div>`).join('') : '<div class="muted small">기록된 사유 없음</div>'}
-            ${opts.length ? `<div class="b30-why-h" style="margin-top:8px;">옵션별 ${kind === 'cancel' ? '취소' : '반품'} 수량</div><div class="b30-opts">${opts.map(o => `<span class="chip">${escHtml(optLabel(o.option))} <b>${fmt(o.qty)}</b></span>`).join('')}</div>` : ''}
+            <div class="b30-why-h">${split ? `이 상품 ${word} 사유` : `${word} 사유`} <span class="muted small">${basis}${split ? ' · 혼자 신청했거나 사유에 이 상품이 언급된 것' : ''}</span></div>
+            ${rs.length ? reasonLines(rs, max, false) : `<div class="muted small">${split ? '이 상품만의 사유로 확실한 것이 없어요' : '기록된 사유 없음'}</div>`}
+            ${sh.length ? `<details class="b30-shared"><summary><i class="fa-solid fa-chevron-right"></i> 다른 상품과 함께 ${word}한 사유 ${fmt(c ? c.shared : sh.reduce((t, r) => t + r.qty, 0))}개 <span class="muted small">어느 상품 얘기인지 불확실</span></summary>${reasonLines(sh, max, true)}</details>` : ''}
+            ${c && c.other ? `<div class="muted small" style="margin-top:4px;">함께 신청한 다른 상품을 가리킨 사유 ${fmt(c.other)}개는 뺐어요</div>` : ''}
+            ${opts.length ? `<div class="b30-why-h" style="margin-top:8px;">옵션별 ${word} 수량</div><div class="b30-opts">${opts.map(o => `<span class="chip">${escHtml(optLabel(o.option))} <b>${fmt(o.qty)}</b></span>`).join('')}</div>` : ''}
             ${note ? `<div class="muted small" style="margin-top:6px;">${note}</div>` : ''}
           </div>`;
         };

@@ -12,6 +12,7 @@
 //   어제 기준으로 보면 실제의 절반 이하로 나온다 (워크스페이스 반품 관리 메뉴의 '오늘−4일' 규칙과 동일).
 // ═══════════════════════════════════════════════
 import { findByName, addDays, callFn, COMMON_RULES, dow, num, reportSchema, rest, Row, safeCollector, AgentDef } from "../_shared/agent.ts";
+import { attribute, ClaimItem, isCertain } from "../_shared/claimattr.ts";
 
 const AGENT = "returns";
 const RISK_AT = 15, WARN_AT = 10, MIN_QTY = 10;   // 위험 기준 15% (2026-10-13 사용자 지정 — 옛 20%. 워크스페이스 '순반품률 파악' 메뉴 기본값과 같게)
@@ -67,30 +68,47 @@ async function collect(D: string) {
   } : null;
   const cohortDays = ((cohort?.days ?? []) as CRow[]).map((d) => ({ date: d.start, age_days: d.age_days, paid: num(d.paid), cancel: num(d.cancel), cancel_rate: d.cancel_rate, ret: num(d.ret), return_rate: d.return_rate }));
 
-  // ── 상품별 반품 사유 TOP (14일, 배송완료일 기준) ──
-  const reasonsByProduct = new Map<number, Map<string, number>>();
-  for (const it of ((rr?.items ?? []) as Row[])) {
-    const no = Number(it.product_no); if (!no) continue;
-    // 고객이 쓴 긴 문장(리뷰 수준)은 앞 40자만 — 토큰 절약 + 같은 뜻의 사유가 흩어지는 것 완화
-    const reason = (String(it.request || it.accept || "사유 미기재").replace(/\s+/g, " ").trim() || "사유 미기재").slice(0, 40);
-    let m = reasonsByProduct.get(no);
-    if (!m) { m = new Map(); reasonsByProduct.set(no, m); }
-    m.set(reason, (m.get(reason) ?? 0) + num(it.qty));
-  }
-  // 화면용(2026-11-05 사용자 요청 "Best 30 상품을 눌러 사유 보기"): 자르지 않은 사유 문장 + 옵션별 수량 — Claude에는 안 보냄
-  const fullReasons = new Map<number, Map<string, number>>(), optsByProduct = new Map<number, Map<string, number>>();
-  const bumpM = (outer: Map<number, Map<string, number>>, no: number, k: string, q: number) => {
-    let m = outer.get(no); if (!m) { m = new Map(); outer.set(no, m); }
-    m.set(k, (m.get(k) ?? 0) + q);
+  // ── 상품별 취소·반품 사유 (2026-11-05 2차: 묶음 신청 구분) ──
+  // 카페24는 사유를 신청 한 건에 하나만 받아서, 여러 상품을 한 번에 반품하면 같은 문장이 모든 상품에 붙는다(실측 반품 품목 38%).
+  // _shared/claimattr.ts가 품목마다 확실(혼자 신청·이름/품목 언급·단서) / 불확실(shared) / 다른 상품 얘기(other)를 가른다.
+  // Claude(topReasons·reasons_top3)와 화면의 '사유'는 확실한 것만, 불확실한 것은 화면에 따로(함께 신청한 상품과 같이).
+  type ReasonBook = { sure: Map<string, number>; shared: Map<string, { qty: number; with: Set<string> }>; opts: Map<string, number>; n: { sure: number; shared: number; other: number } };
+  const book = (rows: ClaimItem[]) => {
+    const m = new Map<number, ReasonBook>();
+    for (const x of attribute(rows)) {
+      let b = m.get(x.product_no);
+      if (!b) { b = { sure: new Map(), shared: new Map(), opts: new Map(), n: { sure: 0, shared: 0, other: 0 } }; m.set(x.product_no, b); }
+      const q = num(x.qty) || 1, text = ((x.reason && /[0-9A-Za-z가-힣]/.test(x.reason)) ? x.reason : "사유 미기재").slice(0, 120);
+      const opt = String(x.option ?? "").trim();
+      if (opt) b.opts.set(opt, (b.opts.get(opt) ?? 0) + q);   // 옵션은 품목 자체 정보라 묶음 여부와 상관없이 확실
+      if (isCertain(x.share)) { b.sure.set(text, (b.sure.get(text) ?? 0) + q); b.n.sure += q; }
+      else if (x.share === "shared") {
+        const cur = b.shared.get(text) ?? { qty: 0, with: new Set<string>() };
+        cur.qty += q; x.with.forEach((w) => cur.with.add(w)); b.shared.set(text, cur); b.n.shared += q;
+      } else b.n.other += q;
+    }
+    return m;
   };
-  for (const it of ((rr?.items ?? []) as Row[])) {
-    const no = Number(it.product_no); if (!no) continue;
-    bumpM(fullReasons, no, (String(it.request || it.accept || "사유 미기재").replace(/\s+/g, " ").trim() || "사유 미기재").slice(0, 120), num(it.qty));
-    const opt = String(it.option ?? "").trim();
-    if (opt) bumpM(optsByProduct, no, opt, num(it.qty));
+  const toClaimItems = (rows: Row[]): ClaimItem[] => rows.filter((it) => Number(it.product_no)).map((it) => ({
+    claim: String(it.claim ?? ""), product_no: Number(it.product_no), product_name: String(it.product_name ?? ""), option: String(it.option ?? ""),
+    qty: num(it.qty), request: String(it.request ?? ""), accept: String(it.accept ?? ""),
+  }));
+  const returnBook = book(toClaimItems((rr?.items ?? []) as Row[]));
+  const cancelBook = Array.isArray(cw?.cancel_items) ? book(toClaimItems(cw!.cancel_items as Row[])) : null;
+  // Claude용 상품별 사유(확실한 것만, 40자) — risk_products.reasons_top3·watched_products
+  const reasonsByProduct = new Map<number, Map<string, number>>();
+  for (const [no, b] of returnBook) {
+    const m = new Map<string, number>();
+    for (const [t, q] of b.sure) m.set(t.slice(0, 40), (m.get(t.slice(0, 40)) ?? 0) + q);
+    reasonsByProduct.set(no, m);
   }
-  const listOf = <K extends string>(m: Map<string, number> | undefined, key: K, n: number) =>
-    [...(m ?? new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, qty]) => ({ [key]: k, qty }) as Record<K, string> & { qty: number });
+  // 화면용: reasons = 확실한 사유, shared_reasons = 불확실(함께 신청한 상품 이름 최대 3), options, reason_counts = 수량 합
+  const whyOf = (b: ReasonBook | undefined) => b ? {
+    reasons: [...b.sure].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([reason, qty]) => ({ reason, qty })),
+    shared_reasons: [...b.shared].sort((x, y) => y[1].qty - x[1].qty).slice(0, 8).map(([reason, v]) => ({ reason, qty: v.qty, with: [...v.with].slice(0, 3), with_more: Math.max(0, v.with.size - 3) })),
+    options: [...b.opts].sort((x, y) => y[1] - x[1]).slice(0, 6).map(([option, qty]) => ({ option, qty })),
+    reason_counts: b.n,
+  } : { reasons: [], shared_reasons: [], options: [], reason_counts: { sure: 0, shared: 0, other: 0 } };
   const topReasons = (no: number, n = 3) => [...(reasonsByProduct.get(no) ?? new Map()).entries()]
     .sort((a, b) => b[1] - a[1]).slice(0, n).map(([reason, qty]) => `${reason} ${qty}개`);
 
@@ -134,12 +152,11 @@ async function collect(D: string) {
   const cancelTop5 = cwProducts.filter((p) => num(p.paid_qty) >= MIN_QTY && num(p.cancel_qty) > 0)
     .sort((a, b) => num(b.cancel_rate) - num(a.cancel_rate)).slice(0, 5)
     .map((p) => ({ product_no: Number(p.product_no), name: String(p.product_name ?? ""), rank: num(p.rank), paid_qty: num(p.paid_qty), cancel_qty: num(p.cancel_qty), cancel_rate: p.cancel_rate,
-      reasons: Array.isArray(p.reasons) ? (p.reasons as Row[]).map((x) => ({ reason: String(x.reason ?? ""), qty: num(x.qty) })) : null,
-      options: Array.isArray(p.options) ? (p.options as Row[]).map((x) => ({ option: String(x.option ?? ""), qty: num(x.qty) })) : null }));
+      ...(cancelBook ? whyOf(cancelBook.get(Number(p.product_no))) : {}) }));
   const returnTop5 = ranked.filter((p) => p.win14.delivered >= MIN_QTY && p.win14.returned > 0)
     .sort((a, b) => b.win14.rate - a.win14.rate).slice(0, 5)
     .map((p) => ({ product_no: p.product_no, name: p.name, rank: p.rank14 || p.rank7, delivered_14d: p.win14.delivered, returned_14d: p.win14.returned, rate_14d: p.win14.rate, level: p.win14.level,
-      reasons: rr ? listOf(fullReasons.get(p.product_no), "reason", 8) : null, options: rr ? listOf(optsByProduct.get(p.product_no), "option", 6) : null }));
+      ...(rr ? whyOf(returnBook.get(p.product_no)) : {}) }));
   const best30 = {
     basis: `취소율 = 결제일 기준 최근 14일 결제수량 상위 30 상품의 취소완료 수량 ÷ 결제 수량 / 순반품률 = 배송완료일 기준 14일 창(E=${E}) 결제수량 상위 30 상품`,
     cancel_total: cw ? { paid_qty: num((cw.total as Row)?.paid_qty), cancel_qty: num((cw.total as Row)?.cancel_qty), cancel_rate: (cw.total as Row)?.cancel_rate ?? null } : null,
@@ -257,7 +274,7 @@ const SCHEMA = reportSchema({
 // 화면용 사유·옵션 목록은 Claude에 2개만(40자) — 토큰 절약
 function slimBest30(b: Row | undefined) {
   if (!b) return b;
-  const slim = (xs: unknown) => ((xs ?? []) as Row[]).map((x) => ({ ...x, options: undefined,
+  const slim = (xs: unknown) => ((xs ?? []) as Row[]).map((x) => ({ ...x, options: undefined, shared_reasons: undefined,
     reasons: Array.isArray(x.reasons) ? (x.reasons as Row[]).slice(0, 2).map((r) => `${String(r.reason).slice(0, 40)} ${num(r.qty)}개`) : undefined }));
   return { ...b, cancel_top5: slim(b.cancel_top5), return_top5: slim(b.return_top5) };
 }

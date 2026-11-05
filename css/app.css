@@ -462,6 +462,13 @@ table.risk .r { white-space: normal; }
 .b30-bar > i { display: block; height: 100%; background: #f87171; border-radius: 3px; }
 .b30-reason > b { text-align: right; font-size: .78rem; }
 .b30-opts { display: flex; flex-wrap: wrap; gap: 4px; }
+.b30-shared { margin-top: 6px; padding: 6px 8px; background: #fffbeb; border-radius: 6px; }
+.b30-shared > summary { cursor: pointer; list-style: none; font-size: .76rem; font-weight: 800; color: #92400e; }
+.b30-shared > summary::-webkit-details-marker { display: none; }
+.b30-shared > summary i { font-size: .6rem; margin-right: 3px; transition: transform .15s; }
+.b30-shared[open] > summary i { transform: rotate(90deg); }
+.b30-shared .b30-bar > i { background: #fbbf24; }
+.b30-with { display: block; color: #b45309; font-size: .7rem; }
 .b30-opts .chip b { margin-left: 2px; }
 @media (max-width: 520px) { .b30-why { margin-left: 0; } .b30-reason { grid-template-columns: minmax(0, 1fr) 40px 34px; } }
 .t-sub-inline { font-size: .72rem; font-weight: 700; color: var(--muted); }
