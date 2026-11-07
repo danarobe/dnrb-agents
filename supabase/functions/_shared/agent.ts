@@ -17,7 +17,7 @@ import { encodeBase64 } from "jsr:@std/encoding@1/base64";
 import { handleOptions, json, verifyAuthToken } from "./util.ts";
 
 export const SB_URL = Deno.env.get("SUPABASE_URL")!;
-const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SB_KEY = (Deno.env.get("SB_SERVICE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"))!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const AGENT_SECRET = Deno.env.get("AGENT_SECRET") ?? "";
 const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
