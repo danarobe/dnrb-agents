@@ -226,14 +226,16 @@ Deno.serve(async (req) => {
     const id = String(body.id ?? "");
     if (!/^[0-9a-f-]{36}$/.test(id)) return json({ error: "id 필요" }, 400);
     const now = new Date().toISOString();
-    const patch = async (b: Row) => {
-      const r = await rest(`team_tasks?id=eq.${id}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...b, updated_at: now }) });
+    // 상태 전환은 PATCH 조건으로 강제(보안 검토 2026-11-07): 화면을 거치지 않고 직접 불러도 대표 승인 전·보류된 일을 완료하거나 되살릴 수 없게
+    const patch = async (b: Row, cond = "") => {
+      const r = await rest(`team_tasks?id=eq.${id}${cond}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...b, updated_at: now }) });
       const rows = r.ok ? await r.json() as Row[] : [];
-      return rows.length ? json({ ok: true, task: rows[0] }) : json({ error: "할 일을 찾지 못했어요" }, 404);
+      return rows.length ? json({ ok: true, task: rows[0] }) : json({ error: "지금 상태에서는 바꿀 수 없어요(대표 승인 전이거나 이미 바뀐 할 일) — 새로고침해 주세요" }, 409);
     };
     if (action === "done") {
-      if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null });
-      return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: String(body.note ?? "").slice(0, 200) || null });
+      if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null }, "&status=eq.done");
+      return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: String(body.note ?? "").slice(0, 200) || null },
+        "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
     }
     if (action === "decide") {
       if (me?.role !== "admin") return json({ error: "대표(관리자)만 결정할 수 있어요" }, 403);
