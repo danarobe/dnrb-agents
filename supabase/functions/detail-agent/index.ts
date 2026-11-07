@@ -167,7 +167,8 @@ Deno.serve(async (req) => {
       const D = addDays(seoulToday(), -1);
       const forced = Number(url.searchParams.get("product_no") || 0);
       const picks: { no: number; name: string; reason: string }[] = [];
-      if (forced) picks.push({ no: forced, name: "", reason: (url.searchParams.get("reason") || "수동 지정").slice(0, 60) });   // reason: 팀 할 일 보드의 자동 점검이 '동료 요청 n번'을 넘긴다(2026-11-07)
+      const autoReason = url.searchParams.get("reason") ?? "";   // 팀 할 일 자동 점검만 — cron이 정해진 형식으로 넘길 때만 받는다(보안 검토 2026-11-07)
+      if (forced) picks.push({ no: forced, name: "", reason: viaCron && /^동료 요청 \d{1,2}번\(팀 할 일 자동 점검\)$/.test(autoReason) ? autoReason : "수동 지정" });   // reason: 팀 할 일 보드의 자동 점검이 '동료 요청 n번'을 넘긴다(2026-11-07)
       else {
         const r = await rest(`agent_reports?agent=eq.strategy&status=eq.ok&select=data&order=created_at.desc&limit=1`);
         const st = r.ok ? ((await r.json())[0] ?? null) : null;

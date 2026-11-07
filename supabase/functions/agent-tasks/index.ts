@@ -234,7 +234,7 @@ Deno.serve(async (req) => {
     };
     if (action === "done") {
       if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null }, "&status=eq.done");
-      return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: String(body.note ?? "").slice(0, 200) || null },
+      return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null },
         "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
     }
     if (action === "decide") {
