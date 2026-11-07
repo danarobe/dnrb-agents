@@ -770,3 +770,16 @@ span.tk-check { cursor: default; color: #9ca3af; }
   .top .logo b { display: none; }
   .top-right { gap: 6px; }
 }
+/* 오늘 할 일 2차 (2026-11-07): 쉬는 날 · 쉬기 전 · 확인 후 닫기 */
+.tk-after { border-color: #c7d2fe; background: #f8f9ff; }
+.tk-after-n { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .86rem; margin: 2px 0 6px; }
+.tk-after-n b { font-size: 1.05rem; color: #4338ca; }
+.tk-new { color: #4338ca; background: #e0e7ff; border-radius: 999px; padding: 1px 8px; font-weight: 700; white-space: nowrap; }
+.tk-before { border-color: #fecaca; background: #fffafa; }
+.tk-n.red { color: #b91c1c; background: #fee2e2; }
+.tk-n.gray { color: #4b5563; background: #f3f4f6; }
+.tk-ceo.off { border-color: #c7d2fe; }
+.tk-off-h { font-size: .74rem; font-weight: 800; color: #4338ca; }
+.tk-ceo-btns { flex-wrap: wrap; }
+.tk-stale { border-style: dashed; }
+.tk-stale-btns { display: flex; gap: 6px; margin-top: 4px; }

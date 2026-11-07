@@ -8,10 +8,14 @@
 //        자동 완료: 광고 착수 = 그 상품 ON 광고 수가 처음보다 늘면 / 광고 줄이기 = 줄면 / 상세 보강 = 상세 이미지 해시가 바뀌면.
 //        &auto=1(아침 cron만): 상세페이지 점검 요청이 서로 다른 날 2번 이상 쌓인 상품은 상세 점검 담당을 자동 실행(하루 2개, 14일 안에 점검한 상품 제외, 크레딧 부족이면 건너뜀).
 //   list (에이전트 사용자) ─ 보드 / done (에이전트 사용자) ─ 완료·되돌리기 / decide (관리자 = 대표) ─ 승인·보류·되돌리기
+//   2차(2026-11-07, 사용자 "주말엔 직원만 쉬고 대표는 대부분 본다"): 직원 일은 출근일(토·일·wm_holidays 제외)로 기한·며칠째를 센다.
+//     기한 없는 직원 일 = 기준일+3 출근일. 에이전트가 빠뜨린 일은 내리지 않고 stale_since만 찍어 사람이 완료·닫기(close)할 때까지 남긴다.
+//     close (에이전트 사용자; 대표 승인 대기 일은 관리자만) ─ '필요 없음'으로 닫기 / postpone (관리자) ─ 다음 출근일로 미루기.
+//     아침 cron(auto=1)이 알림: 대표(관리자)는 매일 '결정 대기 n개'(주말 마감 직원 일 포함), 직원(agent_users 알림 켠 비관리자)은 출근일에만 '오늘 할 일 n개'.
 //   보고서 쪽: _shared/agent.ts weekContext가 team_board(open·done_7d·held)를 담당자에게 주고, 끝났거나 보류된 일은 그 담당자 할 일에서 뺀다.
 // ═══════════════════════════════════════════════
 import { handleOptions, json, verifyAuthToken } from "../_shared/util.ts";
-import { addDays, AGENT_LABELS, callFn, canUseAgents, isCronRequest, rest, Row, seoulToday, TASK_KINDS } from "../_shared/agent.ts";
+import { addDays, addWorkdays, AGENT_LABELS, callFn, canUseAgents, isCronRequest, isOffDay, isStaffOwner, loadOffDays, nextWorkday, notifyUsers, prevWorkday, rest, Row, seoulToday, TASK_KINDS } from "../_shared/agent.ts";
 import { paGroups, paKey, paNorm, PaProd, paPickBest, paVerTok } from "../strategy-agent/def.ts";
 
 const SOURCES = ["returns", "strategy", "ads", "sales"];   // 같은 일이 여럿이면 앞 담당(원래 제안자)의 문장을 쓴다 — 요약은 옮겨 적은 것이라 마지막
@@ -38,7 +42,7 @@ function guessKind(t: string): string {   // 옛 보고서(종류 칸이 없던 
 }
 const DONE_WHEN: Record<string, string> = { "광고 착수": "그 상품 ON 광고가 늘면 자동 완료", "광고 줄이기": "그 상품 ON 광고가 줄면 자동 완료", "상세 보강": "상세 이미지가 바뀌면 자동 완료" };
 
-type Item = { key: string; kind: string; title: string; owner: string; why: string; done_when: string; due: string; needs_ceo: boolean; product_no: number | null; product_name: string | null; sources: Row[]; first_seen: string; last_seen: string };
+type Item = { key: string; kind: string; title: string; owner: string; why: string; done_when: string; due: string; due_source: string; needs_ceo: boolean; product_no: number | null; product_name: string | null; sources: Row[]; first_seen: string; last_seen: string };
 
 async function latestReports(): Promise<Row[]> {
   const r = await rest(`agent_reports?agent=in.(${SOURCES.join(",")})&status=eq.ok&report_date=gte.${addDays(seoulToday(), -5)}&select=id,agent,report_date,report,data,created_at&order=report_date.desc,created_at.desc&limit=40`);
@@ -48,7 +52,7 @@ async function latestReports(): Promise<Row[]> {
   return out.sort((a, b) => SOURCES.indexOf(String(a.agent)) - SOURCES.indexOf(String(b.agent)));
 }
 
-function collectItems(reports: Row[]): Map<string, Item> {
+function collectItems(reports: Row[], off: Set<string>): Map<string, Item> {
   const items = new Map<string, Item>();
   for (const rep of reports) {
     const agent = String(rep.agent), label = AGENT_LABELS[agent], D = String(rep.report_date);
@@ -61,9 +65,13 @@ function collectItems(reports: Row[]): Map<string, Item> {
       const kind = TASK_KINDS.includes(String(a.kind)) ? String(a.kind) : guessKind(rawTitle);
       const title = cleanTitle(rawTitle);
       if (!title) continue;
-      const due = /^\d{4}-\d{2}-\d{2}$/.test(String(a.due ?? "")) ? String(a.due) : addDays(/^\d{4}-\d{2}-\d{2}$/.test(String(a.since ?? "")) ? String(a.since) : D, 3);
+      const owner = String(a.owner ?? "대표");
+      const given = /^\d{4}-\d{2}-\d{2}$/.test(String(a.due ?? ""));
+      // 기한이 없으면: 직원 일은 기준일+3 출근일, 대표 일은 +3일
+      const base0 = /^\d{4}-\d{2}-\d{2}$/.test(String(a.since ?? "")) ? String(a.since) : D;
+      const due = given ? String(a.due) : (isStaffOwner(owner) ? addWorkdays(base0, 3, off) : addDays(base0, 3));
       const base = {
-        kind, title, owner: String(a.owner ?? "대표"), why: String(a.why ?? ""), done_when: String(a.done_when ?? "") || (DONE_WHEN[kind] ?? ""), due,
+        kind, title, owner, why: String(a.why ?? ""), done_when: String(a.done_when ?? "") || (DONE_WHEN[kind] ?? ""), due, due_source: given ? "agent" : "default",
         needs_ceo: a.needs_ceo === true || /대표\s*(확인|승인|결정)/.test(rawTitle),
         first_seen: /^\d{4}-\d{2}-\d{2}$/.test(String(a.since ?? "")) ? String(a.since) : D, last_seen: D,
       };
@@ -76,7 +84,7 @@ function collectItems(reports: Row[]): Map<string, Item> {
         if (!cur) { items.set(key, { key, ...base, product_no: t.no, product_name: t.name || null, sources: [src] }); continue; }
         cur.sources.push(src);
         cur.needs_ceo = cur.needs_ceo || base.needs_ceo;
-        if (base.due < cur.due) cur.due = base.due;
+        if (base.due < cur.due) { cur.due = base.due; cur.due_source = base.due_source; }
         if (base.first_seen < cur.first_seen) cur.first_seen = base.first_seen;
         if (base.last_seen > cur.last_seen) cur.last_seen = base.last_seen;
       }
@@ -108,20 +116,23 @@ async function sync(auto: boolean) {
   const reports = await latestReports();
   if (!reports.length) return { ok: true, note: "최근 보고서 없음" };
   const D = reports.map((r) => String(r.report_date)).sort().pop()!;
-  const items = collectItems(reports);
+  const off = await loadOffDays(addDays(D, -40), addDays(D, 40));
+  const items = collectItems(reports, off);
   const lr = await rest(`team_tasks?or=(status.in.(open,held),done_at.gte.${addDays(D, -7)}T00:00:00Z)&select=*`);
   const existing: Row[] = lr.ok ? await lr.json() : [];
   const live = new Map(existing.filter((t) => ["open", "held"].includes(String(t.status))).map((t) => [String(t.task_key), t]));
-  const recentDone = new Set(existing.filter((t) => t.status === "done").map((t) => String(t.task_key)));
+  const recentDone = new Set(existing.filter((t) => t.status === "done" || t.status === "closed").map((t) => String(t.task_key)));
   const now = new Date().toISOString();
-  const stat = { inserted: 0, updated: 0, dropped: 0, reopened: 0, auto_done: 0, detail_runs: [] as Row[] };
+  const stat = { inserted: 0, updated: 0, stale: 0, dropped: 0, reopened: 0, auto_done: 0, detail_runs: [] as Row[], notified: null as Row | null };
   for (const it of items.values()) {
     const cur = live.get(it.key);
     if (cur) {
       const old = (cur.sources ?? []) as Row[];
       const merged = [...it.sources, ...old.filter((o) => !it.sources.some((n) => n.agent === o.agent && n.action_id === o.action_id))].slice(0, 10);
-      const patch: Row = { last_seen: it.last_seen > String(cur.last_seen) ? it.last_seen : cur.last_seen, sources: merged, why: it.why || cur.why, done_when: it.done_when || cur.done_when, updated_at: now };
+      const patch: Row = { last_seen: it.last_seen > String(cur.last_seen) ? it.last_seen : cur.last_seen, sources: merged, why: it.why || cur.why, done_when: it.done_when || cur.done_when, stale_since: null, updated_at: now };
       if (!cur.decision) patch.needs_ceo = it.needs_ceo || !!cur.needs_ceo;
+      // 코드가 정한 기한(default)은 출근일 규칙으로 다시 맞춘다 — 에이전트가 정했거나(agent) 대표가 미룬(ceo) 기한은 그대로
+      if (String(cur.due_source ?? "default") === "default") { patch.due = it.due; patch.due_source = it.due_source; }
       await rest(`team_tasks?id=eq.${cur.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(patch) });
       stat.updated++;
       continue;
@@ -130,18 +141,22 @@ async function sync(auto: boolean) {
     if (it.last_seen < addDays(D, -1)) continue;   // 오래된 보고서에만 있는 일은 새로 만들지 않음
     const ins = await rest("team_tasks", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({
       task_key: it.key, kind: it.kind, title: it.title, product_no: it.product_no, product_name: it.product_name, owner: it.owner, why: it.why, done_when: it.done_when,
-      due: it.due, needs_ceo: it.needs_ceo, sources: it.sources, first_seen: it.first_seen, last_seen: it.last_seen,
+      due: it.due, due_source: it.due_source, needs_ceo: it.needs_ceo, sources: it.sources, first_seen: it.first_seen, last_seen: it.last_seen,
     }) });
     if (ins.ok) stat.inserted++;   // 동시에 두 번 돌면 같은 키는 고유 색인이 막는다(409) — 무시
   }
-  // 담당자들의 최신 보고서 어디에도 없는 진행 중 일 → dropped(에이전트가 뺐음 — 끝났다고 봤거나 의미가 없어짐. 아직 안 온 오늘 보고서는 어제 것이 대신하므로 안전)
+  // 담당자들의 최신 보고서 어디에도 없는 진행 중 일 → 내리지 않고 stale_since(에이전트가 더는 제안 안 함)만 찍는다 — 휴일·주말에 사람이 못 본 채 사라지지 않게(2026-11-07).
+  //   사람이 완료·닫기 하거나 데이터로 자동 완료될 때까지 보드에 남는다. 다시 제안되면 stale이 풀린다(위 update).
   // 보류 7일이 지난 일: 아직 제안되면 결정함으로 다시, 아니면 내림
   const lr2 = await rest(`team_tasks?status=in.(open,held)&select=*`);
   const tasks: Row[] = lr2.ok ? await lr2.json() : [];
   const drop = async (t: Row) => { await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "dropped", updated_at: now }) }); stat.dropped++; t.status = "dropped"; };
   for (const t of tasks) {
     const proposed = items.has(String(t.task_key));
-    if (t.status === "open" && !proposed) { await drop(t); continue; }
+    if (t.status === "open" && !proposed) {
+      if (!t.stale_since) { await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ stale_since: D, updated_at: now }) }); stat.stale++; t.stale_since = D; }
+      continue;
+    }
     if (t.status === "held" && String(t.decided_at ?? "") < addDays(D, -6)) {
       if (!proposed) { await drop(t); continue; }
       await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "open", decision: null, decision_note: `지난 보류(${String(t.decided_at).slice(5, 10)}): ${t.decision_note ?? ""}`.slice(0, 200), decided_at: null, decided_by: null, updated_at: now }) });
@@ -172,8 +187,36 @@ async function sync(auto: boolean) {
     if (evidence) stat.auto_done++;
   }
   // 상세 점검 자동 실행 (아침 cron만)
-  if (auto) stat.detail_runs = await autoDetail(D);
+  if (auto) { stat.detail_runs = await autoDetail(D); stat.notified = await morningNotify(off); }
   return { ok: true, report_date: D, reports: reports.map((r) => `${r.agent} ${r.report_date}`), items: items.size, ...stat };
+}
+
+// 아침 알림: 대표(관리자)는 매일 결정 대기, 직원은 출근일에만 오늘 할 일
+async function morningNotify(off: Set<string>): Promise<Row> {
+  const today = seoulToday();
+  const r = await rest(`team_tasks?status=eq.open&select=owner,kind,needs_ceo,decision,due,due_source,created_at,stale_since`);
+  const open: Row[] = r.ok ? await r.json() : [];
+  const pendingCeo = open.filter((t) => t.needs_ceo && !t.decision).length;
+  const offToday = isOffDay(today, off);
+  const prevW = prevWorkday(today, off), nextW = nextWorkday(today, off);
+  // 직원이 쉬는 동안 마감인 일(에이전트가 정한 기한이 이번 휴일 안) — 대표에게 올린다
+  const offDeadline = offToday ? open.filter((t) => isStaffOwner(t.owner) && t.kind !== "지킬 원칙" && t.due_source === "agent" && !t.stale_since && !(t.needs_ceo && !t.decision) && String(t.due) > prevW && String(t.due) < nextW).length : 0;
+  const ures = await rest("app_users?role=eq.admin&select=id");
+  const admins: string[] = ures.ok ? ((await ures.json()) as Row[]).map((u) => String(u.id)) : [];
+  const out: Row = { off_today: offToday };
+  if (pendingCeo + offDeadline > 0) {
+    const msg = `대표 결정 대기 ${pendingCeo}개${offDeadline ? ` · 직원이 쉬는 동안 마감 ${offDeadline}개` : ""} — 오늘 할 일에서 확인`;
+    out.ceo = await notifyUsers(admins, "오늘 할 일", msg, "대표 결정이 필요한 일이 있어요");
+  }
+  if (!offToday) {
+    const sres = await rest("agent_users?notify=eq.true&select=user_id");
+    const staff = (sres.ok ? ((await sres.json()) as Row[]).map((u) => String(u.user_id)) : []).filter((id) => !admins.includes(id));
+    const work = open.filter((t) => isStaffOwner(t.owner) && t.kind !== "지킬 원칙" && !t.stale_since && !(t.needs_ceo && !t.decision));
+    const late = work.filter((t) => t.due && String(t.due) < today).length;
+    const fresh = prevW < addDays(today, -1) ? work.filter((t) => String(t.created_at ?? "").slice(0, 10) > prevW).length : 0;   // 쉬는 날 뒤 첫 출근일이면 그 사이 생긴 일
+    if (work.length && staff.length) out.staff = await notifyUsers(staff, "오늘 할 일", `오늘 할 일 ${work.length}개${late ? ` · 기한 지남 ${late}개` : ""}${fresh ? ` · 쉬는 동안 생긴 일 ${fresh}개` : ""}`, "오늘 할 일이 있어요");
+  }
+  return out;
 }
 
 async function autoDetail(D: string): Promise<Row[]> {
@@ -221,7 +264,8 @@ Deno.serve(async (req) => {
       const D = seoulToday();
       const r = await rest(`team_tasks?or=(status.in.(open,held),done_at.gte.${addDays(D, -7)}T00:00:00Z,and(status.eq.dropped,updated_at.gte.${addDays(D, -3)}T00:00:00Z))&select=*&order=due.asc,first_seen.asc&limit=300`);
       if (!r.ok) return json({ error: `불러오기 실패 ${r.status}` }, 500);
-      return json({ tasks: await r.json(), today: D, me: { name: me?.name, admin: me?.role === "admin" } });
+      const holidays = [...await loadOffDays(addDays(D, -40), addDays(D, 40))];   // 공휴일만 — 토·일은 화면이 계산
+      return json({ tasks: await r.json(), today: D, holidays, me: { name: me?.name, admin: me?.role === "admin" } });
     }
     const id = String(body.id ?? "");
     if (!/^[0-9a-f-]{36}$/.test(id)) return json({ error: "id 필요" }, 400);
@@ -233,9 +277,20 @@ Deno.serve(async (req) => {
       return rows.length ? json({ ok: true, task: rows[0] }) : json({ error: "지금 상태에서는 바꿀 수 없어요(대표 승인 전이거나 이미 바뀐 할 일) — 새로고침해 주세요" }, 409);
     };
     if (action === "done") {
-      if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null }, "&status=eq.done");
+      if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null }, "&status=in.(done,closed)");
+      // 관리자(대표)는 승인 대기 일도 직접 처리할 수 있다('내가 처리함' — 직접 했으면 승인한 셈). 직원은 승인 필요 없거나 승인된 일만.
       return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null },
-        "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
+        me?.role === "admin" ? "&status=eq.open" : "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
+    }
+    if (action === "close") {   // '필요 없음'으로 닫기 — 에이전트가 더는 제안 안 하는 일, 주말 마감 '넘기기'
+      return await patch({ status: "closed", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null },
+        me?.role === "admin" ? "&status=eq.open" : "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
+    }
+    if (action === "postpone") {   // 대표: 직원이 쉬는 동안 마감인 일을 다음 출근일로
+      if (me?.role !== "admin") return json({ error: "대표(관리자)만 미룰 수 있어요" }, 403);
+      const off = await loadOffDays(addDays(seoulToday(), -5), addDays(seoulToday(), 40));
+      const to = nextWorkday(seoulToday(), off);   // 오늘 다음의 첫 출근일
+      return await patch({ due: to, due_source: "ceo" }, "&status=eq.open");
     }
     if (action === "decide") {
       if (me?.role !== "admin") return json({ error: "대표(관리자)만 결정할 수 있어요" }, 403);
