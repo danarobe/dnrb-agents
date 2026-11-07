@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
       const D = addDays(seoulToday(), -1);
       const forced = Number(url.searchParams.get("product_no") || 0);
       const picks: { no: number; name: string; reason: string }[] = [];
-      if (forced) picks.push({ no: forced, name: "", reason: "수동 지정" });
+      if (forced) picks.push({ no: forced, name: "", reason: (url.searchParams.get("reason") || "수동 지정").slice(0, 60) });   // reason: 팀 할 일 보드의 자동 점검이 '동료 요청 n번'을 넘긴다(2026-11-07)
       else {
         const r = await rest(`agent_reports?agent=eq.strategy&status=eq.ok&select=data&order=created_at.desc&limit=1`);
         const st = r.ok ? ((await r.json())[0] ?? null) : null;
@@ -193,6 +193,25 @@ Deno.serve(async (req) => {
         await dispatch(`action=prepare&id=${id}${url.searchParams.get("reread") === "1" ? "&reread=1" : ""}`);
       }
       return json({ ok: true, queued: chosen.map((c, i) => ({ id: ids[i], product_no: c.no, name: c.name, reason: c.reason })), message: "상세 이미지 읽기를 시작했어요 (상품당 2~4분)" }, 202);
+    }
+
+    // ── 멈춤 정리 (2026-11-07, 광고 소재 담당과 같은 이유): pg_cron `creative-sweep`이 함께 부른다.
+    //   읽기 10분 넘게 멈춤 → 못 읽은 장은 '읽기 시간 초과'로 채우고 판단 단계로 / 판단 15분 넘게 멈춤 → 실패 처리 / 이틀 넘은 미완료 → 정리
+    if (action === "sweep") {
+      if (!viaCron) return json({ error: "서버 간 전용 액션" }, 403);
+      const ago = (min: number) => new Date(Date.now() - min * 60000).toISOString();
+      const get = async (q: string): Promise<Row[]> => { const r = await rest(`detail_reviews?${q}`); return r.ok ? await r.json() : []; };
+      const out = { read_timeout: 0, judge_timeout: 0, expired: 0 };
+      for (const row of await get(`status=in.(reading,judging)&created_at=lt.${ago(60 * 48)}&select=id`)) { await patchRow(String(row.id), { status: "error", error: "오래 멈춰 정리함" }); out.expired++; }
+      for (const row of await get(`status=eq.reading&updated_at=lt.${ago(10)}&select=id,images,pages`)) {
+        const images = (row.images ?? []) as Row[], pages = { ...((row.pages ?? {}) as Row) };
+        if (!images.length) { await fail(String(row.id), "준비 단계가 끝나지 않음(시간 초과)"); out.read_timeout++; continue; }
+        for (const im of images) if (!pages[String(im.idx)]) pages[String(im.idx)] = { error: "읽기 시간 초과" };
+        await patchRow(String(row.id), { pages, pages_done: images.length, status: "judging" });
+        await dispatch(`action=judge&id=${row.id}`); out.read_timeout++;
+      }
+      for (const row of await get(`status=eq.judging&updated_at=lt.${ago(15)}&select=id`)) { await fail(String(row.id), "판단이 끝나지 않음(시간 초과)"); out.judge_timeout++; }
+      return json({ ok: true, ...out });
     }
 
     if (!viaCron) return json({ error: "서버 간 전용 액션" }, 403);

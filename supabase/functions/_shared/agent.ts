@@ -212,7 +212,13 @@ export function leanFix(report: Row): Row {
     mood: one(report.mood, ["good", "neutral", "bad"], "neutral"),
     actions: ((report.actions ?? []) as Row[]).map((a) => ({ ...a, owner: ow(a.owner) })),
     week_highlights: wk(report.week_highlights), week_warnings: wk(report.week_warnings),
-    week_actions: ((report.week_actions ?? []) as Row[]).map((a) => ({ ...a, owner: ow(a.owner), status: st(a.status) })),
+    week_actions: ((report.week_actions ?? []) as Row[]).map((a) => ({
+      ...a, owner: ow(a.owner), status: st(a.status),
+      kind: (() => { const k = String(a.kind ?? "").trim(); return TASK_KINDS.find((x) => x === k) ?? TASK_KINDS.find((x) => k && (k.includes(x) || x.includes(k))) ?? "기타"; })(),
+      products: (Array.isArray(a.products) ? a.products.map(String) : String(a.products ?? "").split(/\s+\/\s+/)).map((x) => x.trim()).filter(Boolean).slice(0, 4),
+      done_when: String(a.done_when ?? ""), due: /^\d{4}-\d{2}-\d{2}$/.test(String(a.due ?? "")) ? String(a.due) : "",
+      needs_ceo: a.needs_ceo === true || String(a.needs_ceo) === "true" || /대표\s*(확인|승인|결정)/.test(String(a.title ?? "")),
+    })),
   };
 }
 
@@ -245,8 +251,13 @@ export function resolveProductNos(report: Row, data: Row): Row {
     const hit = findByName(pairs, h.product) ?? loose(String(h.product));
     return hit ? { ...h, product_no: hit.no } : h;
   });
-  return { ...report, colleague_notes: notes, handoffs };
+  const weekActions = ((report.week_actions ?? []) as Row[]).map((a) => ({
+    ...a, product_refs: ((a.products ?? []) as string[]).map((n) => { const hit = findByName(pairs, n) ?? loose(n); return { name: n, no: hit ? hit.no : null }; }),
+  }));
+  return { ...report, colleague_notes: notes, handoffs, ...(report.week_actions ? { week_actions: weekActions } : {}) };
 }
+// 보고서를 저장하면 팀 할 일 보드를 다시 맞춘다 (agent-tasks sync, 실패해도 보고서에는 영향 없음 — 매일 cron이 한 번 더)
+export const syncTeamTasks = () => rest("rpc/agent_call", { method: "POST", body: JSON.stringify({ p_fn: "agent-tasks", p_qs: "action=sync" }) }).catch(() => null);
 
 export async function weekContext(agent: string, D: string) {
   const wStart = mondayOf(D);
@@ -273,6 +284,22 @@ export async function weekContext(agent: string, D: string) {
     : [];
   const doneRes = await rest(`agent_actions?agent=eq.${agent}&done=eq.true&select=action_id`);
   const doneIds = new Set<string>(doneRes.ok ? ((await doneRes.json()) as Row[]).map((r) => String(r.action_id)) : []);
+  // 팀 할 일 보드(2026-11-07, team_tasks): 보드에서 끝났거나(사람 체크·데이터 자동 확인) 대표가 보류한 일은 이 담당자의 할 일에서도 완료로 본다.
+  //   한 할 일(id)이 상품 여러 개로 쪼개졌으면 그 상품들이 전부 끝나야 완료.
+  const tbRes = await rest(`team_tasks?updated_at=gte.${addDays(D, -21)}T00:00:00Z&select=kind,title,product_name,owner,status,decision,decision_note,done_how,done_evidence,done_at,first_seen,sources&order=updated_at.desc&limit=300`);
+  const tasks: Row[] = tbRes.ok ? await tbRes.json() : [];
+  const byAction = new Map<string, string[]>();
+  for (const t of tasks) for (const s of ((t.sources ?? []) as Row[])) if (String(s.agent) === agent && s.action_id) { const k = String(s.action_id); (byAction.get(k) ?? byAction.set(k, []).get(k)!).push(String(t.status)); }
+  for (const [k, sts] of byAction) if (sts.every((x) => x === "done" || x === "held")) doneIds.add(k);
+  const daysOpen = (d: unknown) => Math.max(0, Math.round((new Date(`${D}T00:00:00Z`).getTime() - new Date(`${String(d)}T00:00:00Z`).getTime()) / 86400000));
+  const brief = (t: Row) => ({ kind: t.kind, product: t.product_name || null, title: String(t.title ?? "").slice(0, 50), owner: t.owner, days_open: daysOpen(t.first_seen),
+    ...(t.decision ? { ceo: t.decision === "approve" ? "승인" : "보류", ceo_note: t.decision_note || undefined } : {}),
+    ...(t.status === "done" ? { done: t.done_how === "auto" ? "데이터로 자동 확인" : "직원이 완료 체크", evidence: t.done_evidence || undefined } : {}) });
+  const teamBoard = {
+    open: tasks.filter((t) => t.status === "open").slice(0, 16).map(brief),
+    done_7d: tasks.filter((t) => t.status === "done" && String(t.done_at ?? "") >= `${addDays(D, -7)}`).slice(0, 12).map(brief),
+    held: tasks.filter((t) => t.status === "held").slice(0, 8).map(brief),
+  };
   const latestPrior = prior.length ? prior[prior.length - 1] : null;
   const soFarRaw = ((latestPrior?.report as Row | undefined)?.week_actions ?? []) as Row[];
   const weekActionsSoFar = soFarRaw.map((a) => ({ ...a, done: a.id ? doneIds.has(String(a.id)) : false }));
@@ -285,6 +312,7 @@ export async function weekContext(agent: string, D: string) {
     week: { start: wStart, end: D },
     prior_days: priorDays,
     week_actions_so_far: weekActionsSoFar,
+    team_board: teamBoard,
     last_week: { start: lwStart, end: lwEnd, from_report_date: lwLast ? String(lwLast.report_date) : null, actions: lastWeekActions },
   };
 }
@@ -298,6 +326,8 @@ const item = (extra: Record<string, unknown> = {}, req: string[] = []) => ({
 // lean(2026-10-18): 구조화 출력 문법을 줄인 모양 — 상품 전략 담당처럼 담당자 전용 표가 많아 '문법이 너무 크다'(400)에 걸리는 담당자용.
 //   enum(mood·owner·status)은 문자열로, 주간 항목의 dates(배열 안의 배열)는 쉼표로 이은 문자열로 받는다 → leanFix가 원래 모양으로 되돌려서 화면·다음 날 문맥은 그대로.
 const OWNERS = ["광고팀", "상품팀", "CS팀", "대표"];
+// 팀 할 일 종류 (2026-11-07) — 보드가 같은 일(종류+상품)을 합치고, 광고 착수·줄이기·상세 보강은 데이터로 완료를 자동 확인한다(agent-tasks)
+export const TASK_KINDS = ["광고 착수", "광고 증액", "광고 줄이기", "상세 보강", "노출·기획전", "CS·출고", "재고·소싱", "가격·혜택", "지킬 원칙", "기타"];
 export function reportSchema(opts: { highlights: string; warnings: string; actions: string; extra?: Record<string, unknown>; lean?: boolean; actionSource?: boolean }) {
   const extraProps = opts.extra ?? {};
   const lean = !!opts.lean;
@@ -347,13 +377,20 @@ export function reportSchema(opts: { highlights: string; warnings: string; actio
             owner: pick(OWNERS),
             since: { type: "string", description: "처음 제안한 기준일 YYYY-MM-DD" },
             status: pick(["new", "ongoing"]),
+            products: lean
+              ? { type: "string", description: "대상 상품명(데이터에 있는 그대로). 보통 1개, 같은 일을 여러 상품에 할 때만 ' / '로 이어서(최대 4). 특정 상품이 아니면 빈 문자열" }
+              : { type: "array", items: { type: "string" }, description: "대상 상품명(데이터에 있는 그대로). 보통 1개, 같은 일을 여러 상품에 할 때만 여러 개(최대 4). 특정 상품이 아니면 빈 배열" },
+            kind: { type: "string", description: `할 일 종류 — 다음 중 하나 그대로: ${TASK_KINDS.join(", ")}` },
+            done_when: { type: "string", description: "완료 기준 한 줄, 30자 이내 (예: 'ON 광고 1개 이상', '상세 상단에 실측표 추가')" },
+            due: { type: "string", description: "기한 YYYY-MM-DD (보통 기준일+1~3일, 행사 종료·한파 같은 마감이 있으면 그 전날)" },
+            needs_ceo: { type: "boolean", description: "예산 증액·새 광고비·가격·판매 중단처럼 대표 승인이 필요한 일이면 true" },
             ...(opts.actionSource ? { source: pick(COLLEAGUE_TARGETS, "이 할 일을 처음 제안한 담당자 (동료 보고서의 actions·week_actions에서 가져왔으면 그 담당, 내가 낸 것이면 나)") } : {}),
           },
-          required: ["id", "title", "why", "owner", "since", "status", ...(opts.actionSource ? ["source"] : [])], additionalProperties: false,
+          required: ["id", "title", "why", "owner", "since", "status", "products", "kind", "done_when", "due", "needs_ceo", ...(opts.actionSource ? ["source"] : [])], additionalProperties: false,
         },
         description: opts.actionSource
-          ? "팀 통합 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since·source 그대로)하고, 오늘 동료 보고서들의 actions와 내 제안을 합쳐 같은 일은 하나로(source는 처음 낸 담당). done=true는 뺀다. 중요한 순, 최대 6개"
-          : "이번 주 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since 그대로)하고 오늘 새 제안을 더한다. done=true는 뺀다. 중요한 순, 최대 6개",
+          ? "팀 통합 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since·source 그대로)하고, 오늘 동료 보고서들의 actions와 내 제안을 합쳐 같은 일은 하나로(source는 처음 낸 담당). done=true는 뺀다. 중요한 순, 최대 8개"
+          : "이번 주 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since 그대로)하고 오늘 새 제안을 더한다. done=true는 뺀다. 중요한 순, 최대 8개",
       },
       colleague_notes: {
         type: "array",
@@ -404,7 +441,7 @@ export const COMMON_RULES = `
 - 모든 판단에는 숫자 근거를 붙입니다.
 - 금액은 '만 원' 단위로 반올림해 읽기 쉽게 씁니다 (12,345,678원 → 1,235만 원). 억 단위면 '1.2억 원'.
 - 확실하지 않은 원인은 "~로 보입니다", "확인 필요"처럼 추측임을 밝힙니다.
-- 액션은 당장 할 수 있는 구체적인 것. 담당(광고팀/상품팀/CS팀/대표)을 정합니다. 예산·가격·판매 중단 같은 큰 결정은 '대표 확인 후'로 표현합니다.
+- 액션은 당장 할 수 있는 구체적인 것. 담당(광고팀/상품팀/CS팀/대표)을 정합니다. 예산·가격·판매 중단 같은 큰 결정은 week_actions의 needs_ceo를 true로 둡니다(제목에 '대표 확인 후'를 쓰지 않습니다 — 직원 화면의 '대표 결정함'으로 가서 대표가 승인·보류합니다).
 - 데이터가 비어 있거나(null) 수집 오류(errors)가 있으면 그 부분은 모른다고 쓰고, 있는 데이터로만 판단합니다.
 - 상품명은 데이터에 있는 그대로 씁니다. 없는 상품이나 숫자를 만들어내지 않습니다.
 - 응답은 지정된 JSON 형식으로만 씁니다.
@@ -414,6 +451,11 @@ export const COMMON_RULES = `
 - 오늘 처음 나온 항목은 status "new", 앞선 날에도 있었으면 "ongoing". 여러 날 이어진 항목은 detail에 흐름(나아지는지, 나빠지는지)을 씁니다.
 - 주의 항목 중 이미 해소된 것은 week_warnings에서 뺍니다.
 - week_actions는 this_week.week_actions_so_far(이번 주 지금까지의 할 일, done = 사람이 완료 체크한 것)에서 done=false인 항목을 id·since 그대로 유지하고 오늘의 새 제안을 더합니다. carried=true인 항목은 대표가 저번 주에서 직접 가져온 것이니 반드시 유지합니다(id·since·title 그대로). **done=true인 항목은 완료된 것이니 반드시 뺍니다.** 지난 일이거나 의미가 없어진 것도 뺍니다. 새 항목의 id는 '기준일YYYYMMDD-순번'. 중요한 순으로 최대 6개.
+- week_actions 한 항목 = **상품 1개 × 할 일 1개**가 원칙입니다(직원이 하나씩 끝내고 체크할 수 있게). 여러 상품에 서로 다른 일을 하면 항목을 나눕니다. 같은 일을 여러 상품에 할 때만 products에 여러 개(최대 4). title에는 상품명을 빼고 할 일만 씁니다(예: '상세 상단에 실측표·기장 안내 추가'). kind·done_when·due·needs_ceo를 꼭 채웁니다. 늘 지킬 원칙(예: '순반품률 위험 상품 증액 금지')은 kind '지킬 원칙'.
+- this_week.team_board = 직원들이 보는 '오늘 할 일' 보드의 지금 상태입니다. open(진행 중, days_open = 처음 나온 뒤 며칠째) / done_7d(최근 7일에 끝난 일 — '데이터로 자동 확인'은 광고가 켜졌거나 상세가 바뀐 것을 코드가 확인한 것) / held(대표가 보류, ceo_note = 보류 이유).
+  · 끝난 일(done_7d)은 다시 제안하지 않습니다. 같은 문제가 데이터에 다시 보이면 '완료 후에도 …'처럼 새 근거로 씁니다.
+  · 보류된 일(held)은 보류 이유가 풀렸다는 새 숫자 근거가 없으면 다시 제안하지 않습니다.
+  · open 중 days_open 3일 이상이거나 ceo가 '승인'인데 아직 안 된 일은 summary나 warnings에 '며칠째 안 됨'을 짧게 씁니다(막힌 곳이 대표 승인인지 실행인지).
 - prior_days가 비어 있으면(주 첫날) 주간 항목은 오늘 것과 같고 status는 전부 "new".
 - actions(오늘 새로 제안하는 것)는 주간 항목과 별개로 그대로 씁니다.
 
@@ -654,13 +696,14 @@ export async function writeStage(def: AgentDef, D: string, key: string, opts: { 
     const llmData = def.forLLM ? def.forLLM(data) : data;
     const system = def.colleagueRules ? `${def.system}\n\n이 담당자의 협업 규칙:\n${def.colleagueRules}` : def.system;
     const { report: written0, usage, model } = await writeReport(system, def.schema, llmData,
-      { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far, colleagues: cc.colleagues, handoffs_to_me: cc.handoffs_to_me }, retry > 0 ? "low" : (def.effort ?? "medium"),
+      { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far, team_board: wc.team_board, colleagues: cc.colleagues, handoffs_to_me: cc.handoffs_to_me }, retry > 0 ? "low" : (def.effort ?? "medium"),
       def.images ? def.images(data) : [], { maxTokens: opts.maxTokens, compact: retry > 0 });
     const lean0 = leanFix(written0);
     const written = resolveProductNos(def.postProcess ? def.postProcess(lean0, data) : lean0, data);
     const report = { ...written, week: wc.week, last_week: wc.last_week, colleagues_seen: cc.seen, handoffs_received: cc.handoffs_to_me };
     const saved = await store({ agent: def.agent, report_date: D, trigger, status: "ok", data, report, model, usage: { ...(usage as Row), retry }, created_by: createdBy });
     await dropCache();
+    await syncTeamTasks();
     // 알림: 기본은 보고서마다, notify:"warn"인 담당자는 mood가 bad일 때만 (아침 알림을 요약 1번으로 — 2026-10-22)
     const wantNotify = (def.notify ?? "always") === "always" || String(report.mood) === "bad";
     const notified = wantNotify ? await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 })) : { saved: 0, pushed: 0, skipped: true };
@@ -695,7 +738,7 @@ export async function routinePrepare(def: AgentDef, D: string): Promise<Row> {
   if (!put.ok) throw new Error(`수집 데이터 임시 저장 실패 ${put.status}`);
   const [wc, cc] = await Promise.all([weekContext(def.agent, D), colleagueContext(def.agent, D)]);
   const llmData = def.forLLM ? def.forLLM(data) : data;
-  const week = { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far, colleagues: cc.colleagues, handoffs_to_me: cc.handoffs_to_me };
+  const week = { week: wc.week, prior_days: wc.prior_days, week_actions_so_far: wc.week_actions_so_far, team_board: wc.team_board, colleagues: cc.colleagues, handoffs_to_me: cc.handoffs_to_me };
   const system = def.colleagueRules ? `${def.system}\n\n이 담당자의 협업 규칙:\n${def.colleagueRules}` : def.system;
   const userText = `아래는 기준일(어제)까지의 수집 데이터, 이번 주 앞선 날들의 보고 항목(this_week), 동료 담당자들의 최근 보고서 요약(colleagues)과 나에게 온 요청(handoffs_to_me)입니다. 아침 리포트를 작성하세요.\n\n[수집 데이터]\n${JSON.stringify(llmData)}\n\n[this_week · colleagues]\n${JSON.stringify(week)}`;
   return { key, agent: def.agent, label: def.label, report_date: D, snapshot_reused: !!snapshotId, collect_ms: Date.now() - t0, errors: data.errors ?? [], system, schema: def.schema, user_text: userText };
@@ -726,6 +769,7 @@ export async function routineSubmit(def: AgentDef, D: string, key: string, repor
     const report = { ...written, week: wc.week, last_week: wc.last_week, colleagues_seen: cc.seen, handoffs_received: cc.handoffs_to_me };
     const saved = await store({ agent: def.agent, report_date: D, trigger: "routine", status: "ok", data, report, model: model || "routine", usage: { ...(usage ?? {}), source: "routine" }, created_by: null });
     await rest(keyQ, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => {});
+    await syncTeamTasks();
     const wantNotify = (def.notify ?? "always") === "always" || String(report.mood) === "bad";
     const notified = wantNotify ? await notifyAdmins(def.label, D, String(report.headline ?? "")).catch(() => ({ saved: 0, pushed: 0 })) : { saved: 0, pushed: 0, skipped: true };
     return json({ ok: true, id: saved.id, report_date: D, headline: report.headline, notified, write_ms: Date.now() - t0 });

@@ -417,6 +417,34 @@ Deno.serve(async (req) => {
       return json({ ok: true, batch, queued: chosen.map((c, i) => ({ id: ids[i], product_no: c.no, kind: c.kind, name: nameOf(c.no) })), message: chosen.length === 1 ? "상세·리뷰를 읽는 중이에요 (2~4분)" : `상품 ${chosen.length}개를 차례로 분석해요 (10~20분, 끝나면 알림)` }, 202);
     }
 
+    // ── 멈춤 정리 (2026-11-07): 10/18·10/25 묶음이 이미지 몇 장의 읽기 호출이 끝나지 않아(작업자 강제 종료로 보임) 'reading'에 영원히 멈추고
+    //   뒤 상품 8개가 대기만 하던 문제. pg_cron `creative-sweep`(10분마다)이 부른다.
+    //   ① 읽기 10분 넘게 멈춤 → 못 읽은 장은 '읽기 시간 초과'로 채우고 제작안 단계로(읽은 장만으로 씀) ② 작성 15분 넘게 멈춤 → 실패 처리 후 다음 상품
+    //   ③ 대기 상품만 남고 10분 넘게 진행이 없는 묶음 → 다음 상품 시작 ④ 이틀 넘은 미완료 행 → '오래 멈춰 정리함'(뒤늦게 돌며 크레딧을 쓰지 않게, 보고서도 만들지 않음)
+    if (action === "sweep") {
+      if (!viaCron) return json({ error: "서버 간 전용 액션" }, 403);
+      const ago = (min: number) => new Date(Date.now() - min * 60000).toISOString();
+      const get = async (q: string): Promise<Row[]> => { const r = await rest(`creative_briefs?${q}`); return r.ok ? await r.json() : []; };
+      const out = { read_timeout: 0, brief_timeout: 0, advanced: 0, expired: 0 };
+      for (const row of await get(`status=in.(queued,reading,briefing)&created_at=lt.${ago(60 * 48)}&select=id`)) { await patchRow(String(row.id), { status: "error", error: "오래 멈춰 정리함" }); out.expired++; }
+      for (const row of await get(`status=eq.reading&updated_at=lt.${ago(10)}&select=id,batch_id,images,pages`)) {
+        const images = (row.images ?? []) as Row[], pages = { ...((row.pages ?? {}) as Row) };
+        if (!images.length) { await fail(row, "준비 단계가 끝나지 않음(시간 초과)"); out.read_timeout++; continue; }
+        for (const im of images) if (!pages[String(im.idx)]) pages[String(im.idx)] = { error: "읽기 시간 초과" };
+        await patchRow(String(row.id), { pages, pages_done: images.length, status: "briefing" });
+        await dispatch(`action=brief&id=${row.id}`); out.read_timeout++;
+      }
+      for (const row of await get(`status=eq.briefing&updated_at=lt.${ago(15)}&select=id,batch_id`)) { await fail(row, "제작안 작성이 끝나지 않음(시간 초과)"); out.brief_timeout++; }
+      const waiting = await get(`status=eq.queued&select=batch_id`);
+      for (const b of new Set(waiting.map((x) => String(x.batch_id)))) {
+        const rows = await get(`batch_id=eq.${encodeURIComponent(b)}&select=status,updated_at`);
+        if (rows.some((x) => ["reading", "briefing"].includes(String(x.status)))) continue;
+        if (rows.some((x) => String(x.updated_at) > ago(10))) continue;
+        await advance(b); out.advanced++;
+      }
+      return json({ ok: true, ...out });
+    }
+
     if (!viaCron) return json({ error: "서버 간 전용 액션" }, 403);
     const id = url.searchParams.get("id") ?? "";
     const row = await loadRow(id);

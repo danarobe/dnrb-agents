@@ -716,3 +716,57 @@ table.t-rise th:nth-child(1), table.t-fall th:nth-child(1) { width: 24%; } table
 .tc-fold .tc-card { background: #fafafa; }
 .tc-seen { margin-top: 12px; font-size: .72rem; color: var(--muted); }
 @container rv (max-width: 620px) { .tc-grid { grid-template-columns: 1fr; } }
+
+/* ── 오늘 할 일 (2026-11-07): 대표 결정함 · 팀별 할 일 · 지킬 원칙 ── */
+.nav-n { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: #b45309; color: #fff; font-size: .68rem; font-weight: 800; }
+.tk-n { font-size: .74rem; font-weight: 800; color: #b45309; background: #fef3c7; border-radius: 999px; padding: 1px 8px; }
+.tk-ceo-box { border-color: #fde68a; background: #fffdf5; }
+.tk-ceo-box h3, .tk-box h3, .tk-rules h3 { flex-wrap: wrap; }
+.tk-ceo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.tk-ceo-grid > * { min-width: 0; }
+.tk-ceo { border: 1px solid #fde68a; border-radius: 12px; background: #fff; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.tk-ceo-btns { display: flex; gap: 6px; margin-top: 2px; }
+.tk-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+.tk-row { display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid #f1f2f4; }
+.tk-row:first-of-type { border-top: 0; }
+.tk-check { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #c7cbd1; background: #fff; color: transparent; display: inline-flex; align-items: center; justify-content: center; font-size: .72rem; cursor: pointer; padding: 0; margin-top: 1px; transition: all .15s; }
+.tk-check:hover { border-color: var(--good); color: var(--good); }
+.tk-check.on { background: var(--good); border-color: var(--good); color: #fff; cursor: default; }
+span.tk-check { cursor: default; color: #9ca3af; }
+.tk-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tk-title { font-size: .9rem; line-height: 1.45; color: var(--ink); }
+.tk-prod { font-weight: 800; margin-right: 6px; }
+.tk-what { color: var(--ink-2); }
+.tk-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: .74rem; }
+.tk-kind { color: #4338ca; background: #eef2ff; border-radius: 999px; padding: 1px 8px; font-weight: 700; white-space: nowrap; }
+.tk-team { color: var(--muted); background: #f3f4f6; border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.tk-due { color: #374151; background: #f3f4f6; border-radius: 999px; padding: 1px 8px; font-weight: 700; white-space: nowrap; }
+.tk-due.today { color: #b45309; background: #fef3c7; }
+.tk-due.late { color: #b91c1c; background: #fee2e2; }
+.tk-age { color: #6b7280; font-weight: 700; white-space: nowrap; }
+.tk-age.hot { color: #b91c1c; }
+.tk-ok { color: #047857; background: #d1fae5; border-radius: 999px; padding: 1px 8px; font-weight: 700; }
+.tk-src { width: 20px; height: 20px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: .66rem; }
+.tk-when { font-size: .78rem; color: var(--ink-2); }
+.tk-auto { color: #0e7490; font-weight: 700; white-space: nowrap; }
+.tk-why { font-size: .78rem; color: var(--muted); line-height: 1.5; }
+.tk-empty { padding: 14px 0; }
+.tk-row.done .tk-title { color: var(--muted); }
+.tk-row.done .tk-prod { text-decoration: line-through; text-decoration-color: #d1d5db; }
+.tk-doneby { color: var(--muted); }
+.linkish { background: none; border: 0; color: #4f46e5; font-size: .74rem; cursor: pointer; padding: 0 2px; text-decoration: underline; }
+.tk-rules { border-color: #a5f3fc; }
+.tk-rule { padding: 8px 0; border-top: 1px dashed #e5e7eb; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.tk-rule:first-of-type { border-top: 0; }
+.tk-rule .tk-why { flex-basis: 100%; }
+@media (max-width: 520px) { .tk-ceo-grid { grid-template-columns: 1fr; } .tk-ceo-btns .btn { flex: 1; justify-content: center; } }
+/* 메뉴 3개(오늘 할 일 추가)가 휴대폰에서 글자마다 줄바꿈되던 문제 — 줄바꿈 금지, 좁으면 아이콘 숨기고 여백 축소, 넘치면 가로 스크롤 */
+.nav a { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+@media (max-width: 480px) {
+  .nav { overflow-x: auto; scrollbar-width: none; min-width: 0; }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav a { padding: 7px 8px; font-size: .82rem; }
+  .nav a > i { display: none; }
+  .top .logo b { display: none; }
+  .top-right { gap: 6px; }
+}

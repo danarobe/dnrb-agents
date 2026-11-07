@@ -1,8 +1,9 @@
 /* ──────────────────────────────────────────
    앱 뼈대: 로그인 화면 ↔ 본문, 해시 라우터
-   #home | #reports | #reports/<id>
+   #todo | #home | #reports | #reports/<id>   (2026-11-07: '오늘 할 일'을 첫 화면으로)
 ────────────────────────────────────────── */
 const ROUTES = {
+  todo: { label: '오늘 할 일', icon: 'fa-list-check' },
   home: { label: '담당자', icon: 'fa-users' },
   reports: { label: '보고서', icon: 'fa-file-lines' },
 };
@@ -10,8 +11,9 @@ const ROUTES = {
 function route() {
   const h = location.hash.replace(/^#/, '');
   const [key, id] = h.split('/');
-  const k = ROUTES[key] ? key : 'home';
+  const k = ROUTES[key] ? key : 'todo';
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.key === k));
+  if (k === 'todo') renderTasks();
   if (k === 'home') renderHome();
   if (k === 'reports') renderReports(id);
   if (typeof notifLoad === 'function') notifLoad();   // 60초 스로틀
@@ -44,6 +46,6 @@ window.addEventListener('hashchange', () => { if (SESSION) route(); });
 document.addEventListener('DOMContentLoaded', async () => {
   await loadSession();   // #sso= 코드 교환이 있으면 서버 왕복 1회
   await loadAccess();    // 관리자가 아니면 허용 목록 확인
-  if (!location.hash) history.replaceState(null, '', '#home');
+  if (!location.hash) history.replaceState(null, '', '#todo');
   renderShell();
 });
