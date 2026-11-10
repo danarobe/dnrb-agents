@@ -6,7 +6,8 @@
 let __reportsCache = null;
 // 담당 이름 (2026-11-10 'CS팀' → '물류/CS팀'): 옛 보고서도 새 이름으로 보이고, 색 class는 o-광고팀·o-상품팀·o-CS팀·o-대표 그대로
 const ownerName = o => o === 'CS팀' ? '물류/CS팀' : (o || '');
-const ownerCls = o => 'o-' + String(o || '').replace('물류/', '');
+const OWNER_CLS = { '광고팀': 'o-광고팀', '상품팀': 'o-상품팀', '물류/CS팀': 'o-CS팀', 'CS팀': 'o-CS팀', '대표': 'o-대표' };
+const ownerCls = o => OWNER_CLS[o] || '';   // 정해진 이름만 class로 (보고서 문자열을 속성에 그대로 넣지 않음)
 const reportsState = { filter: '' };
 function reportsFilter(k) { reportsState.filter = k; if (k) location.hash = '#reports/agent:' + k; else if (location.hash !== '#reports') location.hash = '#reports'; else renderReports(); }
 async function reportsLoad(force) {
