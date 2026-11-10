@@ -10,6 +10,9 @@
    - 쉬기 전날: '쉬기 전에 할 일'(다음 출근일 전에 마감).
    - 직원이 쉬는 날: 그 사이 마감인 직원 일을 대표 결정함에 올림(내가 처리함 · 다음 출근일로 · 넘기기).
    - 에이전트가 더는 제안하지 않는 일은 사라지지 않고 '확인 후 닫기' 상자에 남는다.
+   3차(2026-11-10, 사용자 "근무 관리 직원 명단 = 사무실 팀, 휴가도"): 팀 = 역할(광고팀 마케터·상품팀 MD·물류/CS팀 CS·물류).
+   - 팀원 전원이 종일 휴가인 날은 그 팀의 쉬는 날(team_off) — 출근일 계산·쉬기 전·쉬는 동안 마감(대표 결정함)에 팀별로 반영. 반차는 출근.
+   - 맨 위 '휴가' 띠(오늘·앞으로 7일), 팀 탭·할 일에 '팀원 휴가'·'팀 전원 휴가' 표시.
 ────────────────────────────────────────── */
 const tasksState = { data: null, team: '' };
 const TEAMS = ['광고팀', '상품팀', '물류/CS팀', '대표'];   // 2026-11-10 'CS팀' → '물류/CS팀'
@@ -26,8 +29,9 @@ const md2 = d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}(${WD[new Da
 // ── 직원 출근일 (토·일 + 공휴일 표) ──
 const tdAdd = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 const calDiff = (a, b) => Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000);
-function workCal(holidays) {
-  const off = new Set(holidays || []);
+const LEAVE_LABEL = { annual: '연차', half: '반차', summer: '여름휴가', sick: '병가' };
+function workCal(holidays, extra) {
+  const off = new Set([...(holidays || []), ...(extra || [])]);
   const isOff = d => { const w = new Date(d + 'T12:00:00Z').getUTCDay(); return w === 0 || w === 6 || off.has(d); };
   const next = d => { let x = tdAdd(d, 1); for (let i = 0; i < 30 && isOff(x); i++) x = tdAdd(x, 1); return x; };
   const prev = d => { let x = tdAdd(d, -1); for (let i = 0; i < 30 && isOff(x); i++) x = tdAdd(x, -1); return x; };
@@ -55,18 +59,20 @@ function srcChips(t) {
     return a ? `<span class="tk-src" style="color:${a.color};background:${a.color}14;" title="${escHtml(a.name)} ${escHtml(s.report_date || '')}"><i class="fa-solid ${a.icon}"></i></span>` : '';
   }).join('');
 }
-function dueBadge(t, today, cal) {
+function dueBadge(t, today, cal0) {
   if (!t.due) return '';
+  const cal = cal0.of(t.owner);
   const staff = isStaffTask(t);
   if (t.due < today) {
     const n = staff ? cal.between(t.due, today) : calDiff(t.due, today);
     return n > 0 ? `<span class="tk-due late">${staff ? `출근일 ${n}일 지남` : `${n}일 지남`}</span>` : `<span class="tk-due">${md2(t.due)}까지</span>`;
   }
   if (t.due === today) return '<span class="tk-due today">오늘까지</span>';
-  const offNote = staff && cal.isOff(t.due) ? ' · 직원 쉬는 날' : '';
+  const offNote = staff && cal.isOff(t.due) ? ' · 담당 팀 쉬는 날' : '';
   return `<span class="tk-due${offNote ? ' today' : ''}">${md2(t.due)}까지${offNote}</span>`;
 }
-function ageBadge(t, today, cal) {
+function ageBadge(t, today, cal0) {
+  const cal = cal0.of(t.owner);
   const staff = isStaffTask(t);
   const n = staff ? cal.between(t.first_seen, today) : calDiff(t.first_seen, today);
   if (n < 2) return '';
@@ -102,10 +108,11 @@ function ceoCard(t, today, cal) {
   </div>`;
 }
 // 직원이 쉬는 동안 마감인 일 — 대표가 직접 처리하거나 다음 출근일로 미루거나 넘긴다
-function offCard(t, today, cal) {
-  const nextW = cal.next(today);
+function offCard(t, today, cal0) {
+  const cal = cal0.of(t.owner), nextW = cal.next(today);
+  const why = cal0.base.isOff(today) ? '직원이 쉬는 동안 마감' : `${escHtml(t.owner)} 전원 휴가 중 마감`;
   return `<div class="tk-ceo off" data-id="${t.id}">
-    <div class="tk-off-h"><i class="fa-solid fa-umbrella-beach"></i> 직원이 쉬는 동안 마감 · ${md2(t.due)}까지</div>
+    <div class="tk-off-h"><i class="fa-solid fa-umbrella-beach"></i> ${why} · ${md2(t.due)}까지</div>
     ${taskHead(t)}
     <div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span>${srcChips(t)}</div>
     ${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}
@@ -115,20 +122,27 @@ function offCard(t, today, cal) {
 
 function tasksDraw() {
   const d = tasksState.data; if (!d) return;
-  const today = d.today, all = d.tasks || [], cal = workCal(d.holidays);
-  const offToday = cal.isOff(today), prevW = cal.prev(today), nextW = cal.next(today);
+  const today = d.today, all = d.tasks || [], base = workCal(d.holidays);
+  const teamCals = {};
+  const cal = { ...base, base, of: owner => owner === '대표' ? base : (teamCals[owner] ??= workCal(d.holidays, (d.team_off || {})[owner])) };
+  const offToday = base.isOff(today), prevW = base.prev(today), nextW = base.next(today);
+  const leaves = d.leaves || [];
+  const leaveToday = t => leaves.filter(l => l.date === today && l.team === t && l.type !== 'half');
+  const teamAllOff = t => ((d.team_off || {})[t] || []).includes(today);
   const open = all.filter(t => t.status === 'open');
   const stale = open.filter(t => t.stale_since && !pendingCeo(t));
   const live = open.filter(t => !t.stale_since || pendingCeo(t));
   const ceo = live.filter(pendingCeo);
   // 직원이 쉬는 날: 이번 휴일 안에 마감인 직원 일을 대표에게
   // (에이전트가 실제 마감으로 정한 기한만 — 코드가 정한 기한은 늘 출근일이라 해당 없음)
-  const offDue = offToday ? live.filter(t => isStaffTask(t) && !pendingCeo(t) && t.kind !== '지킬 원칙' && t.due_source === 'agent' && t.due && t.due > prevW && t.due < nextW) : [];
+  // 담당 팀이 쉬는 날(주말·공휴일·팀 전원 휴가)에 그 사이 마감인 일
+  const offDue = live.filter(t => { if (!isStaffTask(t) || pendingCeo(t) || t.kind === '지킬 원칙' || t.due_source !== 'agent' || !t.due) return false; const c = cal.of(t.owner); return c.isOff(today) && t.due > c.prev(today) && t.due < c.next(today); });
   const offIds = new Set(offDue.map(t => t.id));
   const rules = live.filter(t => t.kind === '지킬 원칙' && !pendingCeo(t));
   const work = live.filter(t => !pendingCeo(t) && t.kind !== '지킬 원칙' && !offIds.has(t.id));
   // 쉬기 전날: 다음 출근일 전에 마감인 직원 일
-  const beforeOff = !offToday && cal.isOff(tdAdd(today, 1)) ? work.filter(t => isStaffTask(t) && t.due && t.due >= today && t.due < nextW) : [];
+  const beforeOff = work.filter(t => { if (!isStaffTask(t) || !t.due) return false; const c = cal.of(t.owner); return !c.isOff(today) && c.isOff(tdAdd(today, 1)) && t.due >= today && t.due < c.next(today); });
+  const beforeNext = beforeOff.length ? cal.of(beforeOff[0].owner).next(today) : nextW;
   const beforeIds = new Set(beforeOff.map(t => t.id));
   // 쉬고 온 첫 출근일: 그 사이 생긴 일·승인된 일·저절로 끝난 일
   const afterOff = !offToday && prevW < tdAdd(today, -1);
@@ -141,16 +155,22 @@ function tasksDraw() {
   const team = tasksState.team;
   const shown = work.filter(t => !beforeIds.has(t.id) && (!team || t.owner === team)).sort((a, b) => String(a.due || '9').localeCompare(String(b.due || '9')) || String(a.first_seen).localeCompare(String(b.first_seen)));
   const count = k => work.filter(t => t.owner === k).length;
-  const tabs = `<div class="tk-tabs">${[['', `전체 ${work.length}`], ...TEAMS.filter(k => count(k)).map(k => [k, `${k} ${count(k)}`])].map(([k, l]) => `<button class="chip-btn${team === k ? ' on' : ''}" onclick="tasksTeam('${k}')">${escHtml(l)}</button>`).join('')}</div>`;
-  const chipFor = t => newIds.has(t.id) ? '<span class="tk-new"><i class="fa-solid fa-moon"></i> 쉬는 동안 생김</span>' : (approvedOff.some(x => x.id === t.id) ? '<span class="tk-new"><i class="fa-solid fa-stamp"></i> 쉬는 동안 대표 승인</span>' : '');
+  const tabLeave = k => teamAllOff(k) ? ' 🏖 전원 휴가' : leaveToday(k).length ? ` 🏖${leaveToday(k).length}` : '';
+  const tabs = `<div class="tk-tabs">${[['', `전체 ${work.length}`], ...TEAMS.filter(k => count(k)).map(k => [k, `${k} ${count(k)}${tabLeave(k)}`])].map(([k, l]) => `<button class="chip-btn${team === k ? ' on' : ''}" onclick="tasksTeam('${k}')">${escHtml(l)}</button>`).join('')}</div>`;
+  // 휴가 띠: 오늘 + 앞으로 7일 (이름·팀·종류만)
+  const upcoming = leaves.filter(l => l.date >= today && l.date <= tdAdd(today, 7));
+  const byDate = {}; upcoming.forEach(l => (byDate[l.date] ??= []).push(l));
+  const leaveStrip = upcoming.length ? `<div class="tk-leave"><b><i class="fa-solid fa-umbrella-beach"></i> 휴가</b>${Object.keys(byDate).sort().map(dt => `<span class="tk-leave-d${dt === today ? ' today' : ''}">${dt === today ? '오늘' : md2(dt)} ${byDate[dt].map(l => `${escHtml(l.name)}(${escHtml(l.team)}${l.type !== 'annual' ? ' ' + escHtml(LEAVE_LABEL[l.type] || l.type) : ''})`).join(', ')}${TEAMS.filter(k => ((d.team_off || {})[k] || []).includes(dt)).map(k => ` <em>${escHtml(k)} 전원 쉼</em>`).join('')}</span>`).join('')}</div>` : '';
+  const chipFor = t => (isStaffTask(t) && teamAllOff(t.owner) ? '<span class="tk-new"><i class="fa-solid fa-umbrella-beach"></i> 팀 전원 휴가</span>' : '') + (newIds.has(t.id) ? '<span class="tk-new"><i class="fa-solid fa-moon"></i> 쉬는 동안 생김</span>' : (approvedOff.some(x => x.id === t.id) ? '<span class="tk-new"><i class="fa-solid fa-stamp"></i> 쉬는 동안 대표 승인</span>' : ''));
   const doneRow = t => `<div class="tk-row done"><span class="tk-check on"><i class="fa-solid ${t.status === 'closed' ? 'fa-xmark' : 'fa-check'}"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span><span class="tk-doneby">${t.status === 'closed' ? `<i class="fa-solid fa-xmark"></i> 닫음(필요 없음) · ${escHtml(t.done_by || '')}` : t.done_how === 'auto' ? `<i class="fa-solid fa-robot"></i> 자동 확인${t.done_evidence ? ` · ${escHtml(t.done_evidence)}` : ''}` : `<i class="fa-solid fa-user-check"></i> ${escHtml(t.done_by || '')}`} · ${timeLabel(t.done_at)}</span><button class="linkish" onclick="taskUndo('${t.id}', this)">되돌리기</button></div></div></div>`;
   const ceoBox = ceo.length || offDue.length;
   $('tasks-body').innerHTML = `
+    ${leaveStrip}
     ${afterOff && (newIds.size || approvedOff.length || autoOff.length) ? `<div class="box tk-after"><h3><i class="fa-solid fa-mug-hot" style="color:#4f46e5;"></i> 쉬는 동안 (${md2(tdAdd(prevW, 1))}~${md2(tdAdd(today, -1))}) <span class="muted small">아래 목록에 표시돼 있어요</span></h3>
       <div class="tk-after-n"><span><b>${newIds.size}</b>개 새로 생김</span><span><b>${approvedOff.length}</b>개 대표가 승인</span><span><b>${autoOff.length}</b>개 저절로 끝남</span></div>
       ${autoOff.length ? `<div class="tk-why">저절로 끝난 일: ${autoOff.map(t => `${escHtml(tkName(t) || t.title)}(${escHtml(t.done_evidence || '')})`).join(' · ')}</div>` : ''}</div>` : ''}
-    ${ceoBox ? `<div class="box tk-ceo-box"><h3><i class="fa-solid fa-stamp" style="color:#b45309;"></i> 대표 결정함 <span class="tk-n">${ceo.length + offDue.length}</span> <span class="muted small">예산·가격처럼 대표 승인이 필요한 일${offDue.length ? ' · 직원이 쉬는 동안 마감인 일' : ''} · 승인하면 팀 할 일로 넘어가고, 보류하면 이유가 다음 날 보고서에 반영돼요</span></h3><div class="tk-ceo-grid">${offDue.map(t => offCard(t, today, cal)).join('')}${ceo.map(t => ceoCard(t, today, cal)).join('')}</div></div>` : ''}
-    ${beforeOff.length ? `<div class="box tk-before"><h3><i class="fa-solid fa-hourglass-half" style="color:#b91c1c;"></i> 쉬기 전에 할 일 <span class="tk-n red">${beforeOff.length}</span> <span class="muted small">다음 출근일 ${md2(nextW)} 전에 마감 — 오늘 못 하면 쉬는 동안 대표에게 올라가요</span></h3>${beforeOff.map(t => taskRow(t, today, cal)).join('')}</div>` : ''}
+    ${ceoBox ? `<div class="box tk-ceo-box"><h3><i class="fa-solid fa-stamp" style="color:#b45309;"></i> 대표 결정함 <span class="tk-n">${ceo.length + offDue.length}</span> <span class="muted small">예산·가격처럼 대표 승인이 필요한 일${offDue.length ? ' · 담당 팀이 쉬는 동안 마감인 일' : ''} · 승인하면 팀 할 일로 넘어가고, 보류하면 이유가 다음 날 보고서에 반영돼요</span></h3><div class="tk-ceo-grid">${offDue.map(t => offCard(t, today, cal)).join('')}${ceo.map(t => ceoCard(t, today, cal)).join('')}</div></div>` : ''}
+    ${beforeOff.length ? `<div class="box tk-before"><h3><i class="fa-solid fa-hourglass-half" style="color:#b91c1c;"></i> 쉬기 전에 할 일 <span class="tk-n red">${beforeOff.length}</span> <span class="muted small">다음 출근일 ${md2(beforeNext)} 전에 마감 — 오늘 못 하면 쉬는 동안 대표에게 올라가요</span></h3>${beforeOff.map(t => taskRow(t, today, cal)).join('')}</div>` : ''}
     <div class="box tk-box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 팀별 할 일 <span class="muted small">기한이 가까운 순${offToday ? ` · 오늘은 직원 쉬는 날 — 다음 출근일 ${md2(nextW)}` : ''}</span></h3>
       ${tabs}
       ${shown.length ? shown.map(t => taskRow(t, today, cal, chipFor(t))).join('') : `<div class="muted tk-empty">${team ? `${escHtml(team)} 할 일이 없어요` : '지금 할 일이 없어요'}</div>`}

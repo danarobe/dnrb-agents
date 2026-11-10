@@ -42,6 +42,36 @@ export const prevWorkday = (d: string, off: Set<string>) => { let x = addDays(d,
 export const workdaysBetween = (a: string, b: string, off: Set<string>) => { let n = 0, x = a; for (let i = 0; i < 120 && x < b; i++) { x = addDays(x, 1); if (!isOffDay(x, off)) n++; } return n; };   // (a, b] 안의 출근일 수
 export const addWorkdays = (d: string, n: number, off: Set<string>) => { let x = d; for (let i = 0; i < n; i++) x = nextWorkday(x, off); return x; };
 export const isStaffOwner = (owner: unknown) => String(owner ?? "") !== "대표";
+// ── 팀 휴가 (2026-11-10, 사용자 "근무 관리 직원 명단은 사무실 팀과 같아, 휴가도 넣어줘") ──
+//   팀 = 계정 역할: 광고팀 = marketer, 상품팀 = staff(MD), 물류/CS팀 = cs·logistics. 구성원 = 그 역할 계정 중 근무 관리 시스템(wm_employees, 재직)에 같은 이름이 있는 사람.
+//   휴가 = wm_leaves(승인된 것). 반차(half)는 출근으로 본다. **팀원 전원이 종일 휴가인 날은 그 팀의 쉬는 날**(주말·공휴일처럼 출근일 계산에서 뺀다). 일부만 휴가면 팀은 출근, 화면에 표시만.
+export const TEAM_ROLES: Record<string, string[]> = { "광고팀": ["marketer"], "상품팀": ["staff"], "물류/CS팀": ["cs", "logistics"] };
+export const teamOfRole = (role: unknown) => Object.keys(TEAM_ROLES).find((t) => TEAM_ROLES[t].includes(String(role ?? ""))) ?? null;
+export type Leave = { date: string; team: string; name: string; user_id: string; type: string };
+export type TeamCal = { holidays: Set<string>; teamOff: Record<string, Set<string>>; leaves: Leave[]; members: Record<string, { user_id: string; name: string }[]>; offFor: (owner: unknown) => Set<string> };
+export async function loadTeamCal(from: string, to: string): Promise<TeamCal> {
+  const [holidays, ur, er, lr] = await Promise.all([
+    loadOffDays(from, to),
+    rest(`app_users?role=in.(marketer,staff,cs,logistics)&or=(login_blocked.is.null,login_blocked.is.false)&select=id,name,role`),
+    rest(`wm_employees?active=eq.true&select=id,name`),
+    rest(`wm_leaves?status=eq.approved&date=gte.${from}&date=lte.${to}&select=employee_id,date,type`),
+  ]);
+  const users: Row[] = ur.ok ? await ur.json() : [], emps: Row[] = er.ok ? await er.json() : [], lvs: Row[] = lr.ok ? await lr.json() : [];
+  const empByName = new Map(emps.map((e) => [String(e.name).trim(), String(e.id)]));
+  const members: Record<string, { user_id: string; name: string; emp: string }[]> = {};
+  for (const u of users) { const team = teamOfRole(u.role), emp = empByName.get(String(u.name).trim()); if (team && emp) (members[team] ??= []).push({ user_id: String(u.id), name: String(u.name), emp }); }
+  const leaves: Leave[] = [];
+  for (const [team, ms] of Object.entries(members)) for (const m of ms) for (const l of lvs) if (String(l.employee_id) === m.emp) leaves.push({ date: String(l.date).slice(0, 10), team, name: m.name, user_id: m.user_id, type: String(l.type) });
+  const teamOff: Record<string, Set<string>> = {};
+  for (const [team, ms] of Object.entries(members)) {
+    const full = new Map<string, Set<string>>();
+    for (const l of leaves) if (l.team === team && l.type !== "half") (full.get(l.date) ?? full.set(l.date, new Set()).get(l.date)!).add(l.user_id);
+    teamOff[team] = new Set([...full.entries()].filter(([, who]) => ms.length > 0 && who.size >= ms.length).map(([d]) => d));
+  }
+  const cache = new Map<string, Set<string>>();
+  const offFor = (owner: unknown) => { const t = String(owner ?? ""); if (!cache.has(t)) cache.set(t, new Set([...holidays, ...(teamOff[t] ?? [])])); return cache.get(t)!; };
+  return { holidays, teamOff, leaves, members: Object.fromEntries(Object.entries(members).map(([k, v]) => [k, v.map(({ user_id, name }) => ({ user_id, name }))])), offFor };
+}
 export function addDays(ymd: string, d: number): string {
   const t = new Date(`${ymd}T12:00:00Z`);
   t.setUTCDate(t.getUTCDate() + d);
@@ -304,10 +334,11 @@ export async function weekContext(agent: string, D: string) {
   const byAction = new Map<string, string[]>();
   for (const t of tasks) for (const s of ((t.sources ?? []) as Row[])) if (String(s.agent) === agent && s.action_id) { const k = String(s.action_id); (byAction.get(k) ?? byAction.set(k, []).get(k)!).push(String(t.status)); }
   for (const [k, sts] of byAction) if (sts.every((x) => x === "done" || x === "held" || x === "closed")) doneIds.add(k);
-  const off = await loadOffDays(addDays(D, -40), addDays(D, 21));
+  const tcal = await loadTeamCal(addDays(D, -40), addDays(D, 21));
+  const off = tcal.holidays;
   const readDay = addDays(D, 1);   // 보고서를 읽는 날(기준일 다음 날)
-  // 직원 일은 출근일, 대표 일은 달력 날짜로 '며칠째'
-  const daysOpen = (t: Row) => isStaffOwner(t.owner) ? workdaysBetween(String(t.first_seen), readDay, off) : Math.max(0, Math.round((new Date(`${readDay}T00:00:00Z`).getTime() - new Date(`${String(t.first_seen)}T00:00:00Z`).getTime()) / 86400000));
+  // 직원 일은 그 팀의 출근일(주말·공휴일·팀 전원 휴가 제외), 대표 일은 달력 날짜로 '며칠째'
+  const daysOpen = (t: Row) => isStaffOwner(t.owner) ? workdaysBetween(String(t.first_seen), readDay, tcal.offFor(t.owner)) : Math.max(0, Math.round((new Date(`${readDay}T00:00:00Z`).getTime() - new Date(`${String(t.first_seen)}T00:00:00Z`).getTime()) / 86400000));
   const brief = (t: Row) => ({ kind: t.kind, product: t.product_name || null, title: String(t.title ?? "").slice(0, 50), owner: t.owner, days_open: daysOpen(t), due: t.due || undefined, ...(t.stale_since ? { stale: true } : {}),
     // 사람이 쓴 글은 데이터로만: 대표 보류 메모는 줄바꿈·기호를 걸러 80자, 완료 근거는 코드가 만든 자동 확인 문구만 넘긴다(보안 검토 2026-11-07)
     ...(t.decision ? { ceo: t.decision === "approve" ? "승인" : "보류", ceo_note: t.decision_note ? String(t.decision_note).replace(/[\r\n`<>{}\[\]]/g, " ").slice(0, 80) : undefined } : {}),
@@ -315,7 +346,10 @@ export async function weekContext(agent: string, D: string) {
     ...(t.status === "closed" ? { done: "사람이 '필요 없음'으로 닫음" } : {}) });
   const offNext: string[] = []; for (let i = 0; i < 10; i++) { const x = addDays(readDay, i); if (isOffDay(x, off)) offNext.push(x); }
   const teamBoard = {
-    calendar: { read_day: readDay, read_day_is_staff_off: isOffDay(readDay, off), staff_next_workday: isOffDay(readDay, off) ? nextWorkday(readDay, off) : readDay, staff_off_days_next_10: offNext },
+    calendar: { read_day: readDay, read_day_is_staff_off: isOffDay(readDay, off), staff_next_workday: isOffDay(readDay, off) ? nextWorkday(readDay, off) : readDay, staff_off_days_next_10: offNext,
+      // 팀 휴가(이름 없이): 팀 전원 종일 휴가인 날 = 그 팀이 쉬는 날 / 일부만 휴가인 날은 사람 수만
+      team_full_leave_next_10: Object.fromEntries(Object.entries(tcal.teamOff).map(([t, ds]) => [t, [...ds].filter((d) => d >= readDay && d < addDays(readDay, 10)).sort()]).filter(([, ds]) => (ds as string[]).length)),
+      team_partial_leave_next_10: (() => { const m = new Map<string, number>(); for (const l of tcal.leaves) if (l.date >= readDay && l.date < addDays(readDay, 10) && !tcal.teamOff[l.team]?.has(l.date)) { const k = `${l.date}|${l.team}|${l.type === "half" ? "반차" : "종일"}`; m.set(k, (m.get(k) ?? 0) + 1); } return [...m.entries()].map(([k, n]) => { const [date, team, kind] = k.split("|"); return { date, team, kind, people: n }; }).sort((a, b) => a.date.localeCompare(b.date)); })() },
     open: tasks.filter((t) => t.status === "open").slice(0, 16).map(brief),
     done_7d: tasks.filter((t) => ["done", "closed"].includes(String(t.status)) && String(t.done_at ?? "") >= `${addDays(D, -7)}`).slice(0, 12).map(brief),
     held: tasks.filter((t) => t.status === "held").slice(0, 8).map(brief),
@@ -492,7 +526,7 @@ export const COMMON_RULES = `
 - 주의 항목 중 이미 해소된 것은 week_warnings에서 뺍니다.
 - week_actions는 this_week.week_actions_so_far(이번 주 지금까지의 할 일, done = 사람이 완료 체크한 것)에서 done=false인 항목을 id·since 그대로 유지하고 오늘의 새 제안을 더합니다. carried=true인 항목은 대표가 저번 주에서 직접 가져온 것이니 반드시 유지합니다(id·since·title 그대로). **done=true인 항목은 완료된 것이니 반드시 뺍니다.** 지난 일이거나 의미가 없어진 것도 뺍니다. 새 항목의 id는 '기준일YYYYMMDD-순번'. 중요한 순으로 최대 6개.
 - week_actions 한 항목 = **상품 1개 × 할 일 1개**가 원칙입니다(직원이 하나씩 끝내고 체크할 수 있게). 여러 상품에 서로 다른 일을 하면 항목을 나눕니다. 같은 일을 여러 상품에 할 때만 products에 여러 개(최대 4). title에는 상품명을 빼고 할 일만 씁니다(예: '상세 상단에 실측표·기장 안내 추가'). kind·done_when·due·needs_ceo를 꼭 채웁니다. 늘 지킬 원칙(예: '순반품률 위험 상품 증액 금지')은 kind '지킬 원칙'.
-- **누가 언제 일하나**: 직원(광고팀·상품팀·물류/CS팀)은 토·일·공휴일에 쉬고, 대표는 주말에도 대부분 봅니다. this_week.team_board.calendar(read_day = 이 보고서를 읽는 날, staff_off_days_next_10 = 직원이 쉬는 날)를 보고 due를 정합니다: 실제 마감(행사·할인 종료, 한파 등)이 없는 직원 할 일은 **직원 출근일**로, 마감이 쉬는 날에 있으면 그 날짜를 그대로 씁니다(보드가 쉬기 전날 직원에게 먼저 알리고, 주말엔 대표에게 올립니다). 쉬는 날을 기한으로 일부러 고르지 않습니다. 대표 할 일은 쉬는 날도 기한이 될 수 있습니다. days_open은 직원 일이면 출근일 기준이라 주말이 끼어도 늘지 않습니다.
+- **누가 언제 일하나**: 직원(광고팀·상품팀·물류/CS팀)은 토·일·공휴일에 쉬고, 대표는 주말에도 대부분 봅니다. calendar.team_full_leave_next_10은 팀 전원이 휴가라 그 팀이 쉬는 날입니다 — 그 팀 일의 기한은 그 날을 피합니다(실제 마감이 그날이면 그대로). team_partial_leave_next_10은 일부만 휴가인 날(사람 수)이라 일을 너무 몰지 않습니다. this_week.team_board.calendar(read_day = 이 보고서를 읽는 날, staff_off_days_next_10 = 직원이 쉬는 날)를 보고 due를 정합니다: 실제 마감(행사·할인 종료, 한파 등)이 없는 직원 할 일은 **직원 출근일**로, 마감이 쉬는 날에 있으면 그 날짜를 그대로 씁니다(보드가 쉬기 전날 직원에게 먼저 알리고, 주말엔 대표에게 올립니다). 쉬는 날을 기한으로 일부러 고르지 않습니다. 대표 할 일은 쉬는 날도 기한이 될 수 있습니다. days_open은 직원 일이면 출근일 기준이라 주말이 끼어도 늘지 않습니다.
 - this_week.week_actions_so_far의 from_board=true 항목은 보드에 남아 있는 미완료(사람이 아직 안 끝냄 — 주가 바뀌어 이어받은 것 포함)입니다. 데이터상 여전히 필요하면 id·since 그대로 유지하고, 필요 없어졌으면 빼도 됩니다(보드가 '에이전트가 더는 제안하지 않음 · 확인 후 닫기'로 남겨 사람이 닫습니다).
 - this_week.team_board = 직원들이 보는 '오늘 할 일' 보드의 지금 상태입니다. open(진행 중, days_open = 처음 나온 뒤 며칠째) / done_7d(최근 7일에 끝난 일 — '데이터로 자동 확인'은 광고가 켜졌거나 상세가 바뀐 것을 코드가 확인한 것) / held(대표가 보류, ceo_note = 보류 이유).
   · 끝난 일(done_7d)은 다시 제안하지 않습니다. 같은 문제가 데이터에 다시 보이면 '완료 후에도 …'처럼 새 근거로 씁니다.

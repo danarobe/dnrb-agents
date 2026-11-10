@@ -783,3 +783,8 @@ span.tk-check { cursor: default; color: #9ca3af; }
 .tk-ceo-btns { flex-wrap: wrap; }
 .tk-stale { border-style: dashed; }
 .tk-stale-btns { display: flex; gap: 6px; margin-top: 4px; }
+/* 오늘 할 일 3차 (2026-11-10): 휴가 띠 */
+.tk-leave { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: .8rem; color: var(--ink-2); background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 12px; padding: 8px 12px; margin-bottom: 12px; }
+.tk-leave b { color: #0f766e; }
+.tk-leave-d.today { font-weight: 700; color: #0f766e; }
+.tk-leave em { font-style: normal; font-weight: 800; color: #b45309; }
