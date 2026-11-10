@@ -5,8 +5,8 @@
 ────────────────────────────────────────── */
 let __reportsCache = null;
 // 담당 이름 (2026-11-10 'CS팀' → '물류/CS팀'): 옛 보고서도 새 이름으로 보이고, 색 class는 o-광고팀·o-상품팀·o-CS팀·o-대표 그대로
-const ownerName = o => o === 'CS팀' ? '물류/CS팀' : (o || '');
-const OWNER_CLS = { '광고팀': 'o-광고팀', '상품팀': 'o-상품팀', '물류/CS팀': 'o-CS팀', 'CS팀': 'o-CS팀', '대표': 'o-대표' };
+const ownerName = o => o === 'CS팀' ? '물류/CS팀' : (o === '광고팀' || o === '상품팀') ? 'MD/컨텐츠팀' : (o || '');   // 2026-11-10 광고팀·상품팀 → MD/컨텐츠팀
+const OWNER_CLS = { 'MD/컨텐츠팀': 'o-상품팀', '광고팀': 'o-상품팀', '상품팀': 'o-상품팀', '물류/CS팀': 'o-CS팀', 'CS팀': 'o-CS팀', '대표': 'o-대표' };
 const ownerCls = o => OWNER_CLS[o] || '';   // 정해진 이름만 class로 (보고서 문자열을 속성에 그대로 넣지 않음)
 const reportsState = { filter: '' };
 function reportsFilter(k) { reportsState.filter = k; if (k) location.hash = '#reports/agent:' + k; else if (location.hash !== '#reports') location.hash = '#reports'; else renderReports(); }
@@ -526,7 +526,7 @@ function reportHtml(r) {
       ${chips}
       ${rowsHtml ? `<div class="tbl-wrap" style="margin-top:10px;"><table class="risk stack t-ads"><thead><tr><th>상품</th><th>판단</th><th>근거</th><th class="r">ON 광고</th><th class="r">7일 광고비</th><th class="r">14일 광고비</th><th class="r">마진</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>` : '<div class="muted">후보 상품이 없어요</div>'}
       ${d.ads_known === false ? '<div class="muted small warn-text">Meta 광고 정보를 받지 못해 광고 칸은 비어 있어요 (광고가 없다는 뜻이 아님)</div>' : ''}
-      <div class="muted small">흐린 줄은 담당자가 따로 결론 내지 않은 상품(규칙 판단). 판단은 제안이에요 — 예산 변경·ON/OFF는 광고팀이 광고관리자에서 직접 하고, 꺼진 광고를 켜기 전엔 왜 껐는지 확인하세요.</div></div>`;
+      <div class="muted small">흐린 줄은 담당자가 따로 결론 내지 않은 상품(규칙 판단). 판단은 제안이에요 — 예산 변경·ON/OFF는 MD/컨텐츠팀이 광고관리자에서 직접 하고, 꺼진 광고를 켜기 전엔 왜 껐는지 확인하세요.</div></div>`;
   } else if (r.agent === 'strategy') {
     const na = d.new_arrivals || {}, mx = rp.matrix || [];
     const cnt = q => (na.matrix || []).filter(p => String(p.quadrant).startsWith(q)).length;

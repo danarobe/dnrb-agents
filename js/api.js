@@ -17,7 +17,7 @@ async function loadAccess() {
   if (!SESSION || SESSION.role === 'admin') return;
   try { const rows = await dbProxy(`agent_users?user_id=eq.${encodeURIComponent(SESSION.id)}&select=user_id`); AGENT_OK = Array.isArray(rows) && rows.length > 0; } catch { AGENT_OK = false; }
 }
-const ROLE_LABEL = { admin: '관리자', staff: 'MD', marketer: '마케터', cs: 'CS팀', logistics: '물류팀' };
+const ROLE_LABEL = { admin: '관리자', staff: 'MD/컨텐츠', marketer: 'MD/컨텐츠', cs: 'CS팀', logistics: '물류팀' };   // 2026-11-10 마케터·MD 통합
 
 async function loadSession() {
   // 워크스페이스에서 넘어온 60초 일회용 코드(#sso=코드) → auth sso_redeem으로 정식 토큰과 교환.
