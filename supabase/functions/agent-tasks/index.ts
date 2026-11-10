@@ -15,7 +15,7 @@
 //   보고서 쪽: _shared/agent.ts weekContext가 team_board(open·done_7d·held)를 담당자에게 주고, 끝났거나 보류된 일은 그 담당자 할 일에서 뺀다.
 // ═══════════════════════════════════════════════
 import { handleOptions, json, verifyAuthToken } from "../_shared/util.ts";
-import { addDays, addWorkdays, AGENT_LABELS, callFn, canUseAgents, isCronRequest, isOffDay, isStaffOwner, loadOffDays, nextWorkday, notifyUsers, prevWorkday, rest, Row, seoulToday, TASK_KINDS } from "../_shared/agent.ts";
+import { addDays, addWorkdays, AGENT_LABELS, normOwner, callFn, canUseAgents, isCronRequest, isOffDay, isStaffOwner, loadOffDays, nextWorkday, notifyUsers, prevWorkday, rest, Row, seoulToday, TASK_KINDS } from "../_shared/agent.ts";
 import { paGroups, paKey, paNorm, PaProd, paPickBest, paVerTok } from "../strategy-agent/def.ts";
 
 const SOURCES = ["returns", "strategy", "ads", "sales"];   // 같은 일이 여럿이면 앞 담당(원래 제안자)의 문장을 쓴다 — 요약은 옮겨 적은 것이라 마지막
@@ -65,7 +65,7 @@ function collectItems(reports: Row[], off: Set<string>): Map<string, Item> {
       const kind = TASK_KINDS.includes(String(a.kind)) ? String(a.kind) : guessKind(rawTitle);
       const title = cleanTitle(rawTitle);
       if (!title) continue;
-      const owner = String(a.owner ?? "대표");
+      const owner = normOwner(a.owner);   // 옛 보고서의 'CS팀'도 '물류/CS팀'으로
       const given = /^\d{4}-\d{2}-\d{2}$/.test(String(a.due ?? ""));
       // 기한이 없으면: 직원 일은 기준일+3 출근일, 대표 일은 +3일
       const base0 = /^\d{4}-\d{2}-\d{2}$/.test(String(a.since ?? "")) ? String(a.since) : D;

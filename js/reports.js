@@ -4,6 +4,9 @@
    #reports/<id>   : 그 보고서
 ────────────────────────────────────────── */
 let __reportsCache = null;
+// 담당 이름 (2026-11-10 'CS팀' → '물류/CS팀'): 옛 보고서도 새 이름으로 보이고, 색 class는 o-광고팀·o-상품팀·o-CS팀·o-대표 그대로
+const ownerName = o => o === 'CS팀' ? '물류/CS팀' : (o || '');
+const ownerCls = o => 'o-' + String(o || '').replace('물류/', '');
 const reportsState = { filter: '' };
 function reportsFilter(k) { reportsState.filter = k; if (k) location.hash = '#reports/agent:' + k; else if (location.hash !== '#reports') location.hash = '#reports'; else renderReports(); }
 async function reportsLoad(force) {
@@ -660,7 +663,8 @@ function reportHtml(r) {
   const chips = x => `${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${(x.dates || []).length ? `<span class="chip">${x.dates.map(md).join(' · ')}</span>` : ''}`;
   const wlist = (arr, cls) => (arr || []).length ? (arr || []).map(x => `<div class="li"><div class="li-top"><b class="${cls}">${escHtml(x.title)}</b>${chips(x)}</div><div>${escHtml(x.detail)}</div></div>`).join('') : '<div class="muted">아직 없음</div>';
   const doneMap = actionsState.map || new Map();
-  const actRow = (x, i, opts = {}) => {
+  const actRow = (x0, i, opts = {}) => {
+    const x = { ...x0, owner: ownerName(x0.owner) };
     const key = actionKey(x), st = doneMap.get(r.agent + '|' + key), done = !!(st && st.done);
     const doneMeta = done ? `완료 · ${escHtml(st.done_by || '')} · ${st.done_at ? timeLabel(st.done_at) : ''}` : '';
     const carriedRow = doneMap.get(r.agent + '|' + key);
@@ -669,7 +673,7 @@ function reportHtml(r) {
       : `<button class="btn ghost sm carry-btn" onclick="actCarry(this)" data-agent="${escHtml(r.agent)}" data-key="${escHtml(key)}" data-week="${escHtml(opts.week || '')}" data-to="${escHtml(opts.carryTo)}" data-title="${escHtml(x.title)}" data-owner="${escHtml(x.owner || '')}" data-why="${escHtml(x.why || '')}" data-since="${escHtml(x.since || '')}" data-rid="${escHtml(r.id)}"><i class="fa-solid fa-arrow-turn-down"></i> 이번 주로 가져오기</button>`) : '';
     return `<div class="act ${opts.past ? 'past' : ''} ${done ? 'done' : ''}" data-owner="${escHtml(x.owner || '')}">
       <label class="chk" title="완료 체크"><input type="checkbox" class="act-chk" ${done ? 'checked' : ''} data-key="${escHtml(key)}" data-agent="${escHtml(r.agent)}" data-week="${escHtml(opts.week || '')}" data-title="${escHtml(x.title)}" data-owner="${escHtml(x.owner || '')}"><span class="num">${i + 1}</span></label>
-      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner o-${escHtml(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}${x.source && x.source !== '오늘의 요약' ? `<span class="chip src">${escHtml(x.source.replace(' 담당', ''))} 제안</span>` : ''}${x.carried || x.status === 'carried' ? '<span class="chip src"><i class="fa-solid fa-arrow-turn-down"></i> 저번 주에서</span>' : ''}</div><div class="muted">${escHtml(x.why)}</div><div class="done-meta">${doneMeta}</div>${carryBtn}</div>
+      <div><div class="act-top"><b>${escHtml(x.title)}</b><span class="owner ${ownerCls(x.owner)}">${escHtml(x.owner || '')}</span>${x.status === 'new' ? '<span class="chip new">NEW</span>' : ''}${x.since ? `<span class="chip">${md(x.since)}부터</span>` : ''}${x.source && x.source !== '오늘의 요약' ? `<span class="chip src">${escHtml(x.source.replace(' 담당', ''))} 제안</span>` : ''}${x.carried || x.status === 'carried' ? '<span class="chip src"><i class="fa-solid fa-arrow-turn-down"></i> 저번 주에서</span>' : ''}</div><div class="muted">${escHtml(x.why)}</div><div class="done-meta">${doneMeta}</div>${carryBtn}</div>
     </div>`;
   };
   const hasWeek = Array.isArray(rp.week_actions) || Array.isArray(rp.week_highlights);
@@ -694,8 +698,8 @@ function reportHtml(r) {
       <div class="tbl-wrap"><table class="wf-table"><thead><tr><th></th>${days.map((dd, i) => `<th class="${dd === rp.week.end ? 'today' : ''} ${dd > rp.week.end ? 'future' : ''}">${DOW[i]}<br><span class="muted">${md(dd)}</span></th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
   })();
   const doneCount = weekActions.filter(x => { const st = doneMap.get(r.agent + '|' + actionKey(x)); return st && st.done; }).length;
-  const owners = [...new Set(weekActions.map(x => x.owner).filter(Boolean))];
-  const actFilterBar = owners.length > 1 ? `<div class="act-filter"><button class="chip-btn on" data-o="" onclick="actFilter(this)">전체 ${weekActions.length}</button>${owners.map(o => `<button class="chip-btn" data-o="${escHtml(o)}" onclick="actFilter(this)">${escHtml(o)} ${weekActions.filter(x => x.owner === o).length}</button>`).join('')}</div>` : '';
+  const owners = [...new Set(weekActions.map(x => ownerName(x.owner)).filter(Boolean))];
+  const actFilterBar = owners.length > 1 ? `<div class="act-filter"><button class="chip-btn on" data-o="" onclick="actFilter(this)">전체 ${weekActions.length}</button>${owners.map(o => `<button class="chip-btn" data-o="${escHtml(o)}" onclick="actFilter(this)">${escHtml(o)} ${weekActions.filter(x => ownerName(x.owner) === o).length}</button>`).join('')}</div>` : '';
   const progress = weekActions.length ? `<span class="prog"><b>${doneCount}/${weekActions.length}</b> 완료</span><div class="prog-bar"><i style="width:${Math.round(doneCount / weekActions.length * 100)}%"></i></div>` : '';
   const lwUndone = lw ? (lw.actions || []).filter(x => { const st = doneMap.get(r.agent + '|' + actionKey(x)); return !(st && st.done); }) : [];
   return head + `

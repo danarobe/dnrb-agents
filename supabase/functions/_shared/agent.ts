@@ -31,7 +31,7 @@ export type Row = Record<string, unknown>;
 // ── 날짜 (KST) ──
 export const seoulToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 // ── 직원 출근일 (2026-11-07, 사용자 "주말엔 직원만 쉬고 대표는 대부분 본다"): 토·일 + 근무 관리 시스템 공휴일 표(wm_holidays)는 직원이 쉰다.
-//   대표 할 일은 달력 날짜, 직원(광고팀·상품팀·CS팀) 할 일은 출근일로 센다.
+//   대표 할 일은 달력 날짜, 직원(광고팀·상품팀·물류/CS팀) 할 일은 출근일로 센다.
 export async function loadOffDays(from: string, to: string): Promise<Set<string>> {
   const r = await rest(`wm_holidays?date=gte.${from}&date=lte.${to}&select=date`);
   return new Set(r.ok ? ((await r.json()) as Row[]).map((x) => String(x.date).slice(0, 10)) : []);
@@ -211,7 +211,7 @@ export function leanFix(report: Row): Row {
   const one = (v: unknown, vals: string[], dflt: string) => { const s = String(v ?? "").trim(); return vals.find((x) => x === s) ?? vals.find((x) => s.includes(x)) ?? dflt; };
   const dates = (v: unknown) => Array.isArray(v) ? v.map(String) : String(v ?? "").split(/[,\s]+/).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
   const st = (v: unknown) => one(v, ["ongoing", "new"], "new");
-  const ow = (v: unknown) => one(v, OWNERS, "대표");
+  const ow = (v: unknown) => normOwner(v);
   const wk = (l: unknown) => ((l ?? []) as Row[]).map((x) => ({ ...x, dates: dates(x.dates), status: st(x.status) }));
   const isWarn = (x: Row) => /주의|warn/i.test(String(x.kind ?? ""));
   const strip = (l: Row[]) => l.map(({ kind: _k, ...rest }) => rest);
@@ -358,7 +358,14 @@ const item = (extra: Record<string, unknown> = {}, req: string[] = []) => ({
 });
 // lean(2026-10-18): 구조화 출력 문법을 줄인 모양 — 상품 전략 담당처럼 담당자 전용 표가 많아 '문법이 너무 크다'(400)에 걸리는 담당자용.
 //   enum(mood·owner·status)은 문자열로, 주간 항목의 dates(배열 안의 배열)는 쉼표로 이은 문자열로 받는다 → leanFix가 원래 모양으로 되돌려서 화면·다음 날 문맥은 그대로.
-const OWNERS = ["광고팀", "상품팀", "CS팀", "대표"];
+const OWNERS = ["광고팀", "상품팀", "물류/CS팀", "대표"];   // 2026-11-10 사용자 요청: 'CS팀' → '물류/CS팀'
+// 담당 이름을 정해진 4개로 맞춘다 — 옛 이름 'CS팀'·물류·배송·출고는 '물류/CS팀'
+export function normOwner(v: unknown): string {
+  const s = String(v ?? "").trim();
+  if (OWNERS.includes(s)) return s;
+  if (/물류|CS|배송|출고|포장/i.test(s)) return "물류/CS팀";
+  return OWNERS.find((x) => s.includes(x)) ?? "대표";
+}
 // 팀 할 일 종류 (2026-11-07) — 보드가 같은 일(종류+상품)을 합치고, 광고 착수·줄이기·상세 보강은 데이터로 완료를 자동 확인한다(agent-tasks)
 export const TASK_KINDS = ["광고 착수", "광고 증액", "광고 줄이기", "상세 보강", "노출·기획전", "CS·출고", "재고·소싱", "가격·혜택", "지킬 원칙", "기타"];
 export function reportSchema(opts: { highlights: string; warnings: string; actions: string; extra?: Record<string, unknown>; lean?: boolean; actionSource?: boolean }) {
@@ -474,7 +481,7 @@ export const COMMON_RULES = `
 - 모든 판단에는 숫자 근거를 붙입니다.
 - 금액은 '만 원' 단위로 반올림해 읽기 쉽게 씁니다 (12,345,678원 → 1,235만 원). 억 단위면 '1.2억 원'.
 - 확실하지 않은 원인은 "~로 보입니다", "확인 필요"처럼 추측임을 밝힙니다.
-- 액션은 당장 할 수 있는 구체적인 것. 담당(광고팀/상품팀/CS팀/대표)을 정합니다. 예산·가격·판매 중단 같은 큰 결정은 week_actions의 needs_ceo를 true로 둡니다(제목에 '대표 확인 후'를 쓰지 않습니다 — 직원 화면의 '대표 결정함'으로 가서 대표가 승인·보류합니다).
+- 액션은 당장 할 수 있는 구체적인 것. 담당(광고팀/상품팀/물류/CS팀/대표)을 정합니다. 출고·포장·배송·재고 실물·고객 응대는 물류/CS팀입니다. 예산·가격·판매 중단 같은 큰 결정은 week_actions의 needs_ceo를 true로 둡니다(제목에 '대표 확인 후'를 쓰지 않습니다 — 직원 화면의 '대표 결정함'으로 가서 대표가 승인·보류합니다).
 - 데이터가 비어 있거나(null) 수집 오류(errors)가 있으면 그 부분은 모른다고 쓰고, 있는 데이터로만 판단합니다.
 - 상품명은 데이터에 있는 그대로 씁니다. 없는 상품이나 숫자를 만들어내지 않습니다.
 - 응답은 지정된 JSON 형식으로만 씁니다.
@@ -485,7 +492,7 @@ export const COMMON_RULES = `
 - 주의 항목 중 이미 해소된 것은 week_warnings에서 뺍니다.
 - week_actions는 this_week.week_actions_so_far(이번 주 지금까지의 할 일, done = 사람이 완료 체크한 것)에서 done=false인 항목을 id·since 그대로 유지하고 오늘의 새 제안을 더합니다. carried=true인 항목은 대표가 저번 주에서 직접 가져온 것이니 반드시 유지합니다(id·since·title 그대로). **done=true인 항목은 완료된 것이니 반드시 뺍니다.** 지난 일이거나 의미가 없어진 것도 뺍니다. 새 항목의 id는 '기준일YYYYMMDD-순번'. 중요한 순으로 최대 6개.
 - week_actions 한 항목 = **상품 1개 × 할 일 1개**가 원칙입니다(직원이 하나씩 끝내고 체크할 수 있게). 여러 상품에 서로 다른 일을 하면 항목을 나눕니다. 같은 일을 여러 상품에 할 때만 products에 여러 개(최대 4). title에는 상품명을 빼고 할 일만 씁니다(예: '상세 상단에 실측표·기장 안내 추가'). kind·done_when·due·needs_ceo를 꼭 채웁니다. 늘 지킬 원칙(예: '순반품률 위험 상품 증액 금지')은 kind '지킬 원칙'.
-- **누가 언제 일하나**: 직원(광고팀·상품팀·CS팀)은 토·일·공휴일에 쉬고, 대표는 주말에도 대부분 봅니다. this_week.team_board.calendar(read_day = 이 보고서를 읽는 날, staff_off_days_next_10 = 직원이 쉬는 날)를 보고 due를 정합니다: 실제 마감(행사·할인 종료, 한파 등)이 없는 직원 할 일은 **직원 출근일**로, 마감이 쉬는 날에 있으면 그 날짜를 그대로 씁니다(보드가 쉬기 전날 직원에게 먼저 알리고, 주말엔 대표에게 올립니다). 쉬는 날을 기한으로 일부러 고르지 않습니다. 대표 할 일은 쉬는 날도 기한이 될 수 있습니다. days_open은 직원 일이면 출근일 기준이라 주말이 끼어도 늘지 않습니다.
+- **누가 언제 일하나**: 직원(광고팀·상품팀·물류/CS팀)은 토·일·공휴일에 쉬고, 대표는 주말에도 대부분 봅니다. this_week.team_board.calendar(read_day = 이 보고서를 읽는 날, staff_off_days_next_10 = 직원이 쉬는 날)를 보고 due를 정합니다: 실제 마감(행사·할인 종료, 한파 등)이 없는 직원 할 일은 **직원 출근일**로, 마감이 쉬는 날에 있으면 그 날짜를 그대로 씁니다(보드가 쉬기 전날 직원에게 먼저 알리고, 주말엔 대표에게 올립니다). 쉬는 날을 기한으로 일부러 고르지 않습니다. 대표 할 일은 쉬는 날도 기한이 될 수 있습니다. days_open은 직원 일이면 출근일 기준이라 주말이 끼어도 늘지 않습니다.
 - this_week.week_actions_so_far의 from_board=true 항목은 보드에 남아 있는 미완료(사람이 아직 안 끝냄 — 주가 바뀌어 이어받은 것 포함)입니다. 데이터상 여전히 필요하면 id·since 그대로 유지하고, 필요 없어졌으면 빼도 됩니다(보드가 '에이전트가 더는 제안하지 않음 · 확인 후 닫기'로 남겨 사람이 닫습니다).
 - this_week.team_board = 직원들이 보는 '오늘 할 일' 보드의 지금 상태입니다. open(진행 중, days_open = 처음 나온 뒤 며칠째) / done_7d(최근 7일에 끝난 일 — '데이터로 자동 확인'은 광고가 켜졌거나 상세가 바뀐 것을 코드가 확인한 것) / held(대표가 보류, ceo_note = 보류 이유).
   · 끝난 일(done_7d)은 다시 제안하지 않습니다. 같은 문제가 데이터에 다시 보이면 '완료 후에도 …'처럼 새 근거로 씁니다.
