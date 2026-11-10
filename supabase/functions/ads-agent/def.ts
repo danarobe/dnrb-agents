@@ -337,13 +337,13 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 광고 운
 6) 상품별 광고 운영 판단 (decisions, 중요한 순 최대 10 — MD/컨텐츠팀이 오늘 손댈 광고만): kind는 5가지만 — 힘주기(7일 ROAS 2↑·반품 낮음·마진 좋음·전략 '밀기'·광고 없는 급증 상품의 착수) / 증액 보류(반품 위험·취소율 높음·코디 구매 40%↑·주문율 하락·전략 '점검'·'보류') / 다시 켜기(ON 광고 0개인데 꺼진 광고가 있고 팔리는 상품 — paused_list의 광고 이름, "켜기 전 왜 껐는지 확인") / 줄이기(7일 ROAS 1 미만이 지출 10만↑) / 유지. product는 products[].name 그대로, reason 45자 이내·숫자 하나 이상. ad_7d가 null인 상품은 '광고 없음'이라 쓰지 말고 '광고 연결 확인 필요'. 반품 위험 상품은 힘주기 금지.
 
 용어: 반품 수치는 전부 **순반품률**(배송완료 대비 반품, 취소 제외)입니다 — "반품 22%"가 아니라 "순반품률 22%"라고 씁니다. 취소는 '취소율'로 따로.
-공통: headline = 오늘 광고 운영 한 줄 결론(숫자 1개). summary 2줄(계정 흐름 + 오늘 할 일 요약). highlights/warnings 각 3개 이내(치고 올라오는·하락·주의와 겹치지 않게 계정 단위 신호 위주). actions = MD/컨텐츠팀의 오늘 광고 할 일 3개(예산 변경은 '대표 확인 후'). 소재 제작이 필요한 상품은 광고 소재 담당에게 handoff, 상세 문제는 상세페이지 점검 담당에게 handoff.`;
+공통: headline = 오늘 광고 운영 한 줄 결론(숫자 1개). summary 2줄(계정 흐름 + 오늘 할 일 요약). highlights/warnings 각 3개 이내(치고 올라오는·하락·주의와 겹치지 않게 계정 단위 신호 위주). actions = MD/컨텐츠팀의 오늘 광고 할 일 3개(새 예산이 드는 착수·증액만 대표 승인 — week_actions needs_ceo true. 줄이기·기존 예산 안 다시 켜기는 승인 없이). 소재 제작이 필요한 상품은 광고 소재 담당에게 handoff, 상세 문제는 상세페이지 점검 담당에게 handoff.`;
 
 const SCHEMA = reportSchema({
   lean: true,
   highlights: "계정 단위 좋은 신호(ROAS 개선·자연 매출 비율 상승·CPA 하락 등). 최대 3개",
   warnings: "계정 단위 나쁜 신호(광고비 늘었는데 ROAS 하락·CPC 상승·전환 급감 등). 최대 3개",
-  actions: "MD/컨텐츠팀이 오늘 할 광고 일 3개. 예산 변경은 '대표 확인 후'를 붙인다",
+  actions: "MD/컨텐츠팀이 오늘 할 광고 일 3개. 새 예산이 드는 착수·증액만 '대표 승인 필요'(줄이기·기존 예산 안 다시 켜기는 바로)",
   extra: {
     flow_note: { type: "string", description: "최근 14일 흐름 해석 2줄 이내(광고비·ROAS·자연 매출 비율 방향, 숫자 2~3개)" },
     tests: { type: "array", description: "신규 테스트 상품별 판정. data.tests 상품마다 1개", items: { type: "object", properties: { product: { type: "string", description: "tests[].product 그대로" }, verdict: { type: "string", description: "다음 중 하나 그대로: 확대, 계속, 지켜보기, 중단" }, note: { type: "string", description: "45자 이내, 숫자 근거" } }, required: ["product", "verdict", "note"], additionalProperties: false } },

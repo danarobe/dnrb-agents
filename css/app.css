@@ -788,3 +788,30 @@ span.tk-check { cursor: default; color: #9ca3af; }
 .tk-leave b { color: #0f766e; }
 .tk-leave-d.today { font-weight: 700; color: #0f766e; }
 .tk-leave em { font-style: normal; font-weight: 800; color: #b45309; }
+/* 오늘 할 일 4차 (2026-11-10): 종류 칩 · 결정함 종류 묶음 · 승인 방식/예산 · 광고 상태 · 꺼진 광고 · 제작안 */
+.tk-kinds { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 0 0 8px; }
+.tk-kinds-l { font-size: .72rem; color: var(--muted); font-weight: 700; margin-right: 2px; }
+.kchip { border: 1px solid #e0e7ff; background: #fff; color: #4338ca; border-radius: 999px; padding: 3px 10px; font-size: .74rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.kchip:hover { background: #eef2ff; }
+.kchip.on { background: #4338ca; border-color: #4338ca; color: #fff; }
+.tk-grp { grid-column: 1 / -1; font-size: .8rem; font-weight: 800; color: #92400e; margin: 4px 0 -2px; display: flex; align-items: center; gap: 6px; }
+.tk-grp:first-child { margin-top: 0; }
+.tk-dec { display: flex; flex-wrap: wrap; gap: 6px 10px; background: #fffbeb; border: 1px dashed #fcd34d; border-radius: 10px; padding: 8px 10px; font-size: .78rem; }
+.tk-dec label { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tk-dec label > span { color: #92400e; font-weight: 700; white-space: nowrap; }
+.tk-dec select, .tk-dec input { font: inherit; border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px 6px; background: #fff; min-width: 0; }
+.tk-dec select { max-width: 190px; }
+.tk-dec input { width: 110px; }
+.tk-dec em { font-style: normal; color: var(--muted); }
+.tk-ad { font-size: .76rem; color: #1e3a8a; background: #eff6ff; border-radius: 8px; padding: 4px 8px; line-height: 1.5; }
+.tk-ad .fa-meta { color: #2563eb; }
+.tk-free { color: #0e7490; background: #cffafe; border-radius: 999px; padding: 1px 8px; font-weight: 700; white-space: nowrap; }
+.tk-paused { font-size: .78rem; }
+.tk-paused summary { cursor: pointer; color: #4f46e5; font-weight: 700; list-style: none; }
+.tk-paused summary::-webkit-details-marker { display: none; }
+.tk-paused[open] { background: #f9fafb; border-radius: 8px; padding: 6px 8px; }
+.tk-paused ul { margin: 4px 0; padding-left: 18px; }
+.tk-paused li { margin: 2px 0; word-break: break-all; }
+.tk-adname { color: var(--ink-2); }
+.tk-links { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 520px) { .tk-dec label { flex: 1 1 100%; } .tk-dec select { max-width: none; flex: 1; } .tk-dec input { flex: 1; width: auto; } }
