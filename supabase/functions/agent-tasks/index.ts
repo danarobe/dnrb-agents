@@ -108,7 +108,55 @@ function nameIndex(reports: Row[], rows: Row[]): Map<string, number> {
   for (const [k, v] of m) if (v < 0) m.delete(k);
   return m;
 }
-function collectItems(reports: Row[], cal: TeamCal, names: Map<string, number>): Map<string, Item> {
+// 한 문장에 여러 상품의 일이 섞인 제목(예: '우디 나그랑 니트 광고 착수·헤이 나그랑 원피스 광고 다시 켜기')을 상품별로 나눈다(2026-11-10 사용자 지적).
+//   '·'/','로 끊은 조각마다 언급된 상품을 찾고(상품명 앞 두 단어), 상품이 없는 조각은 앞 상품 것으로 본다. 그 상품 조각에서 상품명 단어를 빼면 할 일만 남는다
+//   (상품명은 카드에 굵게 따로 나오므로). 조각이 상품명뿐이면('르 플리츠 니트 스커트·레이브 … 광고 착수') 마지막 조각의 할 일을 쓴다.
+const nameWords = (n: unknown) => paKey(String(n ?? "")).split(/\s+/).filter(Boolean);
+const mentionKey = (ws: string[]) => (ws.length >= 2 ? ws.slice(0, 2).join("") : (ws[0]?.length >= 3 ? ws[0] : ""));
+// 제목엔 줄임말도 온다('슬리즈 R1') — 첫 단어가 3자 이상이면 그것만으로도 언급으로 본다
+const mentionKeys = (ws: string[]) => [mentionKey(ws), ...(ws.length >= 2 && ws[0].length >= 3 ? [ws[0]] : [])].filter(Boolean);
+const findMention = (flat: string, ws: string[]) => { let at = -1; for (const k of mentionKeys(ws)) { const i = flat.indexOf(k); if (i >= 0 && (at < 0 || i < at)) at = i; } return at; };
+// 제목 앞머리의 내 상품명은 뺀다(카드에 상품명이 굵게 따로 나옴) — 다 빼면 비면 그대로
+function dropOwnName(title: string, target: string): string {
+  const ws = nameWords(target), ks = mentionKeys(ws);
+  if (!ks.length || !ks.some((k) => sq(title).startsWith(k))) return title;
+  const words = title.split(/\s+/), set = new Set(ws); let j = 0;
+  while (j < words.length && set.has(words[j])) j++;
+  const rest = words.slice(j).join(" ").trim();
+  return rest.length >= 2 ? rest : title;
+}
+function splitTitle(title: string, target: string, known: string[][]): string {
+  const segs = title.split(/\s*[·,]\s*/).filter(Boolean);
+  if (segs.length < 2) return dropOwnName(title, target);
+  const tw = nameWords(target), tk = mentionKey(tw);
+  if (!tk) return title;
+  const cands = [tw, ...known.filter((w) => mentionKey(w) && mentionKey(w) !== tk)];
+  const owner: (string[] | null)[] = []; let cur: string[] | null = null;
+  for (const sg of segs) {
+    const flat = sq(sg);
+    let hit: string[] | null = null, at = 1e9;
+    for (const w of cands) { const i = findMention(flat, w); if (i >= 0 && i < at) { at = i; hit = w; } }
+    if (hit) cur = hit;
+    owner.push(cur);
+  }
+  if (new Set(owner.filter(Boolean).map((w) => mentionKey(w!))).size < 2) return title;   // 다른 상품이 안 섞였으면 그대로
+  const strip = (sg: string, w: string[]) => {
+    const words = sg.split(/\s+/), set = new Set(w);
+    const ks = mentionKeys(w); let i = 0;
+    for (; i < words.length; i++) { const rest = sq(words.slice(i).join("")); if (ks.some((k) => rest.startsWith(k))) break; }
+    if (i >= words.length) return sg.trim();
+    let j = i; while (j < words.length && set.has(words[j])) j++;
+    return [...words.slice(0, i), ...words.slice(j)].join(" ").trim();
+  };
+  const mine = segs.map((sg, i) => ({ sg, w: owner[i] })).filter((x) => x.w && mentionKey(x.w) === tk).map((x) => strip(x.sg, tw)).filter(Boolean);
+  // 내 조각에 동사가 없으면(예: '슬리즈 R1 착용컷·더블 빅카라 R1 예산 축소 검토') 마지막 조각의 할 일을 함께 쓴다
+  const lw = owner[owner.length - 1];
+  const tail = (lw ? strip(segs[segs.length - 1], lw) : "").split(/\s+/).filter((x, i, arr) => !(i < arr.length - 1 && /^(?:[A-Za-z]{1,3}\d+[\w-]*|test)$/i.test(x) && arr.slice(0, i).every((y) => /^(?:[A-Za-z]{1,3}\d+[\w-]*|test)$/i.test(y)))).join(" ");
+  const ACT = /착수|켜|끄|중단|확대|증액|축소|줄이|줄여|검토|보강|추가|이동|정리|교체|시작|유지|금지|점검|배치|노출|할인|올리|내리|확인/;
+  if (mine.length) { const m = mine.join("·"); return ACT.test(m) || !tail ? m : `${m} ${tail}`; }
+  return tail || title;
+}
+function collectItems(reports: Row[], cal: TeamCal, names: Map<string, number>, known: string[][]): Map<string, Item> {
   const items = new Map<string, Item>();
   const adsInfo = adsInfoFromReports(reports);
   for (const rep of reports) {
@@ -135,12 +183,14 @@ function collectItems(reports: Row[], cal: TeamCal, names: Map<string, number>):
       const src = { agent, report_date: D, action_id: String(a.id ?? ""), why: String(a.why ?? "").slice(0, 160) };
       const targets = refs.length ? refs.map((r) => ({ no: Number(r.no) > 0 ? Number(r.no) : (names.get(sq(paKey(String(r.name ?? "")))) ?? null), name: String(r.name ?? "") })) : [{ no: null, name: "" }];
       for (const t of targets) {
+        const ttl = t.name ? splitTitle(title, t.name, known) : title;
+        const rawT = t.name ? splitTitle(rawTitle, t.name, known) : rawTitle;
         // 상품이 없는 일은 담당자가 날마다 유지하는 할 일 id로 묶는다(문장이 조금 바뀌어도 같은 일 — 대표 승인이 날아가지 않게)
         const key = t.name || t.no ? `${kind}|${t.no ?? "n:" + sq(paKey(t.name))}` : (a.id ? `${kind}|a:${agent}:${String(a.id)}` : `${kind}|t:${sq(title).slice(0, 30)}`);
-        const re = isReenable(kind, t.no, rawTitle, t.no ? adsInfo.get(t.no) : undefined);
+        const re = isReenable(kind, t.no, rawT, t.no ? adsInfo.get(t.no) : undefined);
         const free = re || NO_CEO_KINDS.has(kind);
         const cur = items.get(key);
-        if (!cur) { items.set(key, { key, ...base, needs_ceo: free ? false : base.needs_ceo, reenable: re, product_no: t.no, product_name: t.name || null, sources: [src] }); continue; }
+        if (!cur) { items.set(key, { key, ...base, title: ttl, needs_ceo: free ? false : base.needs_ceo, reenable: re, product_no: t.no, product_name: t.name || null, sources: [src] }); continue; }
         cur.sources.push(src);
         cur.reenable = cur.reenable || re;
         cur.needs_ceo = cur.reenable || NO_CEO_KINDS.has(kind) ? false : (cur.needs_ceo || base.needs_ceo);
@@ -180,7 +230,8 @@ async function sync(auto: boolean) {
   const lr = await rest(`team_tasks?or=(status.in.(open,held),done_at.gte.${addDays(D, -7)}T00:00:00Z)&select=*`);
   const existing: Row[] = lr.ok ? await lr.json() : [];
   const names = nameIndex(reports, existing);
-  const items = collectItems(reports, cal, names);
+  const known = [...new Set([...existing.map((t) => String(t.product_name ?? "")), ...reports.flatMap((r) => (Array.isArray(((r.data ?? {}) as Row).products) ? (((r.data as Row).products) as Row[]).map((p) => String(p.name ?? "")) : []))].filter(Boolean))].map(nameWords).filter((w) => w.length);
+  const items = collectItems(reports, cal, names, known);
   const live = new Map(existing.filter((t) => ["open", "held"].includes(String(t.status))).map((t) => [String(t.task_key), t]));
   const recentDone = new Set(existing.filter((t) => t.status === "done" || t.status === "closed").map((t) => String(t.task_key)));
   const now = new Date().toISOString();
@@ -190,7 +241,7 @@ async function sync(auto: boolean) {
     if (cur) {
       const old = (cur.sources ?? []) as Row[];
       const merged = [...it.sources, ...old.filter((o) => !it.sources.some((n) => n.agent === o.agent && n.action_id === o.action_id))].slice(0, 10);
-      const patch: Row = { last_seen: it.last_seen > String(cur.last_seen) ? it.last_seen : cur.last_seen, sources: merged, why: it.why || cur.why, done_when: it.done_when || cur.done_when, stale_since: null, updated_at: now };
+      const patch: Row = { last_seen: it.last_seen > String(cur.last_seen) ? it.last_seen : cur.last_seen, sources: merged, why: it.why || cur.why, title: it.title || cur.title, done_when: it.done_when || cur.done_when, stale_since: null, updated_at: now };
       // 다시 켜기 판정은 한 번 나면 유지(광고를 켜면 ON 수가 바뀌어 판정이 풀리므로) · 승인 필요 없는 일은 결정함에서 바로 팀으로
       const reen = it.reenable || !!cur.reenable;
       if (reen !== !!cur.reenable) patch.reenable = reen;
