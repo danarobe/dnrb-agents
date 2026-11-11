@@ -273,10 +273,13 @@ export function resolveProductNos(report: Row, data: Row): Row {
     if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1); return; }
     const o = v as Row;
     const no = o.product_no ?? o.no, nm = o.name ?? o.product_name;
-    if (nm && Number(no) > 0) pairs.push({ name: String(nm), no: Number(no) });
+    if (nm && Number(no) > 0) pairs.push({ name: String(nm), no: Number(no), qty: Number(o.qty_14d ?? o.qty_7d ?? o.order_qty ?? o.qty ?? 0) || 0 });
     for (const x of Object.values(o)) walk(x, depth + 1);
   };
   walk(data, 0);
+  // 같은 이름의 상품이 둘 이상이면(옛 등록·재등록, 예: 텀블 워밍 밴딩 팬츠 2527·181) 판매가 많은 쪽을 먼저 — findByName은 앞의 것을 고른다(2026-11-11)
+  const bestQty = new Map<number, number>(); for (const p of pairs) bestQty.set(Number(p.no), Math.max(bestQty.get(Number(p.no)) ?? 0, Number(p.qty)));
+  pairs.sort((a, b) => (bestQty.get(Number(b.no)) ?? 0) - (bestQty.get(Number(a.no)) ?? 0));
   // 마지막 수단: Claude가 상품명의 한 어절을 빼고 쓴 경우('새틴 블라썸 스트링 스커트' → '새틴 블라썸 스커트', 실사례) — 핵심명 2글자 조각의 겹침 비율 75%↑, 후보가 하나일 때만
   const bigrams = (t: string) => { const c = t.replace(/\s+/g, ""); const out = new Set<string>(); for (let i = 0; i + 1 < c.length; i++) out.add(c.slice(i, i + 2)); return out; };
   const strip = (t: unknown) => String(t ?? "").normalize("NFC").replace(/\([^)]*\)|\[[^\]]*\]/g, " ").toLowerCase();
@@ -520,7 +523,7 @@ export const COMMON_RULES = `
 - 모든 판단에는 숫자 근거를 붙입니다.
 - 금액은 '만 원' 단위로 반올림해 읽기 쉽게 씁니다 (12,345,678원 → 1,235만 원). 억 단위면 '1.2억 원'.
 - 확실하지 않은 원인은 "~로 보입니다", "확인 필요"처럼 추측임을 밝힙니다.
-- 액션은 당장 할 수 있는 구체적인 것. 담당(MD/컨텐츠팀 · 물류/CS팀 · 대표)을 정합니다. 광고·상품·상세·소재·가격 일은 MD/컨텐츠팀입니다. 출고·포장·배송·재고 실물·고객 응대는 물류/CS팀입니다. 새 예산이 드는 일(광고 착수·광고 증액)·가격·판매 중단 같은 큰 결정은 week_actions의 needs_ceo를 true로 둡니다(제목에 '대표 확인 후'를 쓰지 않습니다 — 직원 화면의 '대표 결정함'으로 가서 대표가 승인·보류합니다). **광고 줄이기(끄기·예산 줄이기)와 꺼진 광고를 하루 총예산을 늘리지 않고 다시 켜는 일은 needs_ceo false** — 담당 팀이 바로 합니다(2026-11-10 대표 결정). 다시 켜기는 광고 착수와 섞지 말고 제목을 '꺼진 광고 다시 켜기(기존 예산 안에서)'처럼 따로 씁니다.
+- 액션은 당장 할 수 있는 구체적인 것. 담당(MD/컨텐츠팀 · 물류/CS팀 · 대표)을 정합니다. 광고·상품·상세·소재·가격 일은 MD/컨텐츠팀입니다. 출고·포장·배송·재고 실물·고객 응대는 물류/CS팀입니다. 새 예산이 드는 일(광고 착수·광고 증액)·가격·판매 중단 같은 큰 결정은 week_actions의 needs_ceo를 true로 둡니다(제목에 '대표 확인 후'를 쓰지 않습니다 — 직원 화면의 '대표 결정함'으로 가서 대표가 승인·보류합니다). **광고 줄이기(끄기·예산 줄이기)와 꺼진 광고를 하루 총예산을 늘리지 않고 다시 켜는 일은 needs_ceo false** — 담당 팀이 바로 합니다(2026-11-10 대표 결정). 다시 켜기는 새 착수와 섞지 말고 상품별로 따로, kind는 '광고 착수', 제목은 '꺼진 광고 다시 켜기(기존 예산 안에서)'처럼 씁니다.
 - 데이터가 비어 있거나(null) 수집 오류(errors)가 있으면 그 부분은 모른다고 쓰고, 있는 데이터로만 판단합니다.
 - 상품명은 데이터에 있는 그대로 씁니다. 없는 상품이나 숫자를 만들어내지 않습니다.
 - 응답은 지정된 JSON 형식으로만 씁니다.

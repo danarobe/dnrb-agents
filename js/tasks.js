@@ -19,6 +19,7 @@
    - 광고 일 카드: 지금 광고 상태(ON·꺼짐·7일 광고비·ROAS), '꺼진 광고 n개 보기', 광고 착수는 '제작안 만들기/보기'.
    - 광고 줄이기·기존 예산 안 다시 켜기는 결정함을 거치지 않고 바로 팀 할 일(서버가 needs_ceo=false).
    5차(2026-11-11, 사용자 "각 상품의 최근 7일 일평균 판매량도"): 상품 카드마다 '최근 7일 하루 평균 n개 · 앞 7일 대비 ▲▼% · 조회' (sales_7d, sync가 채움).
+   같은 날 사용자 "광고 착수 상품 중 5일 이상 ON됐던 광고·지금 활성 광고 수": 광고 착수 카드에 기존 광고 이력(ad_hist — 최근 90일 Meta 지출 있던 날 5일↑ 광고 수, 켜짐/꺼짐, 꺼진 것들 ROAS, 목록).
 ────────────────────────────────────────── */
 const tasksState = { data: null, team: '', kind: '', ceoKind: '' };
 const TEAMS = ['MD/컨텐츠팀', '물류/CS팀', '대표'];   // 2026-11-10 'CS팀' → '물류/CS팀', 같은 날 광고팀·상품팀 → 'MD/컨텐츠팀'(역할 통합)
@@ -109,6 +110,19 @@ function salesLine(t) {
   const vw = s.views_prev7d > 0 ? ` · 조회 ${Number(s.views_7d).toLocaleString()} (앞 7일 ${Number(s.views_prev7d).toLocaleString()})` : '';
   return `<div class="tk-sales${cls}" title="${escHtml(md2(tdAdd(s.through, -6)))}~${escHtml(md2(s.through))} 카페24 주문 수량"><i class="fa-solid fa-cart-shopping"></i> 최근 7일 하루 평균 <b>${f(d)}개</b> <span class="muted">(7일 ${Number(s.qty_7d)}개)</span>${chg}${vw}</div>`;
 }
+// ── 광고 착수 카드: 기존 광고 이력(2026-11-11 사용자 요청 — 새로 만들지, 기존 소재를 켤지) ──
+//   서버 sync가 최근 90일 Meta 지출 기록으로 '5일 넘게 돈 광고'(검증된 소재)와 지금 활성 광고 수를 센다(ad_hist).
+function histBox(t) {
+  const h = t.ad_hist; if (!h || t.kind !== '광고 착수' || !t.product_no) return '';
+  const pd = h.proven_days || 5;
+  const roas = h.proven_off_roas != null ? ` · 꺼진 것들 ROAS ${h.proven_off_roas}${h.proven_off_spend ? `(광고비 ${manwon(h.proven_off_spend)})` : ''}` : '';
+  const head = `<i class="fa-solid fa-clapperboard"></i> 기존 광고(최근 ${h.days || 90}일): ${pd}일 넘게 돈 광고 <b>${h.proven}개</b>${h.proven ? ` <span class="muted">(지금 켜짐 ${h.proven_on} · 꺼짐 ${h.proven_off}${roas})</span>` : ''}${h.short ? ` · ${pd - 1}일 이하로 돈 광고 ${h.short}개` : ''} · 지금 활성 광고 <b>${h.active}개</b>`;
+  const hint = h.proven_off > 0 ? `<span class="tk-hint on"><i class="fa-solid fa-power-off"></i> ${pd}일 넘게 돈 꺼진 소재 ${h.proven_off}개 — 다시 켜기부터 볼 만해요</span>`
+    : h.proven === 0 && h.short === 0 && h.active === 0 ? `<span class="tk-hint new"><i class="fa-solid fa-wand-magic-sparkles"></i> 기존 광고 기록 없음 — 새 소재가 필요해요</span>`
+    : h.proven === 0 ? `<span class="tk-hint new"><i class="fa-solid fa-wand-magic-sparkles"></i> ${pd}일 넘게 돈 소재 없음 — 짧게만 테스트됐어요</span>` : '';
+  const list = (h.list || []).map(a => `<li><span class="tk-adname">${escHtml(a.name)}</span> <span class="muted">${a.on ? '<b class="tk-on">켜짐</b>' : escHtml(PAUSE_LABEL[a.status] || '꺼짐')} · ${Number(a.days)}일 돎 · 광고비 ${manwon(a.spend)} · ROAS ${a.roas ?? '—'} · 구매 ${Number(a.purchases || 0)}건${a.last ? ` · 마지막 ${escHtml(String(a.last).slice(5).replace('-', '/'))}` : ''}</span></li>`).join('');
+  return `<div class="tk-hist"><div>${head}</div>${hint ? `<div>${hint}</div>` : ''}${list ? `<details class="tk-paused"><summary><i class="fa-solid fa-list"></i> ${pd}일 넘게 돈 광고 보기</summary><ul>${list}</ul>${h.proven > (h.list || []).length ? `<div class="muted small">광고비 큰 순 ${(h.list || []).length}개만</div>` : ''}<div class="muted small">'돈 날' = Meta 지출이 있던 날(${md2(tdAdd(h.through, -((h.days || 90) - 1)))}~${md2(h.through)})</div></details>` : ''}</div>`;
+}
 // ── 광고 일 카드: 지금 광고 상태 · 꺼진 광고 · 제작안 ──
 const adInfo = t => String(t.kind).startsWith('광고') && t.product_no ? (tasksState.data?.ad_info || {})[t.product_no] : null;
 function adLine(t) {
@@ -146,7 +160,7 @@ function taskRow(t, today, cal, extraChip = '') {
       ${taskHead(t)}
       <div class="tk-meta">${extraChip}${kindChip(t)}${reenableChip(t)}${approved ? `<span class="tk-ok"><i class="fa-solid fa-stamp"></i> 대표 승인${detailLabel(t.decision_detail) ? ` · ${escHtml(detailLabel(t.decision_detail))}` : ''}${t.decision_note ? ` · ${escHtml(t.decision_note)}` : ''}</span>` : ''}${dueBadge(t, today, cal)}${ageBadge(t, today, cal)}<span class="tk-team">${escHtml(t.owner)}</span>${srcChips(t)}</div>
       ${approved && t.decision_detail && !Number(t.decision_detail.daily_won) && ['광고 착수', '광고 증액'].includes(t.kind) ? '<div class="tk-why"><i class="fa-solid fa-coins"></i> 예산은 담당 판단으로 승인됐어요</div>' : ''}
-      ${salesLine(t)}${adLine(t)}
+      ${salesLine(t)}${histBox(t)}${adLine(t)}
       ${when ? `<div class="tk-when"><i class="fa-regular fa-flag"></i> 완료 기준: ${escHtml(when)}${auto ? ` <span class="tk-auto"><i class="fa-solid fa-robot"></i> ${auto} 저절로 완료</span>` : ''}</div>` : (auto ? `<div class="tk-when"><span class="tk-auto"><i class="fa-solid fa-robot"></i> ${auto} 저절로 완료</span></div>` : '')}
       ${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}
       ${pausedBox(t)}${creativeBtn(t)}
@@ -163,7 +177,7 @@ function ceoCard(t, today, cal) {
   return `<div class="tk-ceo" data-id="${t.id}">
     ${taskHead(t)}
     <div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span>${ageBadge(t, today, cal)}${srcChips(t)}</div>
-    ${salesLine(t)}${adLine(t)}
+    ${salesLine(t)}${histBox(t)}${adLine(t)}
     ${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}
     ${t.decision_note ? `<div class="tk-why"><i class="fa-solid fa-clock-rotate-left"></i> ${escHtml(t.decision_note)}</div>` : ''}
     ${pausedBox(t)}

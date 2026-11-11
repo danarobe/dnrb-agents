@@ -167,7 +167,8 @@ function collectItems(reports: Row[], cal: TeamCal, names: Map<string, number>, 
       // 요약 담당이 동료 할 일을 옮겨 적은 것(상품 없음)은 원래 담당 것으로 충분 — 문장만 달라 중복으로 보이므로 뺀다
       if (agent === "sales" && a.source && String(a.source) !== label && !refs.length) continue;
       const rawTitle = String(a.title ?? "");
-      const kind = TASK_KINDS.includes(String(a.kind)) ? String(a.kind) : guessKind(rawTitle);
+      let kind = TASK_KINDS.includes(String(a.kind)) ? String(a.kind) : guessKind(rawTitle);
+      if (kind === "기타" && /광고|소재/.test(rawTitle) && /다시\s*켜|재가동/.test(rawTitle)) kind = "광고 착수";   // 다시 켜기를 '기타'로 쓴 경우(2026-11-11)
       const title = cleanTitle(rawTitle);
       if (!title) continue;
       const owner = normOwner(a.owner);   // 옛 보고서의 'CS팀'도 '물류/CS팀'으로
@@ -217,6 +218,55 @@ async function adCounter(reports: Row[], extra: { no: number; name: string }[]) 
   for (const a of ads) { const best = paPickBest(paNorm(String(a.ad_name ?? "")), prods, groups); if (best) count.set(best.no, (count.get(best.no) ?? 0) + 1); }
   return (no: number) => count.get(no) ?? 0;
 }
+// 광고 착수 상품의 기존 광고 이력(2026-11-11 사용자 요청): 지금 켜진 광고 + 최근 90일 안에 꺼진 광고를 상품에 맞추고(광고명 → 상품, 자동 완료와 같은 매칭),
+//   광고마다 최근 90일 '지출이 있던 날' 수를 센다 → 5일 이상 돈 광고(검증된 소재)가 몇 개고 그중 지금 꺼진 게 몇 개인지.
+const PROVEN_DAYS = 5, HIST_DAYS = 90;
+async function fillAdHistory(tasks: Row[], reports: Row[], now: string): Promise<Row> {
+  const ts = tasks.filter((t) => ["open", "held"].includes(String(t.status)) && t.kind === "광고 착수" && Number(t.product_no) > 0);
+  if (!ts.length) return { skipped: "광고 착수 상품 없음" };
+  const [act, pau] = await Promise.all([callFn("meta-ads", { action: "activeads" }).catch(() => null), callFn("meta-ads", { action: "pausedads" }).catch(() => null)]);
+  const actAds = (act as Row | null)?.ads, pauAds = (pau as Row | null)?.ads;
+  if (!Array.isArray(actAds) || !Array.isArray(pauAds)) return { skipped: "Meta 광고 목록을 못 받음 — 다음 동기화 때 다시" };
+  // 매칭 후보 = 광고 운영·상품 전략 보고서 상품 + 보드 상품 전부(비슷한 이름의 다른 상품 광고가 엉뚱하게 붙지 않게 넓게)
+  //   같은 이름의 상품이 둘이면(예: 텀블 워밍 밴딩 팬츠 2527·옛 181) 판매가 압도적인 쪽에 붙인다 — 판매량(보고서 14일·보드 7일)을 같이 넣어야 '우세' 판정이 된다
+  const pool = new Map<number, string>(), qty = new Map<number, number>();
+  const seeQty = (no: number, q: unknown) => { const n = Number(q) || 0; if (n > (qty.get(no) ?? 0)) qty.set(no, n); };
+  for (const r of reports) { const d = (r.data ?? {}) as Row; for (const arr of [d.products, ((d.new_arrivals ?? {}) as Row).matrix, d.surge_top10]) if (Array.isArray(arr)) for (const p of arr as Row[]) { const no = Number(p.product_no); if (!(no > 0) || !p.name) continue; if (!pool.has(no)) pool.set(no, String(p.name)); seeQty(no, p.qty_14d ?? p.qty_7d); } }
+  for (const t of tasks) { const no = Number(t.product_no); if (!(no > 0) || !t.product_name) continue; if (!pool.has(no)) pool.set(no, String(t.product_name)); seeQty(no, ((t.sales_7d ?? {}) as Row).qty_7d); }
+  const prods: PaProd[] = [...pool.entries()].map(([no, name]) => ({ no, name, key: paNorm(paKey(name)), ver: paVerTok(name) ? paNorm(paVerTok(name)!) : null, qty: qty.get(no) ?? 0 })).filter((p) => p.key.length >= 3);
+  const groups = paGroups(prods);
+  const want = new Set(ts.map((t) => Number(t.product_no)));
+  const byNo = new Map<number, { id: string; name: string; on: boolean; status: string }[]>();
+  const add = (a: Row, on: boolean) => { const best = paPickBest(paNorm(String(a.ad_name ?? "")), prods, groups); if (!best || !want.has(best.no) || !a.ad_id) return; (byNo.get(best.no) ?? byNo.set(best.no, []).get(best.no)!).push({ id: String(a.ad_id), name: String(a.ad_name ?? "").normalize("NFC"), on, status: on ? "ACTIVE" : String(a.effective_status ?? "") }); };
+  for (const a of actAds as Row[]) add(a, true);
+  for (const a of pauAds as Row[]) add(a, false);
+  const y = addDays(seoulToday(), -1), since = addDays(y, -(HIST_DAYS - 1));
+  const allIds = [...new Set([...byNo.values()].flat().map((a) => a.id))];
+  const hist = new Map<string, Row>();
+  for (let i = 0; i < allIds.length; i += 60) {
+    const h = await callFn("meta-ads", { action: "adhistory", ad_ids: allIds.slice(i, i + 60).join(","), start_date: since, end_date: y }).catch(() => null);
+    if (!h || !Array.isArray((h as Row).ads)) return { skipped: "Meta 광고 이력을 못 받음 — 다음 동기화 때 다시" };
+    for (const a of (h as Row).ads as Row[]) hist.set(String(a.ad_id), a);
+  }
+  let patched = 0;
+  for (const t of ts) {
+    const ads = (byNo.get(Number(t.product_no)) ?? []).map((a) => { const h = hist.get(a.id); return { ...a, days: Number(h?.days ?? 0), spend: Number(h?.spend ?? 0), value: Number(h?.purchase_value ?? 0), purchases: Number(h?.purchases ?? 0), last: h?.last ?? null }; });
+    const proven = ads.filter((a) => a.days >= PROVEN_DAYS), off = proven.filter((a) => !a.on);
+    const sp = off.reduce((x, a) => x + a.spend, 0), val = off.reduce((x, a) => x + a.value, 0);
+    const v = {
+      through: y, days: HIST_DAYS, proven_days: PROVEN_DAYS,
+      active: ads.filter((a) => a.on).length, proven: proven.length, proven_on: proven.length - off.length, proven_off: off.length,
+      proven_off_roas: sp > 0 ? Math.round(val / sp * 100) / 100 : null, proven_off_spend: Math.round(sp),
+      short: ads.filter((a) => a.days > 0 && a.days < PROVEN_DAYS).length, never: ads.filter((a) => a.days === 0).length,
+      list: [...proven].sort((a, b) => b.spend - a.spend).slice(0, 6).map((a) => ({ name: a.name.slice(0, 80), on: a.on, status: a.status, days: a.days, spend: Math.round(a.spend), roas: a.spend > 0 ? Math.round(a.value / a.spend * 100) / 100 : null, purchases: a.purchases, last: a.last })),
+    };
+    const cur = t.ad_hist ? JSON.stringify({ ...(t.ad_hist as Row) }) : "";
+    if (cur === JSON.stringify(v)) continue;
+    await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ ad_hist: v, updated_at: now }) });
+    patched++;
+  }
+  return { through: y, products: ts.length, ads: allIds.length, patched };
+}
 const descHash = async (no: number): Promise<string | null> => {
   const pd = await callFn("cafe24-analytics", { action: "productdesc", product_no: String(no) }).catch(() => null);
   return pd && (pd as Row).desc_hash ? String((pd as Row).desc_hash) : null;
@@ -232,10 +282,23 @@ async function sync(auto: boolean) {
   const names = nameIndex(reports, existing);
   const known = [...new Set([...existing.map((t) => String(t.product_name ?? "")), ...reports.flatMap((r) => (Array.isArray(((r.data ?? {}) as Row).products) ? (((r.data as Row).products) as Row[]).map((p) => String(p.name ?? "")) : []))].filter(Boolean))].map(nameWords).filter((w) => w.length);
   const items = collectItems(reports, cal, names, known);
+  // 이름이 똑같은 다른 상품 번호(옛 등록·재등록, 예: 텀블 워밍 밴딩 팬츠 2527·181)로 같은 일이 두 줄 생기면 판매가 많은 쪽만 남긴다(2026-11-11)
+  const sold = new Map<number, number>();
+  for (const t of existing) { const q = Number(((t.sales_7d ?? {}) as Row).qty_7d); if (Number(t.product_no) > 0 && q >= 0) sold.set(Number(t.product_no), Math.max(sold.get(Number(t.product_no)) ?? 0, q)); }
+  for (const r of reports) { const d = (r.data ?? {}) as Row; for (const arr of [d.products, ((d.new_arrivals ?? {}) as Row).matrix]) if (Array.isArray(arr)) for (const p of arr as Row[]) { const no = Number(p.product_no); if (no > 0 && !sold.has(no) && p.qty_14d != null) sold.set(no, Number(p.qty_14d) / 2); } }
+  const dupKeys = new Set<string>();
+  const byKN = new Map<string, Item[]>();
+  for (const it of items.values()) if (it.product_no && it.product_name) { const k = `${it.kind}|${sq(paKey(it.product_name))}`; (byKN.get(k) ?? byKN.set(k, []).get(k)!).push(it); }
+  for (const g of byKN.values()) {
+    if (new Set(g.map((x) => x.product_no)).size < 2) continue;
+    const best = [...g].sort((a, b) => (sold.get(b.product_no!) ?? -1) - (sold.get(a.product_no!) ?? -1))[0];
+    if (!(sold.get(best.product_no!) ?? 0)) continue;   // 판매로 가를 수 없으면 둘 다 둔다
+    for (const x of g) if (x.product_no !== best.product_no) { items.delete(x.key); dupKeys.add(x.key); }
+  }
   const live = new Map(existing.filter((t) => ["open", "held"].includes(String(t.status))).map((t) => [String(t.task_key), t]));
   const recentDone = new Set(existing.filter((t) => t.status === "done" || t.status === "closed").map((t) => String(t.task_key)));
   const now = new Date().toISOString();
-  const stat = { sales: null as Row | null, inserted: 0, updated: 0, stale: 0, dropped: 0, reopened: 0, auto_done: 0, detail_runs: [] as Row[], notified: null as Row | null };
+  const stat = { ad_hist: null as Row | null, sales: null as Row | null, inserted: 0, updated: 0, stale: 0, dropped: 0, reopened: 0, auto_done: 0, detail_runs: [] as Row[], notified: null as Row | null };
   for (const it of items.values()) {
     const cur = live.get(it.key);
     if (cur) {
@@ -270,6 +333,7 @@ async function sync(auto: boolean) {
     // 이름만 있던 옛 줄인데 이제 같은 상품 번호 줄이 있으면 중복 — 결정 전이면 내린다
     const nk = String(t.task_key).match(/^(.+)\|n:(.+)$/);
     if (nk && t.status === "open" && !t.decision) { const no = names.get(nk[2]); if (no && items.has(`${nk[1]}|${no}`)) { await drop(t); continue; } }
+    if (dupKeys.has(String(t.task_key)) && t.status === "open" && !t.decision) { await drop(t); continue; }   // 같은 이름의 덜 팔리는 상품 줄
     // 대표 승인 없이 하는 종류(광고 줄이기)는 예전에 승인 대기로 들어온 것도 팀으로
     if (t.status === "open" && !t.decision && t.needs_ceo && NO_CEO_KINDS.has(String(t.kind))) { await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ needs_ceo: false, updated_at: now }) }); t.needs_ceo = false; }
     const proposed = items.has(String(t.task_key));
@@ -307,6 +371,7 @@ async function sync(auto: boolean) {
     if (evidence) stat.auto_done++;
   }
   // 상품별 최근 7일 판매(2026-11-11 사용자 요청 "일평균 판매량 — 광고 착수 결정에 도움"): 어제까지 꽉 찬 7일 vs 그 앞 7일, 카페24 상품별 집계(summary — 상품 전략 담당과 같은 숫자)
+  stat.ad_hist = await fillAdHistory(tasks, reports, now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 200) }));
   stat.sales = await fillSales(tasks.filter((t) => ["open", "held"].includes(String(t.status)) && Number(t.product_no) > 0), now);
   // 상세 점검 자동 실행 (아침 cron만)
   if (auto) { stat.detail_runs = await autoDetail(D); stat.notified = await morningNotify(cal); }

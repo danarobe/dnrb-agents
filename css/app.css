@@ -822,3 +822,11 @@ span.tk-check { cursor: default; color: #9ca3af; }
 .tk-chg.down { color: #b91c1c; }
 .tk-chg.up { color: #047857; }
 .tk-sales.down { background: #fef2f2; }
+/* 같은 날: 광고 착수 카드 기존 광고 이력 */
+.tk-hist { font-size: .76rem; color: #374151; background: #f5f3ff; border-radius: 8px; padding: 5px 8px; line-height: 1.55; display: flex; flex-direction: column; gap: 3px; }
+.tk-hist .fa-clapperboard { color: #6d28d9; }
+.tk-hist b { color: var(--ink); }
+.tk-hint { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 1px 8px; font-weight: 700; }
+.tk-hint.on { color: #0e7490; background: #cffafe; }
+.tk-hint.new { color: #b45309; background: #fef3c7; }
+.tk-on { color: #047857; }
