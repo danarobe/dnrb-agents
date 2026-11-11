@@ -359,6 +359,9 @@ async function sync(auto: boolean) {
     // 대표 승인 없이 하는 종류(광고 줄이기)는 예전에 승인 대기로 들어온 것도 팀으로
     if (t.status === "open" && !t.decision && t.needs_ceo && NO_CEO_KINDS.has(String(t.kind))) { await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ needs_ceo: false, updated_at: now }) }); t.needs_ceo = false; }
     const proposed = items.has(String(t.task_key));
+    // 옛 형식 줄(보고서 할 일 번호 a: · 상품 이름 n: — 상품별 줄로 바뀌기 전 11/2~11/10)은 더 제안되지 않은 지 2일이면 내린다.
+    //   제목에 상품 여러 개가 섞여 있고, 같은 일은 이미 상품별 줄로 따로 있다(2026-11-11 사용자 "여전히 상품 2개가 합쳐져 있어").
+    if (t.status === "open" && !proposed && /\|[an]:/.test(String(t.task_key)) && t.stale_since && String(t.stale_since) <= addDays(D, -2)) { await drop(t); continue; }
     if (t.status === "open" && !proposed) {
       if (!t.stale_since) { await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ stale_since: D, updated_at: now }) }); stat.stale++; t.stale_since = D; }
       continue;
