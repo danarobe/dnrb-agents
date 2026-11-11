@@ -96,6 +96,19 @@ const nameCore = (s: unknown) => {
   for (;;) { const m = t.match(/^(.*?)\s*(?:\([^)]*\)|\[[^\]]*\])\s*$/); if (m) t = m[1]; else break; }
   return t.replace(/\s+/g, "").toLowerCase();
 };
+// 앞 괄호 꼬리표(판 구분) — '[Best] (2사이즈) 클레르 블라우스'와 '(기모ver.) 클레르 블라우스'는 핵심명이 같아도 다른 상품(2026-11-11 사용자 지적:
+//   요약 담당의 [Best] 클레르 상세 보강이 기모ver 1668에 붙음). 꾸밈 꼬리표(Best·NEW 등)는 빼고 비교한다.
+const DECOR_TAG = /^(best|new|sale|hot|md|md추천|추천|당일발송|당일출고|단독|한정|재입고|1\+1)$/;
+export const leadTags = (s: unknown): string[] => {
+  let t = String(s ?? "").normalize("NFC").trim(); const out: string[] = [];
+  for (;;) { const m = t.match(/^\s*(?:\(([^)]*)\)|\[([^\]]*)\])\s*(.*)$/); if (!m) break; const g = String(m[1] ?? m[2] ?? "").replace(/\s+/g, "").toLowerCase(); if (g && !DECOR_TAG.test(g)) out.push(g); t = m[3]; }
+  return out;
+};
+// 둘 다 앞 꼬리표가 있는데 한쪽이 다른 쪽에 포함되지 않으면 다른 판(기모ver vs 2사이즈) — 한쪽이 꼬리표를 생략한 경우('르 플리츠 니트 스커트')는 같은 상품으로 본다
+export const sameVariant = (a: unknown, b: unknown) => {
+  const x = leadTags(a), y = leadTags(b); if (!x.length || !y.length) return true;
+  return x.every((t) => y.includes(t)) || y.every((t) => x.includes(t));
+};
 export function findByName<T extends Row>(rows: T[], name: unknown, field = "name"): T | null {
   const raw = String(name ?? "");
   const exact = rows.find((r) => String(r[field]) === raw); if (exact) return exact;
@@ -103,7 +116,7 @@ export function findByName<T extends Row>(rows: T[], name: unknown, field = "nam
   const same = rows.filter((r) => nameNorm(r[field]) === n); if (same.length) return same[0];
   const pre = rows.filter((r) => { const x = nameNorm(r[field]); return x.startsWith(n) || n.startsWith(x); }); if (pre.length === 1) return pre[0];
   const c = nameCore(raw); if (c.length < 3) return null;
-  const core = rows.filter((r) => nameCore(r[field]) === c); if (core.length === 1) return core[0];
+  const core = rows.filter((r) => nameCore(r[field]) === c && sameVariant(raw, r[field])); if (core.length === 1) return core[0];
   return pre.length ? pre.sort((a, b) => Math.abs(nameNorm(a[field]).length - n.length) - Math.abs(nameNorm(b[field]).length - n.length))[0] : null;
 }
 
@@ -285,7 +298,7 @@ export function resolveProductNos(report: Row, data: Row): Row {
   const strip = (t: unknown) => String(t ?? "").normalize("NFC").replace(/\([^)]*\)|\[[^\]]*\]/g, " ").toLowerCase();
   const loose = (name: string): Row | null => {
     const q = bigrams(strip(name)); if (q.size < 4) return null;
-    const scored = pairs.map((p) => { const c = bigrams(strip(p.name)); let hit = 0; for (const g of q) if (c.has(g)) hit++; return { p, score: hit / q.size }; }).filter((x) => x.score >= 0.75).sort((a, b) => b.score - a.score);
+    const scored = pairs.filter((p) => sameVariant(name, p.name)).map((p) => { const c = bigrams(strip(p.name)); let hit = 0; for (const g of q) if (c.has(g)) hit++; return { p, score: hit / q.size }; }).filter((x) => x.score >= 0.75).sort((a, b) => b.score - a.score);
     if (!scored.length) return null;
     const top = scored[0]; const sameNo = scored.filter((x) => x.score === top.score).every((x) => x.p.no === top.p.no);
     return sameNo ? top.p : null;

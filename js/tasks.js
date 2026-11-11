@@ -42,7 +42,8 @@ const detailLabel = d => { if (!d) return ''; const p = []; if (d.method && d.me
 const PAUSE_LABEL = { PAUSED: '광고 꺼짐', ADSET_PAUSED: '광고세트 꺼짐', CAMPAIGN_PAUSED: '캠페인 꺼짐' };
 const WD = '일월화수목금토';
 const isCeo = () => SESSION?.role === 'admin';
-const tkName = t => t.product_name ? (typeof tcCore === 'function' ? tcCore(t.product_name) : t.product_name) : '';
+// 상품명은 앞 괄호(판 구분: '(기모ver.)'·'[Best] (2사이즈)')를 살린다 — 클레르 블라우스처럼 같은 이름의 다른 판이 많아 헷갈림(2026-11-11 사용자 지적). 끝의 '(n colors)'·브랜드 꼬리만 뗌
+const tkName = t => { if (!t.product_name) return ''; const s = String(t.product_name).replace(/\s*[-–—|]\s*(danarobe|dana|다나로브|다나)\s*$/i, '').replace(/\s*\([^)]*colors?[^)]*\)\s*$/i, '').trim(); return s || t.product_name; };
 const isStaffTask = t => t.owner !== '대표';
 const pendingCeo = t => t.status === 'open' && t.needs_ceo && !t.decision;
 const kstDate = iso => iso ? new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' }) : '';

@@ -20,7 +20,7 @@
 //     ④ 광고 줄이기 전부 + 꺼진 광고를 기존 예산 안에서 다시 켜기(reenable)는 대표 승인 없이 담당 팀으로 바로
 // ═══════════════════════════════════════════════
 import { handleOptions, json, verifyAuthToken } from "../_shared/util.ts";
-import { addDays, addWorkdays, AGENT_LABELS, normOwner, callFn, canUseAgents, isCronRequest, isOffDay, isStaffOwner, loadTeamCal, nextWorkday, notifyUsers, prevWorkday, rest, Row, seoulToday, TASK_KINDS, teamOfRole, TeamCal } from "../_shared/agent.ts";
+import { addDays, addWorkdays, AGENT_LABELS, leadTags, normOwner, callFn, canUseAgents, isCronRequest, isOffDay, isStaffOwner, loadTeamCal, nextWorkday, notifyUsers, prevWorkday, rest, Row, seoulToday, TASK_KINDS, teamOfRole, TeamCal } from "../_shared/agent.ts";
 import { paGroups, paKey, paNorm, PaProd, paPickBest, paVerTok } from "../strategy-agent/def.ts";
 
 const SOURCES = ["returns", "strategy", "ads", "sales"];   // 같은 일이 여럿이면 앞 담당(원래 제안자)의 문장을 쓴다 — 요약은 옮겨 적은 것이라 마지막
@@ -97,9 +97,12 @@ async function latestReports(): Promise<Row[]> {
 
 // 상품 번호 없이 이름만 온 할 일은 다른 보고서·데이터에서 같은 이름의 번호를 찾아 붙인다 — 같은 상품이 '번호 있는 줄'·'이름만 있는 줄'로 두 번 생기지 않게(2026-11-10)
 //   같은 이름에 번호가 둘 이상이면(재등록 상품 등) 붙이지 않는다(-1) — 엉뚱한 상품으로 합치지 않게
+//   키 두 가지: 판 꼬리표까지 넣은 키(vk — '(기모ver.) 클레르'와 '[Best] (2사이즈) 클레르'를 가름) + 꼬리표 없는 키(같은 핵심명에 번호가 둘이면 안 씀)
+const vk = (name: unknown) => { const k = sq(paKey(String(name ?? ""))); const tg = leadTags(name).sort().join(","); return tg ? `${k}|${tg}` : k; };
 function nameIndex(reports: Row[], rows: Row[]): Map<string, number> {
   const m = new Map<string, number>();
-  const add = (name: unknown, no: unknown) => { const k = sq(paKey(String(name ?? ""))); const n = Number(no); if (k.length < 3 || !(n > 0)) return; const cur = m.get(k); if (cur == null) m.set(k, n); else if (cur !== n) m.set(k, -1); };
+  const put = (k: string, n: number) => { const cur = m.get(k); if (cur == null) m.set(k, n); else if (cur !== n) m.set(k, -1); };
+  const add = (name: unknown, no: unknown) => { const k = sq(paKey(String(name ?? ""))); const n = Number(no); if (k.length < 3 || !(n > 0)) return; put(k, n); const v = vk(name); if (v !== k) put(v, n); };
   for (const t of rows) add(t.product_name, t.product_no);
   for (const rep of reports) {
     const arr = (v: unknown) => (Array.isArray(v) ? v : []) as Row[];
@@ -183,7 +186,7 @@ function collectItems(reports: Row[], cal: TeamCal, names: Map<string, number>, 
         first_seen: /^\d{4}-\d{2}-\d{2}$/.test(String(a.since ?? "")) ? String(a.since) : D, last_seen: D,
       };
       const src = { agent, report_date: D, action_id: String(a.id ?? ""), why: String(a.why ?? "").slice(0, 160) };
-      const targets = refs.length ? refs.map((r) => ({ no: Number(r.no) > 0 ? Number(r.no) : (names.get(sq(paKey(String(r.name ?? "")))) ?? null), name: String(r.name ?? "") })) : [{ no: null, name: "" }];
+      const targets = refs.length ? refs.map((r) => ({ no: Number(r.no) > 0 ? Number(r.no) : (names.get(vk(r.name)) ?? names.get(sq(paKey(String(r.name ?? "")))) ?? null), name: String(r.name ?? "") })) : [{ no: null, name: "" }];
       for (const t of targets) {
         const ttl = t.name ? splitTitle(title, t.name, known) : title;
         const rawT = t.name ? splitTitle(rawTitle, t.name, known) : rawTitle;
@@ -289,7 +292,7 @@ async function sync(auto: boolean) {
   for (const r of reports) { const d = (r.data ?? {}) as Row; for (const arr of [d.products, ((d.new_arrivals ?? {}) as Row).matrix]) if (Array.isArray(arr)) for (const p of arr as Row[]) { const no = Number(p.product_no); if (no > 0 && !sold.has(no) && p.qty_14d != null) sold.set(no, Number(p.qty_14d) / 2); } }
   const dupKeys = new Set<string>();
   const byKN = new Map<string, Item[]>();
-  for (const it of items.values()) if (it.product_no && it.product_name) { const k = `${it.kind}|${sq(paKey(it.product_name))}`; (byKN.get(k) ?? byKN.set(k, []).get(k)!).push(it); }
+  for (const it of items.values()) if (it.product_no && it.product_name) { const k = `${it.kind}|${vk(it.product_name)}`; (byKN.get(k) ?? byKN.set(k, []).get(k)!).push(it); }
   for (const g of byKN.values()) {
     if (new Set(g.map((x) => x.product_no)).size < 2) continue;
     const best = [...g].sort((a, b) => (sold.get(b.product_no!) ?? -1) - (sold.get(a.product_no!) ?? -1))[0];
