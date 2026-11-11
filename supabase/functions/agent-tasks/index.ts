@@ -278,7 +278,7 @@ async function sync(auto: boolean) {
   if (!reports.length) return { ok: true, note: "최근 보고서 없음" };
   const D = reports.map((r) => String(r.report_date)).sort().pop()!;
   const cal = await loadTeamCal(addDays(D, -40), addDays(D, 40));
-  const lr = await rest(`team_tasks?or=(status.in.(open,held),done_at.gte.${addDays(D, -7)}T00:00:00Z)&select=*`);
+  const lr = await rest(`team_tasks?or=(status.in.(open,held),done_at.gte.${addDays(D, -7)}T00:00:00Z,and(done_how.eq.skip,skip_until.gte.${addDays(D, -7)}))&select=*`);
   const existing: Row[] = lr.ok ? await lr.json() : [];
   const names = nameIndex(reports, existing);
   const known = [...new Set([...existing.map((t) => String(t.product_name ?? "")), ...reports.flatMap((r) => (Array.isArray(((r.data ?? {}) as Row).products) ? (((r.data as Row).products) as Row[]).map((p) => String(p.name ?? "")) : []))].filter(Boolean))].map(nameWords).filter((w) => w.length);
@@ -297,9 +297,23 @@ async function sync(auto: boolean) {
     for (const x of g) if (x.product_no !== best.product_no) { items.delete(x.key); dupKeys.add(x.key); }
   }
   const live = new Map(existing.filter((t) => ["open", "held"].includes(String(t.status))).map((t) => [String(t.task_key), t]));
-  const recentDone = new Set(existing.filter((t) => t.status === "done" || t.status === "closed").map((t) => String(t.task_key)));
+  const recentDone = new Set(existing.filter((t) => (t.status === "done" || t.status === "closed") && t.done_how !== "skip" && String(t.done_at ?? "") >= addDays(D, -7)).map((t) => String(t.task_key)));
+  // 미진행(2026-11-11 사용자 "시즌 지남으로 미진행해도 몇 주·몇 달 지나거나 판매가 급등하면 다시 제안"): 같은 일은 skip_until 전까지 다시 만들지 않는다.
+  //   단 그 사이 에이전트가 다시 제안했고 판매가 급등했으면(아래 skipWait) 바로 다시. 기간이 끝난 뒤 다시 제안되면 사연(reopen_note)을 달고 새로.
+  const skips = new Map<string, Row>();
+  for (const t of existing) if (t.status === "closed" && t.done_how === "skip") { const k = String(t.task_key), o = skips.get(k); if (!o || String(t.done_at) > String(o.done_at)) skips.set(k, t); }
+  const skipWait: { it: Item; sk: Row }[] = [];
+  const skipLabel = (sk: Row) => `${String(sk.done_at ?? "").slice(5, 10).replace("-", "/")} 미진행(${String(sk.skip_reason ?? "").slice(0, 30)})`;
   const now = new Date().toISOString();
-  const stat = { ad_hist: null as Row | null, sales: null as Row | null, inserted: 0, updated: 0, stale: 0, dropped: 0, reopened: 0, auto_done: 0, detail_runs: [] as Row[], notified: null as Row | null };
+  const stat = { ad_hist: null as Row | null, sales: null as Row | null, inserted: 0, updated: 0, stale: 0, dropped: 0, reopened: 0, skip_reopened: 0, auto_done: 0, detail_runs: [] as Row[], notified: null as Row | null };
+  const insertItem = async (it: Item, reopen_note: string | null) => {
+    const ins = await rest("team_tasks", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({
+      task_key: it.key, kind: it.kind, title: it.title, product_no: it.product_no, product_name: it.product_name, owner: it.owner, why: it.why, done_when: it.done_when,
+      due: it.due, due_source: it.due_source, needs_ceo: it.needs_ceo, reenable: it.reenable, sources: it.sources, first_seen: it.first_seen, last_seen: it.last_seen,
+      ...(reopen_note ? { reopen_note: reopen_note.slice(0, 200) } : {}),
+    }) });
+    if (ins.ok) stat.inserted++;   // 동시에 두 번 돌면 같은 키는 고유 색인이 막는다(409) — 무시
+  };
   for (const it of items.values()) {
     const cur = live.get(it.key);
     if (cur) {
@@ -316,13 +330,20 @@ async function sync(auto: boolean) {
       stat.updated++;
       continue;
     }
-    if (recentDone.has(it.key)) continue;   // 최근 7일 안에 끝난 일 — 에이전트가 하루 늦게 빼는 경우가 있어 다시 열지 않는다
     if (it.last_seen < addDays(D, -1)) continue;   // 오래된 보고서에만 있는 일은 새로 만들지 않음
-    const ins = await rest("team_tasks", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({
-      task_key: it.key, kind: it.kind, title: it.title, product_no: it.product_no, product_name: it.product_name, owner: it.owner, why: it.why, done_when: it.done_when,
-      due: it.due, due_source: it.due_source, needs_ceo: it.needs_ceo, reenable: it.reenable, sources: it.sources, first_seen: it.first_seen, last_seen: it.last_seen,
-    }) });
-    if (ins.ok) stat.inserted++;   // 동시에 두 번 돌면 같은 키는 고유 색인이 막는다(409) — 무시
+    const sk = skips.get(it.key);
+    if (sk && D < String(sk.skip_until ?? "")) { skipWait.push({ it, sk }); continue; }   // 미진행 기간 중 — 판매 급등이면 아래에서 다시
+    if (!sk && recentDone.has(it.key)) continue;   // 최근 7일 안에 끝난 일 — 에이전트가 하루 늦게 빼는 경우가 있어 다시 열지 않는다
+    await insertItem(it, sk ? `${skipLabel(sk)} — 기간이 끝나 다시 제안` : null);
+  }
+  // 미진행 기간 중인데 에이전트가 다시 제안한 일: 최근 7일 판매가 미진행할 때의 2배 이상이고 하루 2개↑ 늘었으면 다시 연다
+  if (skipWait.length) {
+    const q7 = await qty7Map();
+    for (const { it, sk } of skipWait) {
+      const no = Number(it.product_no ?? sk.product_no); if (!(no > 0) || !q7) continue;
+      const now7 = q7.get(no) ?? 0, was7 = Number(sk.skip_qty7 ?? 0);
+      if (now7 >= was7 * 2 && now7 - was7 >= 14) { await insertItem(it, `${skipLabel(sk)} — 판매 급등(하루 ${(was7 / 7).toFixed(1)}→${(now7 / 7).toFixed(1)}개)으로 다시 제안`); stat.skip_reopened++; }
+    }
   }
   // 담당자들의 최신 보고서 어디에도 없는 진행 중 일 → 내리지 않고 stale_since(에이전트가 더는 제안 안 함)만 찍는다 — 휴일·주말에 사람이 못 본 채 사라지지 않게(2026-11-07).
   //   사람이 완료·닫기 하거나 데이터로 자동 완료될 때까지 보드에 남는다. 다시 제안되면 stale이 풀린다(위 update).
@@ -379,6 +400,13 @@ async function sync(auto: boolean) {
   return { ok: true, report_date: D, reports: reports.map((r) => `${r.agent} ${r.report_date}`), items: items.size, ...stat };
 }
 
+// 상품별 최근 7일(어제까지) 판매 수량 — 미진행 일의 판매 급등 판정용. 못 받으면 null(판정 안 함)
+async function qty7Map(): Promise<Map<number, number> | null> {
+  const y = addDays(seoulToday(), -1);
+  const a = await callFn("cafe24-analytics", { action: "summary", start_date: addDays(y, -6), end_date: y }).catch(() => null);
+  const rows = (a as Row | null)?.rows;
+  return Array.isArray(rows) ? new Map((rows as Row[]).map((r) => [Number(r.product_no), Number(r.order_qty) || 0])) : null;
+}
 async function fillSales(tasks: Row[], now: string): Promise<Row> {
   if (!tasks.length) return { skipped: "상품 할 일 없음" };
   const y = addDays(seoulToday(), -1);
@@ -534,7 +562,7 @@ Deno.serve(async (req) => {
     }
     if (action === "list") {
       const D = seoulToday();
-      const r = await rest(`team_tasks?or=(status.in.(open,held),done_at.gte.${addDays(D, -7)}T00:00:00Z,and(status.eq.dropped,updated_at.gte.${addDays(D, -3)}T00:00:00Z))&select=*&order=due.asc,first_seen.asc&limit=300`);
+      const r = await rest(`team_tasks?or=(status.in.(open,held),done_at.gte.${addDays(D, -7)}T00:00:00Z,and(status.eq.dropped,updated_at.gte.${addDays(D, -3)}T00:00:00Z),and(done_how.eq.skip,skip_until.gt.${D}))&select=*&order=due.asc,first_seen.asc&limit=300`);
       if (!r.ok) return json({ error: `불러오기 실패 ${r.status}` }, 500);
       const cal = await loadTeamCal(addDays(D, -40), addDays(D, 40));
       const holidays = [...cal.holidays];   // 공휴일만 — 토·일은 화면이 계산
@@ -586,7 +614,7 @@ Deno.serve(async (req) => {
     const CONFLICT = "지금 상태에서는 바꿀 수 없어요(대표 승인 전이거나 이미 바뀐 할 일) — 새로고침해 주세요";
     const patch = async (b: Row, cond = "") => { const row = await upd(b, cond); return row ? json({ ok: true, task: row }) : json({ error: CONFLICT }, 409); };
     if (action === "done") {
-      if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null, skip_reason: null }, "&status=in.(done,closed)");
+      if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null, skip_reason: null, skip_until: null, skip_qty7: null }, "&status=in.(done,closed)");
       // 관리자(대표)는 승인 대기 일도 직접 처리할 수 있다('내가 처리함' — 직접 했으면 승인한 셈). 직원은 승인 필요 없거나 승인된 일만.
       return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null },
         me?.role === "admin" ? "&status=eq.open" : "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
@@ -602,7 +630,11 @@ Deno.serve(async (req) => {
     if (action === "skip") {
       const reason = String(body.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
       if (reason.length < 2) return json({ error: "미진행 이유를 적어 주세요" }, 400);
-      return await patch({ status: "closed", done_how: "skip", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null, skip_reason: reason },
+      // 다시 제안될 수 있는 날(2026-11-11): 시즌 90일 · 효과 의문·그 외 30일 · 재고 14일 · 더 급한 일 7일. 그 사이 판매 급등이면 바로(sync)
+      const days = /시즌|계절|날씨|추워|더워|철 지/.test(reason) ? 90 : /재고|품절|입고/.test(reason) ? 14 : /급함|급해|우선|바빠|바쁨|여유/.test(reason) ? 7 : 30;
+      const cr = await rest(`team_tasks?id=eq.${id}&select=sales_7d`);
+      const q7 = Number((((cr.ok ? ((await cr.json()) as Row[])[0] : null)?.sales_7d ?? {}) as Row).qty_7d);
+      return await patch({ status: "closed", done_how: "skip", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null, skip_reason: reason, skip_until: addDays(seoulToday(), days), skip_qty7: Number.isFinite(q7) ? q7 : null },
         me?.role === "admin" ? "&status=eq.open" : "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
     }
     if (action === "close") {   // '필요 없음'으로 닫기 — 에이전트가 더는 제안 안 하는 일, 주말 마감 '넘기기'

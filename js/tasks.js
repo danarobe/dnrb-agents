@@ -22,6 +22,7 @@
    6차(2026-11-11, 사용자 "팀 작업보드 메뉴 + 진행 중 단계"): 메뉴를 #decide 대표 결정함 / #board 팀 작업보드로 나눔.
      보드 = 팀 현황 카드(할 일·진행 중·기한 지남·7일 완료, 누르면 그 팀만) + 칸 3개(할 일 → 진행 중 → 완료 7일). '▶ 시작' = started_at(서버 start).
    7차(2026-11-11, 사용자): 승인 방식 이름 '소재 공급 필요'·'담당 부서 판단' / 할 일·진행 중 카드에 '미진행'(이유 필수 → closed·done_how skip·skip_reason, 결정함에 접힌 목록)
+     / 미진행은 이유별로 쉬는 기간(skip_until — 시즌 90일·재고 14일·더 급한 일 7일·그 외 30일), 그 사이 판매 급등이면 다시(서버 sync, reopen_note 칩)
      / 상세 보강 카드의 '자세히&권장방안' — 제목·근거의 사유(사이즈·기장·색상·원단·취소)로 고칠 방법 + 상세 점검 담당 결과(detail_review, 있으면).
    같은 날 사용자 "광고 착수 상품 중 5일 이상 ON됐던 광고·지금 활성 광고 수": 광고 착수 카드에 기존 광고 이력(ad_hist — 최근 90일 Meta 지출 있던 날 5일↑ 광고 수, 켜짐/꺼짐, 꺼진 것들 ROAS, 목록).
 ────────────────────────────────────────── */
@@ -203,6 +204,7 @@ function taskRow(t, today, cal, extraChip = '') {
     <button class="tk-check" onclick="taskDone('${t.id}', this)" title="완료로 표시"><i class="fa-solid fa-check"></i></button>
     <div class="tk-main">
       ${taskHead(t)}
+      ${reopenLine(t)}
       ${doing ? `<div class="tk-doing"><i class="fa-solid fa-person-running"></i> 진행 중${t.started_by ? ` · ${escHtml(t.started_by)}` : ''} · ${md2(kstDate(t.started_at))}부터</div>` : ''}
       <div class="tk-meta">${extraChip}${kindChip(t)}${freeChip(t)}${approved ? `<span class="tk-ok"><i class="fa-solid fa-stamp"></i> 승인${dl ? ` · ${escHtml(dl)}` : ''}</span>` : ''}${dueBadge(t, today, cal)}${ageBadge(t, today, cal)}${AUTO_KIND[t.kind] ? '<span class="tk-auto" title="데이터로 확인되면 저절로 완료"><i class="fa-solid fa-robot"></i> 자동 완료</span>' : ''}</div>
       ${statCells(t)}${adviceChip(t)}${whyLine(t)}
@@ -212,10 +214,12 @@ function taskRow(t, today, cal, extraChip = '') {
     </div>
   </div>`;
 }
+// 미진행했던 일이 기간이 끝났거나 판매 급등으로 다시 올라온 경우 그 사연
+const reopenLine = t => t.reopen_note ? `<div class="tk-reopen"><i class="fa-solid fa-rotate-left"></i> ${escHtml(t.reopen_note)}</div>` : '';
 // 미진행(2026-11-11 사용자 "할 일에 '미진행' 버튼 + 이유 기입"): 누르면 카드 안에 이유 칸(빠른 선택 + 직접 쓰기)
 const SKIP_QUICK = ['재고 부족', '시즌 지남', '효과 없을 것 같음', '다른 일이 더 급함'];
 const skipForm = t => `<div class="tk-skip" hidden>
-    <div class="tk-skip-h"><i class="fa-solid fa-ban"></i> 왜 진행하지 않나요? <span class="muted">에이전트가 다음 보고서에서 참고해요</span></div>
+    <div class="tk-skip-h"><i class="fa-solid fa-ban"></i> 왜 진행하지 않나요? <span class="muted">이유별로 쉬었다가 다시 검토해요(시즌 90일 · 재고 14일 · 더 급한 일 7일 · 그 외 30일) · 그 사이 판매가 급등하면 바로 다시 올라와요</span></div>
     <div class="tk-skip-q">${SKIP_QUICK.map(r => `<button type="button" class="kchip" onclick="taskSkipPick(this)">${escHtml(r)}</button>`).join('')}</div>
     <div class="tk-skip-f"><input type="text" maxlength="200" placeholder="미진행 이유" aria-label="미진행 이유" onkeydown="if(event.key==='Enter'&&!event.isComposing)this.nextElementSibling.click()"><button class="btn sm primary" onclick="taskSkip('${t.id}', this)">미진행으로 닫기</button><button class="linkish" onclick="this.closest('.tk-skip').hidden=true">취소</button></div>
   </div>`;
@@ -227,7 +231,7 @@ function ceoCard(t, today, cal) {
       <label><input class="tk-b" type="number" inputmode="decimal" min="0" step="0.5" placeholder="${t.kind === '광고 증액' ? '늘린 뒤 하루' : '하루 예산'}" aria-label="하루 예산(만원)"><em>만원</em></label>
     </div>` : '';
   return `<div class="tk-ceo${t.stale_since ? ' stale' : ''}" data-id="${t.id}">
-    ${taskHead(t)}
+    ${taskHead(t)}${reopenLine(t)}
     <div class="tk-meta">${kindChip(t)}${ageBadge(t, today, cal)}${t.stale_since ? '<span class="tk-stale-chip" title="에이전트가 더는 제안하지 않아요 — 필요 없으면 닫기">제안 끝남</span>' : ''}</div>
     ${statCells(t)}${adviceChip(t)}${whyLine(t)}
     ${form}
@@ -332,7 +336,7 @@ function drawDecide(m, d) {
       ${ceoAll.length ? `${kindChips(ceoAll, ck, 'tasksCeoKind')}<div class="tk-ceo-grid">${cards || '<div class="muted">이 종류는 결정할 일이 없어요</div>'}</div>` : '<div class="muted tk-empty">결정할 일이 없어요</div>'}
     </div>
     ${held.length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 보류한 일 ${held.length}개 <span class="muted small">7일 뒤 다시 결정함으로</span></summary><div class="box">${held.map(t => `<div class="tk-row done"><span class="tk-check"><i class="fa-solid fa-pause"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-meta">${kindChip(t)}<span class="tk-doneby">${escHtml(t.decided_by || '')} · ${timeLabel(t.decided_at)}${t.decision_note ? ` · ${escHtml(t.decision_note)}` : ''}</span>${isCeo() ? `<button class="linkish" onclick="taskDecide('${t.id}','undo',this)">되돌리기</button>` : ''}</div></div></div>`).join('')}</div></details>` : ''}
-    ${skipped.length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> <i class="fa-solid fa-ban" style="color:#9a3412;"></i> 팀이 미진행한 일 ${skipped.length}개 <span class="muted small">최근 7일 · 이유 확인</span></summary><div class="box">${skipped.map(t => `<div class="tk-row done"><span class="tk-check"><i class="fa-solid fa-ban"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-skip-r"><b>이유</b> ${escHtml(t.skip_reason || '')}</div><div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span><span class="tk-doneby">${escHtml(t.done_by || '')} · ${timeLabel(t.done_at)}</span><button class="linkish" onclick="taskUndo('${t.id}', this)">다시 할 일로</button></div></div></div>`).join('')}</div></details>` : ''}`;
+    ${skipped.length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> <i class="fa-solid fa-ban" style="color:#9a3412;"></i> 팀이 미진행한 일 ${skipped.length}개 <span class="muted small">쉬는 기간이 끝나거나 판매가 급등하면 다시 올라와요</span></summary><div class="box">${skipped.map(t => `<div class="tk-row done"><span class="tk-check"><i class="fa-solid fa-ban"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-skip-r"><b>이유</b> ${escHtml(t.skip_reason || '')}${t.skip_until ? ` · ${md2(t.skip_until)}까지 쉼` : ''}</div><div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span><span class="tk-doneby">${escHtml(t.done_by || '')} · ${timeLabel(t.done_at)}</span><button class="linkish" onclick="taskUndo('${t.id}', this)">다시 할 일로</button></div></div></div>`).join('')}</div></details>` : ''}`;
 }
 
 function drawBoard(m, d) {
@@ -345,12 +349,12 @@ function drawBoard(m, d) {
   const byDue = (a, b) => (beforeIds.has(b.id) ? 1 : 0) - (beforeIds.has(a.id) ? 1 : 0) || String(a.due || '9').localeCompare(String(b.due || '9')) || String(a.first_seen).localeCompare(String(b.first_seen));
   const todo = teamWork.filter(t => !t.started_at && pick(t)).sort(byDue);
   const doing = teamWork.filter(t => t.started_at && pick(t)).sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)));
-  const fin = done.filter(t => inTeam(t) && pick(t));
+  const fin = done.filter(t => inTeam(t) && pick(t) && kstDate(t.done_at) >= tdAdd(today, -7));   // 미진행 기간 중인 옛 일은 결정함 목록에만
   const chipFor = t => (beforeIds.has(t.id) ? `<span class="tk-new red"><i class="fa-solid fa-hourglass-half"></i> 쉬기 전 마감</span>` : '')
     + (isStaffTask(t) && teamAllOff(t.owner) ? '<span class="tk-new"><i class="fa-solid fa-umbrella-beach"></i> 팀 전원 휴가</span>' : '')
     + (newIds.has(t.id) ? '<span class="tk-new"><i class="fa-solid fa-moon"></i> 쉬는 동안 생김</span>' : (approvedOff.some(x => x.id === t.id) ? '<span class="tk-new"><i class="fa-solid fa-stamp"></i> 쉬는 동안 승인</span>' : ''))
     + (team ? '' : `<span class="tk-team">${escHtml(t.owner)}</span>`);
-  const doneRow = t => { const sk = t.status === 'closed' && t.done_how === 'skip'; return `<div class="kb-done${sk ? ' skip' : ''}"><i class="fa-solid ${sk ? 'fa-ban' : t.status === 'closed' ? 'fa-xmark' : t.done_how === 'auto' ? 'fa-robot' : 'fa-check'}"></i><div><b>${escHtml(tkName(t) || '')}</b> ${escHtml(t.title)}${sk ? `<div class="tk-skip-r"><b>미진행</b> ${escHtml(t.skip_reason || '')}</div>` : ''}<div class="muted small">${sk ? escHtml(t.done_by || '') : t.status === 'closed' ? '닫음' : t.done_how === 'auto' ? `자동 확인${t.done_evidence ? ` · ${escHtml(t.done_evidence)}` : ''}` : escHtml(t.done_by || '')} · ${timeLabel(t.done_at)} <button class="linkish" onclick="taskUndo('${t.id}', this)">되돌리기</button></div></div></div>`; };
+  const doneRow = t => { const sk = t.status === 'closed' && t.done_how === 'skip'; return `<div class="kb-done${sk ? ' skip' : ''}"><i class="fa-solid ${sk ? 'fa-ban' : t.status === 'closed' ? 'fa-xmark' : t.done_how === 'auto' ? 'fa-robot' : 'fa-check'}"></i><div><b>${escHtml(tkName(t) || '')}</b> ${escHtml(t.title)}${sk ? `<div class="tk-skip-r"><b>미진행</b> ${escHtml(t.skip_reason || '')}${t.skip_until ? ` · ${md2(t.skip_until)}까지 쉼` : ''}</div>` : ''}<div class="muted small">${sk ? escHtml(t.done_by || '') : t.status === 'closed' ? '닫음' : t.done_how === 'auto' ? `자동 확인${t.done_evidence ? ` · ${escHtml(t.done_evidence)}` : ''}` : escHtml(t.done_by || '')} · ${timeLabel(t.done_at)} <button class="linkish" onclick="taskUndo('${t.id}', this)">되돌리기</button></div></div></div>`; };
   const col = (cls, icon, title, n, body, empty) => `<section class="kb-col ${cls}"><h4><i class="fa-solid ${icon}"></i> ${title} <span class="kb-n">${n}</span></h4>${body || `<div class="muted small kb-empty">${empty}</div>`}</section>`;
   $('tasks-body').innerHTML = `
     ${leaveStripHtml(m, d)}
@@ -393,7 +397,7 @@ function taskSkipPick(b) { const i = b.closest('.tk-skip').querySelector('input'
 function taskSkip(id, btn) {
   const i = btn.closest('.tk-skip').querySelector('input'), reason = String(i.value || '').trim();
   if (reason.length < 2) { toast('미진행 이유를 적어 주세요'); i.focus(); return; }
-  taskCall('skip', { id, reason }, btn, '미진행으로 닫았어요 — 다음 보고서에서 빠지고, 이유는 에이전트가 참고해요');
+  taskCall('skip', { id, reason }, btn, r => `미진행으로 닫았어요 — ${r.task?.skip_until ? md2(r.task.skip_until) + '까지 쉬고' : ''} 판매가 급등하면 바로 다시 올라와요`);
 }
 const taskPostpone = (id, btn) => taskCall('postpone', { id }, btn, '다음 출근일로 미뤘어요');
 function taskClose(id, btn, ask) { if (ask && !confirm(ask)) return; taskCall('close', { id }, btn, '닫았어요 — 다음 보고서에서 빠져요'); }
