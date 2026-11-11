@@ -900,3 +900,21 @@ span.tk-check { cursor: default; color: #9ca3af; }
 @media (max-width: 900px) { .kb { grid-template-columns: 1fr; } .kb-col.doing { order: -1; } }
 .nav .ns { display: none; }
 @media (max-width: 480px) { .nav .nl { display: none; } .nav .ns { display: inline; } }
+/* 7차 (2026-11-11): 미진행 · 상세 보강 권장 방안 */
+.tk-skip-btn { color: #9a3412; }
+.tk-skip { display: flex; flex-direction: column; gap: 6px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: 8px 10px; }
+.tk-skip[hidden] { display: none; }
+.tk-skip-h { font-size: .78rem; font-weight: 800; color: #9a3412; }
+.tk-skip-h .muted { font-weight: 500; font-size: .72rem; }
+.tk-skip-q { display: flex; flex-wrap: wrap; gap: 4px; }
+.tk-skip-f { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tk-skip-f input { flex: 1 1 160px; min-width: 0; }
+.tk-skip-r { font-size: .76rem; color: #9a3412; background: #fff7ed; border-radius: 6px; padding: 2px 7px; margin-top: 3px; width: fit-content; max-width: 100%; }
+.kb-done.skip > i { color: #c2410c; }
+.tk-more.reco summary { color: #7c3aed; }
+.tk-reco { background: #f5f3ff; border-radius: 8px; padding: 6px 9px; }
+.tk-reco > b { color: #6d28d9; }
+.tk-reco ol { margin: 3px 0 0; padding-left: 18px; }
+.tk-reco li { margin: 1px 0; }
+.tk-reco-ai { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ddd6fe; }
+.tk-reco-ai ul { margin: 2px 0 0; padding-left: 18px; }

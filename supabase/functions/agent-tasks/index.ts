@@ -47,7 +47,8 @@ function guessKind(t: string): string {   // 옛 보고서(종류 칸이 없던 
   return "기타";
 }
 // 승인할 때 대표가 고르는 방식(직원 화면·보고서에 같은 말로)
-const METHODS: Record<string, string> = { new: "새 소재로 테스트", reuse: "기존 소재·꺼진 광고 다시 켜기", raise: "지금 광고 예산 늘리기", add: "소재 추가해 늘리기", free: "방식은 담당 판단" };
+// 2026-11-11 사용자: '새 소재로 테스트' → '소재 공급 필요', '방식은 담당 판단' → '담당 부서 판단' (코드는 그대로)
+const METHODS: Record<string, string> = { new: "소재 공급 필요", reuse: "기존 소재·꺼진 광고 다시 켜기", raise: "지금 광고 예산 늘리기", add: "소재 추가해 늘리기", free: "담당 부서 판단" };
 const manwon = (w: number) => { const m = w / 10000; return `${Number.isInteger(m) ? m : m.toFixed(1)}만원`; };
 const detailText = (d: unknown) => {
   const x = (d ?? {}) as Row; const parts: string[] = [];
@@ -560,7 +561,18 @@ Deno.serve(async (req) => {
           for (const c of Object.values(creative)) c.report_id = ids.get(String(c.batch_id)) ?? null;
         }
       }
-      return json({ tasks, today: D, holidays, team_off, leaves, team_size, ad_info, creative, methods: METHODS, me: { name: me?.name, admin: me?.role === "admin" } });
+      // 상세 보강 카드의 '자세히&권장방안'(2026-11-11 사용자): 그 상품을 상세 점검 담당이 최근 90일에 읽었으면 그 결과(1순위·빠진 것·붙여 넣을 문장)도
+      const detail_review: Record<number, Row> = {};
+      const dNos = [...new Set(tasks.filter((t) => t.kind === "상세 보강" && Number(t.product_no) > 0 && t.status === "open").map((t) => Number(t.product_no)))];
+      if (dNos.length) {
+        const dr = await rest(`detail_reviews?product_no=in.(${dNos.join(",")})&status=eq.ok&created_at=gte.${addDays(D, -90)}T00:00:00Z&select=product_no,report_date,review&order=created_at.desc&limit=40`);
+        for (const x of (dr.ok ? await dr.json() : []) as Row[]) {
+          const no = Number(x.product_no), rv = (x.review ?? {}) as Row;
+          if (detail_review[no] || !rv.top_priority) continue;
+          detail_review[no] = { date: x.report_date, score: rv.score ?? null, top: rv.top_priority, missing: ((rv.missing ?? []) as unknown[]).slice(0, 4), snippets: ((rv.copy_snippets ?? []) as unknown[]).slice(0, 3) };
+        }
+      }
+      return json({ tasks, today: D, holidays, team_off, leaves, team_size, ad_info, creative, detail_review, methods: METHODS, me: { name: me?.name, admin: me?.role === "admin" } });
     }
     const id = String(body.id ?? "");
     if (!/^[0-9a-f-]{36}$/.test(id)) return json({ error: "id 필요" }, 400);
@@ -574,7 +586,7 @@ Deno.serve(async (req) => {
     const CONFLICT = "지금 상태에서는 바꿀 수 없어요(대표 승인 전이거나 이미 바뀐 할 일) — 새로고침해 주세요";
     const patch = async (b: Row, cond = "") => { const row = await upd(b, cond); return row ? json({ ok: true, task: row }) : json({ error: CONFLICT }, 409); };
     if (action === "done") {
-      if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null }, "&status=in.(done,closed)");
+      if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null, skip_reason: null }, "&status=in.(done,closed)");
       // 관리자(대표)는 승인 대기 일도 직접 처리할 수 있다('내가 처리함' — 직접 했으면 승인한 셈). 직원은 승인 필요 없거나 승인된 일만.
       return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null },
         me?.role === "admin" ? "&status=eq.open" : "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
@@ -584,6 +596,14 @@ Deno.serve(async (req) => {
       if (body.undo) return await patch({ started_at: null, started_by: null }, "&status=eq.open&started_at=not.is.null");
       return await patch({ started_at: now, started_by: String(me?.name ?? "") },
         me?.role === "admin" ? "&status=eq.open&started_at=is.null" : "&status=eq.open&started_at=is.null&or=(needs_ceo.eq.false,decision.eq.approve)");
+    }
+    // 미진행(2026-11-11 사용자 "할 일에 '미진행' 버튼 + 이유 기입"): 담당 팀이 이 일을 하지 않기로 — 이유 필수. closed + done_how 'skip'.
+    //   다음 날 보고서에서 빠지고, 에이전트는 이유를 참고 데이터로만 본다(_shared/agent.ts brief). 되돌리기는 done undo.
+    if (action === "skip") {
+      const reason = String(body.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+      if (reason.length < 2) return json({ error: "미진행 이유를 적어 주세요" }, 400);
+      return await patch({ status: "closed", done_how: "skip", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null, skip_reason: reason },
+        me?.role === "admin" ? "&status=eq.open" : "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
     }
     if (action === "close") {   // '필요 없음'으로 닫기 — 에이전트가 더는 제안 안 하는 일, 주말 마감 '넘기기'
       return await patch({ status: "closed", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null },
