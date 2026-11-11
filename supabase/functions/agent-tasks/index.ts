@@ -235,7 +235,7 @@ async function sync(auto: boolean) {
   const live = new Map(existing.filter((t) => ["open", "held"].includes(String(t.status))).map((t) => [String(t.task_key), t]));
   const recentDone = new Set(existing.filter((t) => t.status === "done" || t.status === "closed").map((t) => String(t.task_key)));
   const now = new Date().toISOString();
-  const stat = { inserted: 0, updated: 0, stale: 0, dropped: 0, reopened: 0, auto_done: 0, detail_runs: [] as Row[], notified: null as Row | null };
+  const stat = { sales: null as Row | null, inserted: 0, updated: 0, stale: 0, dropped: 0, reopened: 0, auto_done: 0, detail_runs: [] as Row[], notified: null as Row | null };
   for (const it of items.values()) {
     const cur = live.get(it.key);
     if (cur) {
@@ -306,9 +306,34 @@ async function sync(auto: boolean) {
     await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(body) });
     if (evidence) stat.auto_done++;
   }
+  // 상품별 최근 7일 판매(2026-11-11 사용자 요청 "일평균 판매량 — 광고 착수 결정에 도움"): 어제까지 꽉 찬 7일 vs 그 앞 7일, 카페24 상품별 집계(summary — 상품 전략 담당과 같은 숫자)
+  stat.sales = await fillSales(tasks.filter((t) => ["open", "held"].includes(String(t.status)) && Number(t.product_no) > 0), now);
   // 상세 점검 자동 실행 (아침 cron만)
   if (auto) { stat.detail_runs = await autoDetail(D); stat.notified = await morningNotify(cal); }
   return { ok: true, report_date: D, reports: reports.map((r) => `${r.agent} ${r.report_date}`), items: items.size, ...stat };
+}
+
+async function fillSales(tasks: Row[], now: string): Promise<Row> {
+  if (!tasks.length) return { skipped: "상품 할 일 없음" };
+  const y = addDays(seoulToday(), -1);
+  const [a, b] = await Promise.all([
+    callFn("cafe24-analytics", { action: "summary", start_date: addDays(y, -6), end_date: y }).catch(() => null),
+    callFn("cafe24-analytics", { action: "summary", start_date: addDays(y, -13), end_date: addDays(y, -7) }).catch(() => null),
+  ]);
+  const rowsA = (a as Row | null)?.rows, rowsB = (b as Row | null)?.rows;
+  if (!Array.isArray(rowsA) || !Array.isArray(rowsB)) return { skipped: "카페24 판매 집계를 못 받음 — 다음 동기화 때 다시" };
+  const m7 = new Map((rowsA as Row[]).map((r) => [Number(r.product_no), r])), mp = new Map((rowsB as Row[]).map((r) => [Number(r.product_no), r]));
+  const n = (v: unknown) => Number(v) || 0;
+  let patched = 0;
+  for (const t of tasks) {
+    const no = Number(t.product_no), r = m7.get(no), rp = mp.get(no);
+    const v = { qty_7d: n(r?.order_qty), qty_prev7d: n(rp?.order_qty), views_7d: n(r?.views), views_prev7d: n(rp?.views), through: y };
+    const cur = (t.sales_7d ?? {}) as Row;
+    if (cur.through === y && cur.qty_7d === v.qty_7d && cur.qty_prev7d === v.qty_prev7d && cur.views_7d === v.views_7d) continue;
+    await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ sales_7d: v, updated_at: now }) });
+    patched++;
+  }
+  return { through: y, patched };
 }
 
 // 알림 받을 직원(알림 켠 비관리자)을 팀별로 — 오늘 종일 휴가인 사람은 뺀다. 팀을 모르는 계정은 '전체'

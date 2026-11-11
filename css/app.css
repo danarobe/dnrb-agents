@@ -815,3 +815,10 @@ span.tk-check { cursor: default; color: #9ca3af; }
 .tk-adname { color: var(--ink-2); }
 .tk-links { display: flex; flex-wrap: wrap; gap: 6px; }
 @media (max-width: 520px) { .tk-dec label { flex: 1 1 100%; } .tk-dec select { max-width: none; flex: 1; } .tk-dec input { flex: 1; width: auto; } }
+/* 오늘 할 일 5차 (2026-11-11): 상품 최근 7일 하루 평균 판매 */
+.tk-sales { font-size: .76rem; color: #374151; background: #f9fafb; border-radius: 8px; padding: 4px 8px; line-height: 1.5; }
+.tk-sales .fa-cart-shopping { color: #6b7280; }
+.tk-sales b { color: var(--ink); }
+.tk-chg.down { color: #b91c1c; }
+.tk-chg.up { color: #047857; }
+.tk-sales.down { background: #fef2f2; }

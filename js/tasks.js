@@ -18,6 +18,7 @@
    - 광고 착수·증액 승인 칸에 방식·하루 예산 → 승인하면 담당 팀에 바로 알림(서버), 직원 카드에 '대표 승인 · 방식 · 하루 n만원'.
    - 광고 일 카드: 지금 광고 상태(ON·꺼짐·7일 광고비·ROAS), '꺼진 광고 n개 보기', 광고 착수는 '제작안 만들기/보기'.
    - 광고 줄이기·기존 예산 안 다시 켜기는 결정함을 거치지 않고 바로 팀 할 일(서버가 needs_ceo=false).
+   5차(2026-11-11, 사용자 "각 상품의 최근 7일 일평균 판매량도"): 상품 카드마다 '최근 7일 하루 평균 n개 · 앞 7일 대비 ▲▼% · 조회' (sales_7d, sync가 채움).
 ────────────────────────────────────────── */
 const tasksState = { data: null, team: '', kind: '', ceoKind: '' };
 const TEAMS = ['MD/컨텐츠팀', '물류/CS팀', '대표'];   // 2026-11-10 'CS팀' → '물류/CS팀', 같은 날 광고팀·상품팀 → 'MD/컨텐츠팀'(역할 통합)
@@ -97,6 +98,17 @@ function taskHead(t) {
 }
 const kindChip = t => `<span class="tk-kind"><i class="fa-solid ${KIND_ICON[t.kind] || 'fa-circle-dot'}"></i> ${escHtml(t.kind)}</span>`;
 
+// ── 상품 카드: 최근 7일 하루 평균 판매(어제까지 꽉 찬 7일, 2026-11-11 사용자 요청 — 광고 착수 결정용) ──
+function salesLine(t) {
+  const s = t.sales_7d; if (!s || !t.product_no) return '';
+  const d = s.qty_7d / 7, p = s.qty_prev7d / 7;
+  const f = x => x >= 10 ? String(Math.round(x)) : x.toFixed(1);
+  const pct = s.qty_prev7d > 0 ? Math.round((s.qty_7d - s.qty_prev7d) / s.qty_prev7d * 100) : null;
+  const cls = pct == null ? '' : pct <= -30 ? ' down' : pct >= 30 ? ' up' : '';
+  const chg = pct == null ? (s.qty_7d > 0 ? ' · 앞 7일 판매 없음' : '') : ` · 앞 7일 하루 ${f(p)}개 <b class="tk-chg${cls}">${pct > 0 ? '▲' : pct < 0 ? '▼' : ''}${Math.abs(pct)}%</b>`;
+  const vw = s.views_prev7d > 0 ? ` · 조회 ${Number(s.views_7d).toLocaleString()} (앞 7일 ${Number(s.views_prev7d).toLocaleString()})` : '';
+  return `<div class="tk-sales${cls}" title="${escHtml(md2(tdAdd(s.through, -6)))}~${escHtml(md2(s.through))} 카페24 주문 수량"><i class="fa-solid fa-cart-shopping"></i> 최근 7일 하루 평균 <b>${f(d)}개</b> <span class="muted">(7일 ${Number(s.qty_7d)}개)</span>${chg}${vw}</div>`;
+}
 // ── 광고 일 카드: 지금 광고 상태 · 꺼진 광고 · 제작안 ──
 const adInfo = t => String(t.kind).startsWith('광고') && t.product_no ? (tasksState.data?.ad_info || {})[t.product_no] : null;
 function adLine(t) {
@@ -134,7 +146,7 @@ function taskRow(t, today, cal, extraChip = '') {
       ${taskHead(t)}
       <div class="tk-meta">${extraChip}${kindChip(t)}${reenableChip(t)}${approved ? `<span class="tk-ok"><i class="fa-solid fa-stamp"></i> 대표 승인${detailLabel(t.decision_detail) ? ` · ${escHtml(detailLabel(t.decision_detail))}` : ''}${t.decision_note ? ` · ${escHtml(t.decision_note)}` : ''}</span>` : ''}${dueBadge(t, today, cal)}${ageBadge(t, today, cal)}<span class="tk-team">${escHtml(t.owner)}</span>${srcChips(t)}</div>
       ${approved && t.decision_detail && !Number(t.decision_detail.daily_won) && ['광고 착수', '광고 증액'].includes(t.kind) ? '<div class="tk-why"><i class="fa-solid fa-coins"></i> 예산은 담당 판단으로 승인됐어요</div>' : ''}
-      ${adLine(t)}
+      ${salesLine(t)}${adLine(t)}
       ${when ? `<div class="tk-when"><i class="fa-regular fa-flag"></i> 완료 기준: ${escHtml(when)}${auto ? ` <span class="tk-auto"><i class="fa-solid fa-robot"></i> ${auto} 저절로 완료</span>` : ''}</div>` : (auto ? `<div class="tk-when"><span class="tk-auto"><i class="fa-solid fa-robot"></i> ${auto} 저절로 완료</span></div>` : '')}
       ${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}
       ${pausedBox(t)}${creativeBtn(t)}
@@ -151,7 +163,7 @@ function ceoCard(t, today, cal) {
   return `<div class="tk-ceo" data-id="${t.id}">
     ${taskHead(t)}
     <div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span>${ageBadge(t, today, cal)}${srcChips(t)}</div>
-    ${adLine(t)}
+    ${salesLine(t)}${adLine(t)}
     ${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}
     ${t.decision_note ? `<div class="tk-why"><i class="fa-solid fa-clock-rotate-left"></i> ${escHtml(t.decision_note)}</div>` : ''}
     ${pausedBox(t)}
@@ -176,6 +188,7 @@ function offCard(t, today, cal0) {
     <div class="tk-off-h"><i class="fa-solid fa-umbrella-beach"></i> ${why} · ${md2(t.due)}까지</div>
     ${taskHead(t)}
     <div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span>${srcChips(t)}</div>
+    ${salesLine(t)}
     ${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}
     ${isCeo() ? `<div class="tk-ceo-btns"><button class="btn sm primary" onclick="taskDone('${t.id}', this)"><i class="fa-solid fa-check"></i> 내가 처리함</button><button class="btn sm ghost" onclick="taskPostpone('${t.id}', this)"><i class="fa-solid fa-calendar-day"></i> ${md2(nextW)}로</button><button class="btn sm ghost" onclick="taskClose('${t.id}', this, '넘길까요? 할 일이 닫히고 다음 보고서에서 빠져요.')"><i class="fa-solid fa-forward"></i> 넘기기</button></div>` : '<div class="muted small">대표가 처리할지 정하는 중이에요</div>'}
   </div>`;
