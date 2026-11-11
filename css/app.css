@@ -864,3 +864,5 @@ span.tk-check { cursor: default; color: #9ca3af; }
 .tk-stats.one .tk-stat { flex-direction: row; align-items: baseline; gap: 6px; padding: 2px 10px; border-radius: 999px; }
 .tk-stats.one .tk-stat b { font-size: .86rem; }
 .tk-stats.one .tk-stat-s { display: none; }
+.tk-stat.tip { cursor: help; }
+.tk-stat.tip .tk-stat-l i { font-size: .62rem; opacity: .7; }

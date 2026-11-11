@@ -104,14 +104,15 @@ const kindChip = t => `<span class="tk-kind"><i class="fa-solid ${KIND_ICON[t.ki
 const f1 = x => x >= 10 ? String(Math.round(x)) : x.toFixed(1);
 const pctOf = (a, b) => b > 0 ? Math.round((a - b) / b * 100) : null;
 const adInfo = t => String(t.kind).startsWith('광고') && t.product_no ? (tasksState.data?.ad_info || {})[t.product_no] : null;
-const cell = (label, val, sub = '', cls = '') => `<div class="tk-stat${cls ? ' ' + cls : ''}"><span class="tk-stat-l">${label}</span><b>${val}</b>${sub ? `<span class="tk-stat-s">${sub}</span>` : ''}</div>`;
+// tip: 칸 이름에 마우스를 올리면 뜨는 설명(휴대폰은 칸을 누르면 같은 설명이 잠깐 뜸)
+const cell = (label, val, sub = '', cls = '', tip = '') => `<div class="tk-stat${cls ? ' ' + cls : ''}${tip ? ' tip' : ''}"${tip ? ` title="${escHtml(tip)}" onclick="toast(this.title)"` : ''}><span class="tk-stat-l">${label}${tip ? ' <i class="fa-regular fa-circle-question"></i>' : ''}</span><b>${val}</b>${sub ? `<span class="tk-stat-s">${sub}</span>` : ''}</div>`;
 const chg = p => p == null ? '' : `<em class="${p <= -30 ? 'down' : p >= 30 ? 'up' : ''}">${p > 0 ? '▲' : p < 0 ? '▼' : ''}${Math.abs(p)}%</em>`;
 function statCells(t) {
   if (!t.product_no) return '';
   const c = [], s = t.sales_7d, h = t.ad_hist, a = adInfo(t);
   if (s) { const p = pctOf(s.qty_7d, s.qty_prev7d); c.push(cell('하루 판매', `${f1(s.qty_7d / 7)}개 ${chg(p)}`, p == null && s.qty_7d ? '새로 팔림' : '최근 7일', p != null && p <= -30 ? 'bad' : p != null && p >= 30 ? 'good' : '')); }
   if (t.kind === '광고 착수' && h) {
-    c.push(cell('검증 소재', `${h.proven}개`, h.proven ? (h.proven_off ? `꺼짐 ${h.proven_off}` : '모두 켜짐') : '', h.proven ? '' : 'zero'));
+    c.push(cell('검증 소재', `${h.proven}개`, h.proven ? (h.proven_off ? `꺼짐 ${h.proven_off}` : '모두 켜짐') : '', h.proven ? '' : 'zero', `최근 ${h.days || 90}일 동안 광고비가 실제로 나간 날이 ${h.proven_days || 5}일 이상인 광고`));
     c.push(cell('켜진 광고', `${h.active}개`, '', h.active ? '' : 'zero'));
   } else if (a) {
     const p7 = a.ad_7d || {};
