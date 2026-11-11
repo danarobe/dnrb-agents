@@ -435,8 +435,8 @@ async function flushApprovals(team?: string): Promise<Row> {
     const mine = pend.filter((t) => t.owner === tm);
     const ids = [...(groups.get(tm) ?? []), ...(groups.get("전체") ?? [])];
     const lab = (t: Row) => { const d = detailText(t.decision_detail); return `${shortName(t.product_name) ? shortName(t.product_name) + " " : ""}${t.kind}${d ? `(${d})` : ""}`; };
-    const msg = mine.length === 1 ? `대표 승인: ${lab(mine[0])} — 오늘 할 일에서 바로 진행해 주세요` : `대표가 ${mine.length}개 승인: ${lab(mine[0])} 외 ${mine.length - 1}개 — 오늘 할 일에서 확인`;
-    const res = ids.length ? await notifyUsers(ids, "대표 승인", msg, "대표가 할 일을 승인했어요") : { saved: 0, pushed: 0 };
+    const msg = mine.length === 1 ? `대표 승인: ${lab(mine[0])} — 팀 작업보드에서 시작해 주세요` : `대표가 ${mine.length}개 승인: ${lab(mine[0])} 외 ${mine.length - 1}개 — 팀 작업보드에서 확인`;
+    const res = ids.length ? await notifyUsers(ids, "대표 승인", msg, "대표가 할 일을 승인했어요", "#board") : { saved: 0, pushed: 0 };
     await rest(`team_tasks?id=in.(${mine.map((t) => t.id).join(",")})`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ notified_at: new Date().toISOString() }) });
     out.push({ team: tm, count: mine.length, ...res });
     note = ids.length ? `${tm} ${ids.length}명에게 바로 알렸어요` : `${tm}에 알림을 켠 직원이 없어 보드에만 표시돼요`;
@@ -463,8 +463,8 @@ async function morningNotify(cal: TeamCal): Promise<Row> {
   const admins = await adminIds();
   const out: Row = { off_today: offToday };
   if (pendingCeo + offDeadline > 0) {
-    const msg = `대표 결정 대기 ${pendingCeo}개${offDeadline ? ` · 담당 팀이 쉬는 동안 마감 ${offDeadline}개` : ""} — 오늘 할 일에서 확인`;
-    out.ceo = await notifyUsers(admins, "오늘 할 일", msg, "대표 결정이 필요한 일이 있어요");
+    const msg = `대표 결정 대기 ${pendingCeo}개${offDeadline ? ` · 담당 팀이 쉬는 동안 마감 ${offDeadline}개` : ""} — 대표 결정함에서 확인`;
+    out.ceo = await notifyUsers(admins, "오늘 할 일", msg, "대표 결정이 필요한 일이 있어요", "#decide");
   }
   if (!offToday) {
     // 사람마다 자기 팀 할 일 수로(팀을 모르는 계정은 전체) · 종일 휴가인 사람은 알림 안 보냄
@@ -478,7 +478,7 @@ async function morningNotify(cal: TeamCal): Promise<Row> {
       const fresh = prevW < addDays(today, -1) ? mine.filter((t) => String(t.created_at ?? "").slice(0, 10) > prevW).length : 0;   // 쉬는 날 뒤 첫 출근일이면 그 사이 생긴 일
       const appr = mine.filter((t) => t.decision === "approve" && !t.notified_at);   // 아직 안 알린 대표 승인(밤·쉬는 날에 승인한 것)
       appr.forEach((t) => told.add(String(t.id)));
-      sent.push({ team, ...(await notifyUsers(ids, "오늘 할 일", `${team === "전체" ? "" : team + " "}오늘 할 일 ${mine.length}개${appr.length ? ` · 대표 승인 ${appr.length}개` : ""}${late ? ` · 기한 지남 ${late}개` : ""}${fresh ? ` · 쉬는 동안 생긴 일 ${fresh}개` : ""}`, "오늘 할 일이 있어요")) });
+      sent.push({ team, ...(await notifyUsers(ids, "오늘 할 일", `${team === "전체" ? "" : team + " "}오늘 할 일 ${mine.length}개${appr.length ? ` · 대표 승인 ${appr.length}개` : ""}${late ? ` · 기한 지남 ${late}개` : ""}${fresh ? ` · 쉬는 동안 생긴 일 ${fresh}개` : ""}`, "오늘 할 일이 있어요", "#board")) });
     }
     if (told.size) await rest(`team_tasks?id=in.(${[...told].join(",")})`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ notified_at: new Date().toISOString() }) });
     out.staff = { sent, skipped_on_leave: skipped, approvals_told: told.size };
@@ -578,6 +578,12 @@ Deno.serve(async (req) => {
       // 관리자(대표)는 승인 대기 일도 직접 처리할 수 있다('내가 처리함' — 직접 했으면 승인한 셈). 직원은 승인 필요 없거나 승인된 일만.
       return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null },
         me?.role === "admin" ? "&status=eq.open" : "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
+    }
+    // 진행 중(2026-11-11 사용자 "팀 작업보드 + 진행 중 단계"): 직원이 '시작'을 누르면 started_at·by. 완료할 수 있는 일만(대표 승인 전이면 시작도 안 됨). undo = 시작 취소
+    if (action === "start") {
+      if (body.undo) return await patch({ started_at: null, started_by: null }, "&status=eq.open&started_at=not.is.null");
+      return await patch({ started_at: now, started_by: String(me?.name ?? "") },
+        me?.role === "admin" ? "&status=eq.open&started_at=is.null" : "&status=eq.open&started_at=is.null&or=(needs_ceo.eq.false,decision.eq.approve)");
     }
     if (action === "close") {   // '필요 없음'으로 닫기 — 에이전트가 더는 제안 안 하는 일, 주말 마감 '넘기기'
       return await patch({ status: "closed", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null },

@@ -19,6 +19,8 @@
    - 광고 일 카드: 지금 광고 상태(ON·꺼짐·7일 광고비·ROAS), '꺼진 광고 n개 보기', 광고 착수는 '제작안 만들기/보기'.
    - 광고 줄이기·기존 예산 안 다시 켜기는 결정함을 거치지 않고 바로 팀 할 일(서버가 needs_ceo=false).
    5차(2026-11-11, 사용자 "각 상품의 최근 7일 일평균 판매량도"): 상품 카드마다 '최근 7일 하루 평균 n개 · 앞 7일 대비 ▲▼% · 조회' (sales_7d, sync가 채움).
+   6차(2026-11-11, 사용자 "팀 작업보드 메뉴 + 진행 중 단계"): 메뉴를 #decide 대표 결정함 / #board 팀 작업보드로 나눔.
+     보드 = 팀 현황 카드(할 일·진행 중·기한 지남·7일 완료, 누르면 그 팀만) + 칸 3개(할 일 → 진행 중 → 완료 7일). '▶ 시작' = started_at(서버 start).
    같은 날 사용자 "광고 착수 상품 중 5일 이상 ON됐던 광고·지금 활성 광고 수": 광고 착수 카드에 기존 광고 이력(ad_hist — 최근 90일 Meta 지출 있던 날 5일↑ 광고 수, 켜짐/꺼짐, 꺼진 것들 ROAS, 목록).
 ────────────────────────────────────────── */
 const tasksState = { data: null, team: '', kind: '', ceoKind: '' };
@@ -60,9 +62,11 @@ async function tasksLoad() {
   return tasksState.data;
 }
 
-async function renderTasks() {
+async function renderTasks(view) {
+  tasksState.view = view === 'decide' ? 'decide' : 'board';
   const main = $('main');
-  main.innerHTML = `<div class="page-head"><div><h1>오늘 할 일</h1><p class="sub">AI 담당자들이 낸 할 일 · 광고 켜기·상세 보강은 자동 완료</p></div></div><div id="tasks-body"><div class="muted"><i class="fa-solid fa-spinner fa-spin"></i> 불러오는 중</div></div>`;
+  const head = tasksState.view === 'decide' ? ['대표 결정함', '승인하면 담당 팀에 바로 알림 · 팀 칸을 누르면 작업보드로'] : ['팀 작업보드', '할 일 → ▶ 시작 → 완료 · 광고 켜기·상세 보강은 자동 완료'];
+  main.innerHTML = `<div class="page-head"><div><h1>${head[0]}</h1><p class="sub">${head[1]}</p></div></div><div id="tasks-body"><div class="muted"><i class="fa-solid fa-spinner fa-spin"></i> 불러오는 중</div></div>`;
   try { await tasksLoad(); tasksDraw(); }
   catch (e) { $('tasks-body').innerHTML = `<div class="box err-text">할 일을 불러오지 못했어요: ${escHtml(e.message)}</div>`; }
 }
@@ -160,13 +164,19 @@ function taskRow(t, today, cal, extraChip = '') {
   const approved = t.decision === 'approve';
   const dl = approved ? detailLabel(t.decision_detail) : '';
   const cb = creativeBtn(t);
-  return `<div class="tk-row" data-id="${t.id}">
+  // 진행 중(started_at): 맨 위 파란 칩 + '완료' 버튼 / 아직이면 '▶ 시작'
+  const doing = !!t.started_at;
+  const acts = doing
+    ? `<button class="btn sm primary" onclick="taskDone('${t.id}', this)"><i class="fa-solid fa-check"></i> 완료</button><button class="linkish" onclick="taskStart('${t.id}', this, true)">시작 취소</button>`
+    : `<button class="btn sm ghost" onclick="taskStart('${t.id}', this)"><i class="fa-solid fa-play"></i> 시작</button>`;
+  return `<div class="tk-row${doing ? ' doing' : ''}" data-id="${t.id}">
     <button class="tk-check" onclick="taskDone('${t.id}', this)" title="완료로 표시"><i class="fa-solid fa-check"></i></button>
     <div class="tk-main">
       ${taskHead(t)}
+      ${doing ? `<div class="tk-doing"><i class="fa-solid fa-person-running"></i> 진행 중${t.started_by ? ` · ${escHtml(t.started_by)}` : ''} · ${md2(kstDate(t.started_at))}부터</div>` : ''}
       <div class="tk-meta">${extraChip}${kindChip(t)}${freeChip(t)}${approved ? `<span class="tk-ok"><i class="fa-solid fa-stamp"></i> 승인${dl ? ` · ${escHtml(dl)}` : ''}</span>` : ''}${dueBadge(t, today, cal)}${ageBadge(t, today, cal)}${AUTO_KIND[t.kind] ? '<span class="tk-auto" title="데이터로 확인되면 저절로 완료"><i class="fa-solid fa-robot"></i> 자동 완료</span>' : ''}</div>
       ${statCells(t)}${adviceChip(t)}${whyLine(t)}
-      ${cb ? `<div class="tk-links">${cb}</div>` : ''}
+      <div class="tk-links">${acts}${cb}</div>
       ${moreBox(t, approved && t.decision_note ? `<div class="muted">대표 메모: ${escHtml(t.decision_note)}</div>` : '')}
     </div>
   </div>`;
@@ -208,31 +218,22 @@ function offCard(t, today, cal0) {
   </div>`;
 }
 
-function tasksDraw() {
-  const d = tasksState.data; if (!d) return;
+// ── 화면 2개(2026-11-11 사용자 "팀 작업보드 메뉴 + 진행 중 단계"): #decide 대표 결정함 / #board 팀 작업보드 ──
+function tasksModel(d) {
   const today = d.today, all = d.tasks || [], base = workCal(d.holidays);
   const teamCals = {};
   const cal = { ...base, base, of: owner => owner === '대표' ? base : (teamCals[owner] ??= workCal(d.holidays, (d.team_off || {})[owner])) };
   const offToday = base.isOff(today), prevW = base.prev(today), nextW = base.next(today);
-  const leaves = d.leaves || [];
-  const leaveToday = t => leaves.filter(l => l.date === today && l.team === t && l.type !== 'half');
-  const teamAllOff = t => ((d.team_off || {})[t] || []).includes(today);
   const open = all.filter(t => t.status === 'open');
   const stale = open.filter(t => t.stale_since && !pendingCeo(t));
   const live = open.filter(t => !t.stale_since || pendingCeo(t));
   const ceo = live.filter(pendingCeo);
-  // 직원이 쉬는 날: 이번 휴일 안에 마감인 직원 일을 대표에게
-  // (에이전트가 실제 마감으로 정한 기한만 — 코드가 정한 기한은 늘 출근일이라 해당 없음)
-  // 담당 팀이 쉬는 날(주말·공휴일·팀 전원 휴가)에 그 사이 마감인 일
+  // 담당 팀이 쉬는 날(주말·공휴일·팀 전원 휴가)에 그 사이 마감인 직원 일 → 대표 결정함에도 카드로(에이전트가 정한 실제 기한만)
   const offDue = live.filter(t => { if (!isStaffTask(t) || pendingCeo(t) || t.kind === '지킬 원칙' || t.due_source !== 'agent' || !t.due) return false; const c = cal.of(t.owner); return c.isOff(today) && t.due > c.prev(today) && t.due < c.next(today); });
-  const offIds = new Set(offDue.map(t => t.id));
   const rules = live.filter(t => t.kind === '지킬 원칙' && !pendingCeo(t));
-  const work = live.filter(t => !pendingCeo(t) && t.kind !== '지킬 원칙' && !offIds.has(t.id));
-  // 쉬기 전날: 다음 출근일 전에 마감인 직원 일
-  const beforeOff = work.filter(t => { if (!isStaffTask(t) || !t.due) return false; const c = cal.of(t.owner); return !c.isOff(today) && c.isOff(tdAdd(today, 1)) && t.due >= today && t.due < c.next(today); });
-  const beforeNext = beforeOff.length ? cal.of(beforeOff[0].owner).next(today) : nextW;
-  const beforeIds = new Set(beforeOff.map(t => t.id));
-  // 쉬고 온 첫 출근일: 그 사이 생긴 일·승인된 일·저절로 끝난 일
+  const work = live.filter(t => !pendingCeo(t) && t.kind !== '지킬 원칙');
+  // 쉬기 전날: 다음 출근일 전에 마감인 직원 일 → 보드에서 맨 위 + '쉬기 전 마감' 칩
+  const beforeIds = new Set(work.filter(t => { if (!isStaffTask(t) || !t.due) return false; const c = cal.of(t.owner); return !c.isOff(today) && c.isOff(tdAdd(today, 1)) && t.due >= today && t.due < c.next(today); }).map(t => t.id));
   const afterOff = !offToday && prevW < tdAdd(today, -1);
   const since = t => t > prevW;
   const newIds = new Set(afterOff ? work.filter(t => since(kstDate(t.created_at))).map(t => t.id) : []);
@@ -240,50 +241,92 @@ function tasksDraw() {
   const autoOff = afterOff ? all.filter(t => t.status === 'done' && t.done_how === 'auto' && since(kstDate(t.done_at))) : [];
   const done = all.filter(t => t.status === 'done' || t.status === 'closed').sort((a, b) => String(b.done_at).localeCompare(String(a.done_at)));
   const held = all.filter(t => t.status === 'held');
-  const team = tasksState.team;
-  const kind = tasksState.kind;
-  const teamWork = work.filter(t => !beforeIds.has(t.id) && (!team || t.owner === team));
-  const shown = teamWork.filter(t => !kind || t.kind === kind).sort((a, b) => String(a.due || '9').localeCompare(String(b.due || '9')) || String(a.first_seen).localeCompare(String(b.first_seen)));
-  const count = k => work.filter(t => t.owner === k).length;
-  const tabLeave = k => teamAllOff(k) ? ' 🏖 전원 휴가' : leaveToday(k).length ? ` 🏖${leaveToday(k).length}` : '';
-  const tabs = `<div class="tk-tabs">${[['', `전체 ${work.length}`], ...TEAMS.filter(k => count(k)).map(k => [k, `${k} ${count(k)}${tabLeave(k)}`])].map(([k, l]) => `<button class="chip-btn${team === k ? ' on' : ''}" onclick="tasksTeam('${k}')">${escHtml(l)}</button>`).join('')}</div>`;
-  // 휴가 띠: 오늘 + 앞으로 7일 (이름·팀·종류만)
+  return { today, cal, offToday, prevW, nextW, stale, ceo, offDue, rules, work, beforeIds, afterOff, newIds, approvedOff, autoOff, done, held };
+}
+const isLate = (t, m) => { if (!t.due || t.due >= m.today) return false; const c = m.cal.of(t.owner); return isStaffTask(t) ? c.between(t.due, m.today) > 0 : true; };
+// 팀 현황 카드(두 화면 공통): 할 일 · 진행 중 · 기한 지남 · 7일 완료, 누르면 그 팀만
+function teamSummary(m, d, clickable) {
+  const teams = TEAMS.filter(k => m.work.some(t => t.owner === k) || m.done.some(t => t.owner === k));
+  if (!teams.length) return '';
+  const leaveToday = k => (d.leaves || []).filter(l => l.date === m.today && l.team === k && l.type !== 'half').length;
+  const allOff = k => ((d.team_off || {})[k] || []).includes(m.today);
+  const cur = tasksState.team;
+  const card = k => {
+    const w = m.work.filter(t => t.owner === k), doing = w.filter(t => t.started_at).length, late = w.filter(t => isLate(t, m)).length;
+    const dn = m.done.filter(t => t.owner === k && t.status === 'done').length;
+    const lv = allOff(k) ? '<span class="ts-leave">🏖 전원 휴가</span>' : leaveToday(k) ? `<span class="ts-leave">🏖 ${leaveToday(k)}명 휴가</span>` : '';
+    return `<${clickable ? 'button' : 'a'} class="ts-card${cur === k && clickable ? ' on' : ''}" ${clickable ? `onclick="tasksTeam('${cur === k ? '' : k}')"` : `href="#board" onclick="tasksState.team='${k}'"`}>
+      <div class="ts-h"><b>${escHtml(k)}</b>${lv}</div>
+      <div class="ts-n"><span><b>${w.length - doing}</b>할 일</span><span class="doing"><b>${doing}</b>진행 중</span><span class="${late ? 'late' : ''}"><b>${late}</b>기한 지남</span><span class="done"><b>${dn}</b>7일 완료</span></div>
+    </${clickable ? 'button' : 'a'}>`;
+  };
+  return `<div class="ts-row">${teams.map(card).join('')}</div>`;
+}
+function leaveStripHtml(m, d) {
+  const leaves = d.leaves || [], today = m.today;
   const upcoming = leaves.filter(l => l.date >= today && l.date <= tdAdd(today, 7));
+  if (!upcoming.length) return '';
   const byDate = {}; upcoming.forEach(l => (byDate[l.date] ??= []).push(l));
-  const leaveStrip = upcoming.length ? `<div class="tk-leave"><b><i class="fa-solid fa-umbrella-beach"></i> 휴가</b>${Object.keys(byDate).sort().map(dt => `<span class="tk-leave-d${dt === today ? ' today' : ''}">${dt === today ? '오늘' : md2(dt)} ${byDate[dt].map(l => `${escHtml(l.name)}(${escHtml(l.team)}${l.type !== 'annual' ? ' ' + escHtml(LEAVE_LABEL[l.type] || l.type) : ''})`).join(', ')}${TEAMS.filter(k => ((d.team_off || {})[k] || []).includes(dt)).map(k => ` <em>${escHtml(k)} 전원 쉼</em>`).join('')}</span>`).join('')}</div>` : '';
-  const chipFor = t => (isStaffTask(t) && teamAllOff(t.owner) ? '<span class="tk-new"><i class="fa-solid fa-umbrella-beach"></i> 팀 전원 휴가</span>' : '') + (newIds.has(t.id) ? '<span class="tk-new"><i class="fa-solid fa-moon"></i> 쉬는 동안 생김</span>' : (approvedOff.some(x => x.id === t.id) ? '<span class="tk-new"><i class="fa-solid fa-stamp"></i> 쉬는 동안 대표 승인</span>' : ''));
-  const doneRow = t => `<div class="tk-row done"><span class="tk-check on"><i class="fa-solid ${t.status === 'closed' ? 'fa-xmark' : 'fa-check'}"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span><span class="tk-doneby">${t.status === 'closed' ? `<i class="fa-solid fa-xmark"></i> 닫음(필요 없음) · ${escHtml(t.done_by || '')}` : t.done_how === 'auto' ? `<i class="fa-solid fa-robot"></i> 자동 확인${t.done_evidence ? ` · ${escHtml(t.done_evidence)}` : ''}` : `<i class="fa-solid fa-user-check"></i> ${escHtml(t.done_by || '')}`} · ${timeLabel(t.done_at)}</span><button class="linkish" onclick="taskUndo('${t.id}', this)">되돌리기</button></div></div></div>`;
-  const ceoBox = ceo.length || offDue.length;
-  // 대표 결정함: 종류 칩으로 따로 보기, '전체'면 종류별로 묶어서
+  return `<div class="tk-leave"><b><i class="fa-solid fa-umbrella-beach"></i> 휴가</b>${Object.keys(byDate).sort().map(dt => `<span class="tk-leave-d${dt === today ? ' today' : ''}">${dt === today ? '오늘' : md2(dt)} ${byDate[dt].map(l => `${escHtml(l.name)}(${escHtml(l.team)}${l.type !== 'annual' ? ' ' + escHtml(LEAVE_LABEL[l.type] || l.type) : ''})`).join(', ')}${TEAMS.filter(k => ((d.team_off || {})[k] || []).includes(dt)).map(k => ` <em>${escHtml(k)} 전원 쉼</em>`).join('')}</span>`).join('')}</div>`;
+}
+
+function tasksDraw() {
+  const d = tasksState.data; if (!d) return;
+  const m = tasksModel(d);
+  tasksNavBadge(m.ceo.length + m.offDue.length);
+  if (tasksState.view === 'decide') return drawDecide(m, d);
+  return drawBoard(m, d);
+}
+
+function drawDecide(m, d) {
+  const { today, cal, ceo, offDue, held } = m;
   const ck = tasksState.ceoKind;
   const ceoAll = [...offDue, ...ceo];
   // 같은 종류 안에서는 에이전트가 지금도 제안하는 일 먼저, 더는 제안하지 않는 일(닫기 후보)은 뒤로
   const ceoShown = ceo.filter(t => !ck || t.kind === ck).sort((a, b) => kindRank(a.kind) - kindRank(b.kind) || (a.stale_since ? 1 : 0) - (b.stale_since ? 1 : 0) || String(a.first_seen).localeCompare(String(b.first_seen)));
-  const offShown = offDue.filter(t => !ck || t.kind === ck);
-  let ceoCards = offShown.map(t => offCard(t, today, cal)).join('');
-  if (ck) ceoCards += ceoShown.map(t => ceoCard(t, today, cal)).join('');
-  else { let last = null; for (const t of ceoShown) { if (t.kind !== last) { last = t.kind; ceoCards += `<div class="tk-grp"><i class="fa-solid ${KIND_ICON[t.kind] || 'fa-circle-dot'}"></i> ${escHtml(t.kind)} <span class="muted">${ceoShown.filter(x => x.kind === t.kind).length}</span></div>`; } ceoCards += ceoCard(t, today, cal); } }
+  let cards = offDue.filter(t => !ck || t.kind === ck).map(t => offCard(t, today, cal)).join('');
+  if (ck) cards += ceoShown.map(t => ceoCard(t, today, cal)).join('');
+  else { let last = null; for (const t of ceoShown) { if (t.kind !== last) { last = t.kind; cards += `<div class="tk-grp"><i class="fa-solid ${KIND_ICON[t.kind] || 'fa-circle-dot'}"></i> ${escHtml(t.kind)} <span class="muted">${ceoShown.filter(x => x.kind === t.kind).length}</span></div>`; } cards += ceoCard(t, today, cal); } }
   $('tasks-body').innerHTML = `
-    ${leaveStrip}
-    ${afterOff && (newIds.size || approvedOff.length || autoOff.length) ? `<div class="box tk-after"><h3><i class="fa-solid fa-mug-hot" style="color:#4f46e5;"></i> 쉬는 동안 (${md2(tdAdd(prevW, 1))}~${md2(tdAdd(today, -1))}) <span class="muted small">아래 목록에 표시돼 있어요</span></h3>
-      <div class="tk-after-n"><span><b>${newIds.size}</b>개 새로 생김</span><span><b>${approvedOff.length}</b>개 대표가 승인</span><span><b>${autoOff.length}</b>개 저절로 끝남</span></div>
-      ${autoOff.length ? `<div class="tk-why">저절로 끝난 일: ${autoOff.map(t => `${escHtml(tkName(t) || t.title)}(${escHtml(t.done_evidence || '')})`).join(' · ')}</div>` : ''}</div>` : ''}
-    ${ceoBox ? `<div class="box tk-ceo-box"><h3><i class="fa-solid fa-stamp" style="color:#b45309;"></i> 대표 결정함 <span class="tk-n">${ceo.length + offDue.length}</span> <span class="muted small">승인하면 담당 팀에 바로 알림</span></h3>${kindChips(ceoAll, ck, 'tasksCeoKind')}<div class="tk-ceo-grid">${ceoCards || '<div class="muted">이 종류는 결정할 일이 없어요</div>'}</div></div>` : ''}
-    ${beforeOff.length ? `<div class="box tk-before"><h3><i class="fa-solid fa-hourglass-half" style="color:#b91c1c;"></i> 쉬기 전에 할 일 <span class="tk-n red">${beforeOff.length}</span> <span class="muted small">${md2(beforeNext)} 전 마감</span></h3>${beforeOff.map(t => taskRow(t, today, cal)).join('')}</div>` : ''}
-    <div class="box tk-box"><h3><i class="fa-solid fa-list-check" style="color:#4f46e5;"></i> 팀별 할 일 <span class="muted small">기한 순${offToday ? ` · 오늘 직원 쉼 — 다음 출근 ${md2(nextW)}` : ''}</span></h3>
-      ${tabs}
-      ${kindChips(teamWork, kind, 'tasksKind')}
-      ${shown.length ? shown.map(t => taskRow(t, today, cal, chipFor(t))).join('') : `<div class="muted tk-empty">${kind ? `${escHtml(kind)} 할 일이 없어요` : team ? `${escHtml(team)} 할 일이 없어요` : '지금 할 일이 없어요'}</div>`}
-      <div class="muted small chk-hint">○ 체크 = 완료 · 잘못 누르면 '최근 완료'에서 되돌리기</div>
+    ${teamSummary(m, d, false)}
+    <div class="box tk-ceo-box"><h3><i class="fa-solid fa-stamp" style="color:#b45309;"></i> 결정 대기 <span class="tk-n">${ceoAll.length}</span></h3>
+      ${ceoAll.length ? `${kindChips(ceoAll, ck, 'tasksCeoKind')}<div class="tk-ceo-grid">${cards || '<div class="muted">이 종류는 결정할 일이 없어요</div>'}</div>` : '<div class="muted tk-empty">결정할 일이 없어요</div>'}
     </div>
-    ${stale.length ? `<div class="box tk-stale"><h3><i class="fa-solid fa-circle-question" style="color:#6b7280;"></i> 확인 후 닫기 <span class="tk-n gray">${stale.length}</span> <span class="muted small">더는 제안 안 됨 — 했으면 완료, 아니면 닫기</span></h3>${stale.map(t => `<div class="tk-row"><span class="tk-check"><i class="fa-solid fa-question"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span><span class="tk-doneby">${md2(t.stale_since)}부터 제안 없음</span>${srcChips(t)}</div><div class="tk-stale-btns"><button class="btn sm ghost" onclick="taskDone('${t.id}', this)"><i class="fa-solid fa-check"></i> 했어요</button><button class="btn sm ghost" onclick="taskClose('${t.id}', this)"><i class="fa-solid fa-xmark"></i> 닫기</button></div></div></div>`).join('')}</div>` : ''}
-    ${rules.length ? `<div class="box tk-rules"><h3><i class="fa-solid fa-shield-halved" style="color:#0e7490;"></i> 지킬 원칙 <span class="muted small">계속 지킬 것</span></h3>${rules.map(t => `<div class="tk-rule">${taskHead(t)}<span class="tk-team">${escHtml(t.owner)}</span>${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}</div>`).join('')}</div>` : ''}
-    ${done.length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 최근 완료 ${done.length}개 <span class="muted small">7일 · 자동 확인 ${done.filter(t => t.done_how === 'auto').length}개</span></summary><div class="box">${done.map(doneRow).join('')}</div></details>` : ''}
-    ${held.length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 대표가 보류한 일 ${held.length}개 <span class="muted small">7일 뒤 다시 결정함으로</span></summary><div class="box">${held.map(t => `<div class="tk-row done"><span class="tk-check"><i class="fa-solid fa-pause"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-meta">${kindChip(t)}<span class="tk-doneby">${escHtml(t.decided_by || '')} · ${timeLabel(t.decided_at)}${t.decision_note ? ` · ${escHtml(t.decision_note)}` : ''}</span>${isCeo() ? `<button class="linkish" onclick="taskDecide('${t.id}','undo',this)">되돌리기</button>` : ''}</div></div></div>`).join('')}</div></details>` : ''}`;
-  tasksNavBadge(ceo.length + offDue.length);
+    ${held.length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 보류한 일 ${held.length}개 <span class="muted small">7일 뒤 다시 결정함으로</span></summary><div class="box">${held.map(t => `<div class="tk-row done"><span class="tk-check"><i class="fa-solid fa-pause"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-meta">${kindChip(t)}<span class="tk-doneby">${escHtml(t.decided_by || '')} · ${timeLabel(t.decided_at)}${t.decision_note ? ` · ${escHtml(t.decision_note)}` : ''}</span>${isCeo() ? `<button class="linkish" onclick="taskDecide('${t.id}','undo',this)">되돌리기</button>` : ''}</div></div></div>`).join('')}</div></details>` : ''}`;
+}
+
+function drawBoard(m, d) {
+  const { today, cal, work, done, stale, rules, beforeIds, newIds, approvedOff, autoOff } = m;
+  const team = tasksState.team, kind = tasksState.kind;
+  const teamAllOff = k => ((d.team_off || {})[k] || []).includes(today);
+  const inTeam = t => !team || t.owner === team;
+  const teamWork = work.filter(inTeam);
+  const pick = t => !kind || t.kind === kind;
+  const byDue = (a, b) => (beforeIds.has(b.id) ? 1 : 0) - (beforeIds.has(a.id) ? 1 : 0) || String(a.due || '9').localeCompare(String(b.due || '9')) || String(a.first_seen).localeCompare(String(b.first_seen));
+  const todo = teamWork.filter(t => !t.started_at && pick(t)).sort(byDue);
+  const doing = teamWork.filter(t => t.started_at && pick(t)).sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)));
+  const fin = done.filter(t => inTeam(t) && pick(t));
+  const chipFor = t => (beforeIds.has(t.id) ? `<span class="tk-new red"><i class="fa-solid fa-hourglass-half"></i> 쉬기 전 마감</span>` : '')
+    + (isStaffTask(t) && teamAllOff(t.owner) ? '<span class="tk-new"><i class="fa-solid fa-umbrella-beach"></i> 팀 전원 휴가</span>' : '')
+    + (newIds.has(t.id) ? '<span class="tk-new"><i class="fa-solid fa-moon"></i> 쉬는 동안 생김</span>' : (approvedOff.some(x => x.id === t.id) ? '<span class="tk-new"><i class="fa-solid fa-stamp"></i> 쉬는 동안 승인</span>' : ''))
+    + (team ? '' : `<span class="tk-team">${escHtml(t.owner)}</span>`);
+  const doneRow = t => `<div class="kb-done"><i class="fa-solid ${t.status === 'closed' ? 'fa-xmark' : t.done_how === 'auto' ? 'fa-robot' : 'fa-check'}"></i><div><b>${escHtml(tkName(t) || '')}</b> ${escHtml(t.title)}<div class="muted small">${t.status === 'closed' ? '닫음' : t.done_how === 'auto' ? `자동 확인${t.done_evidence ? ` · ${escHtml(t.done_evidence)}` : ''}` : escHtml(t.done_by || '')} · ${timeLabel(t.done_at)} <button class="linkish" onclick="taskUndo('${t.id}', this)">되돌리기</button></div></div></div>`;
+  const col = (cls, icon, title, n, body, empty) => `<section class="kb-col ${cls}"><h4><i class="fa-solid ${icon}"></i> ${title} <span class="kb-n">${n}</span></h4>${body || `<div class="muted small kb-empty">${empty}</div>`}</section>`;
+  $('tasks-body').innerHTML = `
+    ${leaveStripHtml(m, d)}
+    ${m.afterOff && (newIds.size || approvedOff.length || autoOff.length) ? `<div class="tk-afterline"><i class="fa-solid fa-mug-hot"></i> 쉬는 동안 · 새로 생김 <b>${newIds.size}</b> · 대표 승인 <b>${approvedOff.length}</b> · 자동 완료 <b>${autoOff.length}</b></div>` : ''}
+    ${teamSummary(m, d, true)}
+    ${kindChips(teamWork, kind, 'tasksKind')}
+    <div class="kb">
+      ${col('todo', 'fa-inbox', '할 일', todo.length, todo.map(t => taskRow(t, today, cal, chipFor(t))).join(''), kind || team ? '해당하는 할 일이 없어요' : '할 일이 없어요')}
+      ${col('doing', 'fa-person-running', '진행 중', doing.length, doing.map(t => taskRow(t, today, cal, chipFor(t))).join(''), '할 일에서 ▶ 시작을 누르면 여기로 와요')}
+      ${col('fin', 'fa-circle-check', '완료 · 7일', fin.length, fin.map(doneRow).join(''), '아직 없어요')}
+    </div>
+    ${stale.filter(inTeam).length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 확인 후 닫기 ${stale.filter(inTeam).length}개 <span class="muted small">더는 제안 안 됨 — 했으면 완료, 아니면 닫기</span></summary><div class="box">${stale.filter(inTeam).map(t => `<div class="tk-row"><span class="tk-check"><i class="fa-solid fa-question"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span><span class="tk-doneby">${md2(t.stale_since)}부터 제안 없음</span></div><div class="tk-stale-btns"><button class="btn sm ghost" onclick="taskDone('${t.id}', this)"><i class="fa-solid fa-check"></i> 했어요</button><button class="btn sm ghost" onclick="taskClose('${t.id}', this)"><i class="fa-solid fa-xmark"></i> 닫기</button></div></div></div>`).join('')}</div></details>` : ''}
+    ${rules.filter(inTeam).length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> <i class="fa-solid fa-shield-halved" style="color:#0e7490;"></i> 지킬 원칙 ${rules.filter(inTeam).length}개</summary><div class="box">${rules.filter(inTeam).map(t => `<div class="tk-rule">${taskHead(t)}<span class="tk-team">${escHtml(t.owner)}</span>${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}</div>`).join('')}</div></details>` : ''}`;
 }
 function tasksNavBadge(n) {
-  const a = document.querySelector('.nav a[data-key="todo"]'); if (!a) return;
+  const a = document.querySelector('.nav a[data-key="decide"]'); if (!a) return;
   a.querySelector('.nav-n')?.remove();
   if (n && isCeo()) a.insertAdjacentHTML('beforeend', `<span class="nav-n" title="대표 결정 대기">${Number(n)}</span>`);
 }
@@ -303,6 +346,7 @@ async function taskCall(action, body, btn, okMsg) {
   catch (e) { btn.disabled = false; toast('저장 실패: ' + e.message); }
 }
 const taskDone = (id, btn) => taskCall('done', { id }, btn, '완료로 표시했어요');
+const taskStart = (id, btn, undo) => taskCall('start', undo ? { id, undo: true } : { id }, btn, undo ? '시작을 취소했어요' : '진행 중으로 옮겼어요');
 const taskUndo = (id, btn) => taskCall('done', { id, undo: true }, btn, '다시 할 일로 돌렸어요');
 const taskPostpone = (id, btn) => taskCall('postpone', { id }, btn, '다음 출근일로 미뤘어요');
 function taskClose(id, btn, ask) { if (ask && !confirm(ask)) return; taskCall('close', { id }, btn, '닫았어요 — 다음 보고서에서 빠져요'); }
@@ -334,7 +378,7 @@ async function taskCreative(no, btn) {
       const fresh = rows.find(r => r.agent === 'creative' && new Date(r.created_at).getTime() > startedAt - 60000);
       if (!fresh) continue;
       if (fresh.status === 'error') { toast('제작안 실패: ' + (fresh.error || '원인 미상')); break; }
-      if (fresh.status === 'ok') { (tasksState.data.creative ||= {})[no] = { report_id: fresh.id, date: tasksState.data.today }; toast('제작안이 도착했어요'); if (location.hash.startsWith('#todo') || !location.hash) tasksDraw(); return; }
+      if (fresh.status === 'ok') { (tasksState.data.creative ||= {})[no] = { report_id: fresh.id, date: tasksState.data.today }; toast('제작안이 도착했어요'); if (/^#(board|decide)/.test(location.hash)) tasksDraw(); return; }
     }
   } catch (e) { toast('실패: ' + e.message); }
   btnIdle(btn, '<i class="fa-solid fa-wand-magic-sparkles"></i> 제작안 만들기');
