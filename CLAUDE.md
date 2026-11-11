@@ -139,6 +139,12 @@
 - ⚠ **반쪽 자료 사고(2026-10-28 실사례)**: Meta 페이징 중간 503에 `graphGetAll`이 조용히 멈춰 10/22까지만 든 자료가 10분 캐시에 남았고, 보고서가 '어제 지출 0원·치고 올라오는 소재 없음'으로 나갔다(그 행은 삭제). 고침: 워크스페이스 `addaily`는 페이지마다 3회 재시도(2·4초)·끝내 실패하면 오류·캐시 안 함·`nocache=1` 지원 / 담당자 `fetchDaily()`는 어제(D) 행이 없으면 3초 뒤 nocache로 한 번 더, 그래도 없으면 **throw**(error 행 — 틀린 보고서보다 실패). 수집 평소 15~60초, 재시도 시 +30초.
 - ⚠ Meta 503이 간헐적으로 남(실측 summary·pausedads) — 항목별 safe라 나머지로 진행하고 errors에 남김. `addaily`가 12쪽(6,000행)을 넘으면 `truncated`.
 
+## 3-7a. ⏰ 발행 시각 = 자정 직후 (2026-11-11 사용자 "매일 00:05부터 순서대로, 최대한 빨리 끝나게")
+- **지금 시각(KST)**: 숫자판 jobid 2 `5 15 * * *`(00:05) → 루틴 반품 `7 15`(00:07) → 전략 `11 15`(00:11) → 광고 운영 `15 15`(00:15) → 요약 `19 15`(00:19). 각 루틴은 선행 보고서가 없으면 2분씩 최대 12번 기다리므로 시각은 '실제 걸리는 시간(숫자판 약 1분, 루틴 2~4분)'에 맞춘 출발점일 뿐 — 예상 끝 00:20~00:30. API 안전장치(only_if_missing): 반품 3 `35 15`(00:35) · 전략 4 `45 15`(00:45) · 광고 10 `55 15`(00:55) · 요약 9 `5 16`(01:05). 아래 3-7의 08시대 시각은 옛 기록.
+- **자정에 돌려도 어제 데이터가 다 있나(실측)**: 카페24 애널리틱스(ca-api 조회·상품별 주문)는 거의 실시간 — 11/11 17:54에 같은 날 ca-api 주문/관리자 API 주문 비율 1.54 vs 하루 끝난 11/10 1.50(몇 시간 밀림 없음). 매출(관리자 API 주문)·취소·반품(클레임)은 실시간. Meta 광고비도 실시간에 가깝고, 구매 전환은 원래 며칠간 뒤늦게 붙어 08시에 돌려도 같음. 네이버 데이터랩 순위는 원래 저장본(D-1) 사용이라 변화 없음. 측정 방법: _shared serveAgent의 collect 날짜 제한을 잠시 풀어 sales-agent만 배포 → 오늘 날짜 collect → 되돌려 재배포.
+- **알림**: 사용자 "보고서 작성이 끝나면 대표·직원 모두 바로" — 기존 그대로(요약 always, 반품·전략·광고 운영은 mood bad일 때, 받는 사람 = 관리자 + 알림 켠 직원). 2026-11-11 기준 알림 켠 직원 3명은 휴대폰 푸시 등록이 0이라 앱 알림함으로만 받음(각자 기기에서 푸시 허용 필요). 대표 결정함 아침 알림(team-tasks-morning 09:20)은 그대로.
+- 화면 문구(agents.js 담당 카드 schedule·조직도 시각, reports.js 빈 목록 문구)도 0시대로 바꿈.
+
 ## 3-7. 클라우드 루틴으로 아침 보고서 쓰기 (`supabase/functions/agent-routine`, 2026-11-01 — 사용자 "API 비용 없이 내 계정 사용량(Max)으로", "버튼은 크레딧으로")
 - **배경**: 10/29부터 Anthropic API 잔액 부족("credit balance is too low")으로 아침 보고서 전부 실패. 사용자 결정: 매일 자동 보고서 4종(반품·전략·광고 운영·요약)은 **claude.ai 예약 루틴(클라우드 Claude Code 세션, 구독 사용량)**이 쓰고, 앱 '지금 실행'·요청형(상세 점검·광고 소재·질문)은 그대로 API 크레딧.
 - **구조**: `_shared/agent.ts` `routinePrepare(def, D)`(= run 1단계 + Claude에 보낼 system·schema·user_text를 그대로 반환, api_cache `agentrun:…` 저장, 요약은 숫자판 재사용) / `routineSubmit(def, D, key, report, usage, model)`(= writeStage 뒷부분: required 칸 검사 → leanFix → postProcess → resolveProductNos → 저장(trigger 'routine', usage.source 'routine') → 알림). 함수 `agent-routine`(비밀 `ROUTINE_SECRET`, 헤더 `x-routine-secret`): `prepare {agent, date?}` → `{done}`(이미 ok 보고서) / `{wait, reason}`(선행 조건 `PREREQ`: 반품 ← 숫자판 collected, 전략 ← 반품 ok, 광고 운영 ← 전략 ok, 요약 ← 반품·전략·광고 운영 ok) / 재료 — `submit {agent, date, key, report, usage?, model?}` → ok / 400(누락 칸) / 500.

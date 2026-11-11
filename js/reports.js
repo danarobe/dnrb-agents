@@ -122,7 +122,7 @@ async function renderReports(id) {
         <span class="ri-top"><b>${dateShort(r.report_date)}</b> <span class="muted">${a.short || a.name} · ${r.trigger === 'cron' ? '자동' : '수동'}</span></span>
         <span class="ri-line">${r.status === 'error' ? '보고서 실패' : escHtml(r.report?.headline || a.name)}</span>
       </span></a>`;
-  }).join('') : `<div class="muted pad">${filterAgent ? escHtml(agentOf(filterAgent)?.name || '') + '의 보고서가 아직 없어요.' : '아직 보고서가 없어요. 매일 아침 8시에 자동으로 도착하고, <b>지금 실행</b>으로 바로 만들 수도 있어요.'}</div>`;
+  }).join('') : `<div class="muted pad">${filterAgent ? escHtml(agentOf(filterAgent)?.name || '') + '의 보고서가 아직 없어요.' : '아직 보고서가 없어요. 매일 0시 5분부터 자동으로 도착하고, <b>지금 실행</b>으로 바로 만들 수도 있어요.'}</div>`;
   $('report-view').innerHTML = cur ? reportHtml(cur) : '<div class="muted pad">왼쪽에서 보고서를 고르세요.</div>';
   stackTables($('report-view'));
   if (cur && cur.status === 'ok' && cur.report && typeof askLoad === 'function') askLoad(cur.id);   // 담당자에게 질문 (2026-09-15)

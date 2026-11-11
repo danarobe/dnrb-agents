@@ -7,25 +7,25 @@
 const AGENTS = [
   {
     key: 'sales', name: '오늘의 요약', icon: 'fa-newspaper', color: '#4f46e5', status: 'active', fn: 'sales-agent',
-    schedule: '매일 아침 8시 45분 (숫자판은 8시)',
+    schedule: '매일 0시 19분 (숫자판은 0시 5분)',
     desc: '대표가 아침에 이 한 장만 봐도 되게 씁니다. 8시에 어제 매출 숫자판을 모아 두고, 반품·전략 담당이 그걸 보고 일한 뒤, 8시 45분에 숫자 흐름 + 팀 결론(출처) + 팀 통합 할 일 + 대표 결정 필요만 정리합니다. 상품별 분석은 하지 않습니다.',
     sources: ['매출 숫자판', '오늘 반품·전략 보고서', '광고 소재·상세 점검 보고서'],
   },
   {
     key: 'returns', name: '취소·반품 감시 담당', icon: 'fa-rotate-left', color: '#b91c1c', status: 'active', fn: 'returns-agent',
-    schedule: '매일 아침 8시 15분',
+    schedule: '매일 0시 7분',
     desc: '취소·반품이 지난주보다 늘었는지, 잘 팔리는데 반품 많은 상품과 옵션·사유를 찾아 상세페이지·검수·출고 대응을 제안합니다. 관리 상품은 나아졌는지 판정합니다.',
     sources: ['카페24 취소반품', '순반품률(7/14/30일)', '반품 사유', '반품 관리 목록'],
   },
   {
     key: 'strategy', name: '상품 전략 담당', icon: 'fa-chess', color: '#0891b2', status: 'active', fn: 'strategy-agent',
-    schedule: '매일 아침 8시 30분',
+    schedule: '매일 0시 11분',
     desc: '오늘의 결론 칩(밀기·보류·점검·시즌·소싱)과 판매량 급증 TOP10(광고 수·7일 광고비·ROAS·주문율)으로 시작해, 신상품을 조회수×주문율 4분면 격자로 나누고, 급상승·TOP10 집중 상품은 숫자(조회·주문율·판매·마진·ON 광고·14일 광고비·ROAS·이벤트)로 현재 상태와 판매 확대 액션을 씁니다. 잘 팔리는 상품의 코디 상품은 주문 동반 비율로 가려냅니다. 소재 분석은 광고 소재 담당 몫.',
     sources: ['카페24 NEW ARRIVALS', '조회수·주문율', '혜택(1+1·할인)', 'Meta 광고 소재'],
   },
   {
     key: 'ads', name: '광고 운영 담당', icon: 'fa-sliders', color: '#ea580c', status: 'active', fn: 'ads-agent',
-    schedule: '매일 아침 8시 35분 (오늘의 요약 바로 앞)',
+    schedule: '매일 0시 15분 (오늘의 요약 바로 앞)',
     desc: 'Meta 소재별 일별 성과와 카페24 매출로 어제 광고 보고서를 직접 씁니다: 요약 카드 7 → 14일 흐름(광고비·ROAS·자연 매출 비율) → 신규 테스트(상품별 3일차까지) → 치고 올라오는 소재 → 하락 소재 → 주의 → 상품별 힘주기 / 증액 보류 / 다시 켜기 / 줄이기 / 유지. 예산을 바꾸지는 않습니다.',
     sources: ['Meta 소재별 일별 성과 14일', '카페24 일별 매출·어제 판매', '오늘 상품 전략·반품 보고서', 'Meta ON·꺼진 광고'],
   },
@@ -92,13 +92,13 @@ async function renderHome() {
 
 /* ── 사무실 조직도 (2026-10-17 사용자 요청 "사무실 부서처럼 한눈에" → 같은 날 "글이 너무 많아 복잡하다" 지적으로 단순화) ──
    그림에는 아이콘·이름·시간·한 줄 질문·화살표만. 설명은 접힌 '이 그림 읽는 법' 안에.
-   아침 줄: 매출(08:00) → 반품(08:15) → 전략(08:30). 전략·반품 아래로 상세 점검·광고 소재(요청형)에 '부탁' 화살표.
+   아침 줄: 매출(00:05) → 반품(00:07) → 전략(00:11). 전략·반품 아래로 상세 점검·광고 소재(요청형)에 '부탁' 화살표.
    상태는 orgChartStatus가 실제 최신 보고서로 채운다(오늘 보고 완료 ✓, 넘긴 요청 수). */
 const ORG_DESKS = {
-  returns:  { time: '08:15', q: '반품은 괜찮나?' },
-  strategy: { time: '08:30', q: '어떤 상품을 밀까?' },
-  sales:    { time: '08:45', q: '오늘, 한 장으로?' },
-  ads:      { time: '08:35', q: '어떤 광고에 힘을 줄까?' },
+  returns:  { time: '00:07', q: '반품은 괜찮나?' },
+  strategy: { time: '00:11', q: '어떤 상품을 밀까?' },
+  sales:    { time: '00:19', q: '오늘, 한 장으로?' },
+  ads:      { time: '00:15', q: '어떤 광고에 힘을 줄까?' },
   detail:   { time: '요청하면', q: '상세 어디를 고칠까?' },
   creative: { time: '월요일 · 요청하면', q: '어떤 소재로 팔까?' },
 };
@@ -116,9 +116,9 @@ function orgChartHtml() {
   const right = `<div class="org-arrow"><i class="fa-solid fa-arrow-right-long"></i></div>`;
   const down = (label, cls) => `<div class="org-down ${cls}"><i class="fa-solid fa-arrow-down-long"></i><span>${escHtml(label)}</span></div>`;
   return `<div class="org">
-    <div class="org-head"><b><i class="fa-solid fa-building"></i> 매출 성장팀</b><span class="muted small">08:00 어제 매출 숫자판 → 반품·전략·광고 운영이 보고 일하고 → 요약이 한 장으로 마무리</span></div>
+    <div class="org-head"><b><i class="fa-solid fa-building"></i> 매출 성장팀</b><span class="muted small">00:05 어제 매출 숫자판 → 반품·전략·광고 운영이 보고 일하고 → 요약이 한 장으로 마무리</span></div>
     <div class="org-rules">
-      <div class="rule"><span class="rule-k daily"><i class="fa-solid fa-sun"></i> 매일 자동</span><span>08:00 숫자판 → 08:15 취소·반품 → 08:30 상품 전략 → 08:35 광고 운영 → 08:45 오늘의 요약 <b class="muted">(알림은 요약 1번)</b></span></div>
+      <div class="rule"><span class="rule-k daily"><i class="fa-solid fa-sun"></i> 매일 자동</span><span>00:05 숫자판 → 00:07 취소·반품 → 00:11 상품 전략 → 00:15 광고 운영 → 00:19 오늘의 요약 <b class="muted">(알림은 요약 1번)</b></span></div>
       <div class="rule"><span class="rule-k weekly"><i class="fa-solid fa-calendar-week"></i> 매주 자동</span><span>월요일 09:00 광고 소재 — 급상승 5 + 베스트 5 상품 제작안</span></div>
       <div class="rule"><span class="rule-k ask"><i class="fa-solid fa-hand-pointer"></i> 요청할 때</span><span>상세페이지 점검 · 광고 소재 1개 · 담당자에게 질문 — 버튼으로만, 자동 실행 없음</span></div>
     </div>
@@ -129,7 +129,7 @@ function orgChartHtml() {
     </div>
     <details class="org-help"><summary><i class="fa-regular fa-circle-question"></i> 이 그림 읽는 법</summary>
       <ul>
-        <li><b>→</b> 08:00에 모인 매출 숫자판(급등·하락 상품)을 반품·전략이 읽고 답하고, 요약이 둘의 보고서를 합쳐 한 장으로 씁니다. 예: 숫자판 "이 상품 급등" → 반품 "반품률 8%로 안전" → 요약 "확대 적합".</li>
+        <li><b>→</b> 00:05에 모인 매출 숫자판(급등·하락 상품)을 반품·전략이 읽고 답하고, 요약이 둘의 보고서를 합쳐 한 장으로 씁니다. 예: 숫자판 "이 상품 급등" → 반품 "반품률 8%로 안전" → 요약 "확대 적합".</li>
         <li><b>부탁</b> 전략·반품이 "이 상품 상세 점검해 줘", "이 상품 소재 만들어 줘"라고 넘기면, 보고서의 버튼으로 바로 실행합니다.</li>
         <li><b>✓</b> 오늘 보고서가 나왔다는 뜻. 담당자를 누르면 그 보고서로 갑니다. 담당자는 제안만 하고, 결정은 대표가 합니다.</li>
       </ul>
