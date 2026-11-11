@@ -23,10 +23,12 @@
      보드 = 팀 현황 카드(할 일·진행 중·기한 지남·7일 완료, 누르면 그 팀만) + 칸 3개(할 일 → 진행 중 → 완료 7일). '▶ 시작' = started_at(서버 start).
    7차(2026-11-11, 사용자): 승인 방식 이름 '소재 공급 필요'·'담당 부서 판단' / 할 일·진행 중 카드에 '미진행'(이유 필수 → closed·done_how skip·skip_reason, 결정함에 접힌 목록)
      / 미진행은 이유별로 쉬는 기간(skip_until — 시즌 90일·재고 14일·더 급한 일 7일·그 외 30일), 그 사이 판매 급등이면 다시(서버 sync, reopen_note 칩)
+     / 같은 날 '시작·완료 체크 통합': 할 일 카드 = '▶ 시작' · '시작과 함께 완료'(done start:true) · '미진행', 왼쪽 동그라미 = 고르기 →
+       아래 묶음 막대에서 한 번에 시작 / 시작과 함께 완료 / 미진행(이유 하나). 칸 제목의 '모두 고르기'.
      / 상세 보강 카드의 '자세히&권장방안' — 제목·근거의 사유(사이즈·기장·색상·원단·취소)로 고칠 방법 + 상세 점검 담당 결과(detail_review, 있으면).
    같은 날 사용자 "광고 착수 상품 중 5일 이상 ON됐던 광고·지금 활성 광고 수": 광고 착수 카드에 기존 광고 이력(ad_hist — 최근 90일 Meta 지출 있던 날 5일↑ 광고 수, 켜짐/꺼짐, 꺼진 것들 ROAS, 목록).
 ────────────────────────────────────────── */
-const tasksState = { data: null, team: '', kind: '', ceoKind: '' };
+const tasksState = { data: null, team: '', kind: '', ceoKind: '', sel: new Set() };   // sel = 보드에서 고른 할 일(한 번에 처리)
 const TEAMS = ['MD/컨텐츠팀', '물류/CS팀', '대표'];   // 2026-11-10 'CS팀' → '물류/CS팀', 같은 날 광고팀·상품팀 → 'MD/컨텐츠팀'(역할 통합)
 const AUTO_KIND = { '광고 착수': 'ON 광고가 늘면', '광고 줄이기': 'ON 광고가 줄면', '상세 보강': '상세 이미지가 바뀌면' };
 const KIND_ICON = { '광고 착수': 'fa-play', '광고 증액': 'fa-arrow-trend-up', '광고 줄이기': 'fa-arrow-trend-down', '상세 보강': 'fa-file-image', '노출·기획전': 'fa-store', 'CS·출고': 'fa-truck', '재고·소싱': 'fa-boxes-stacked', '가격·혜택': 'fa-tag', '지킬 원칙': 'fa-shield-halved', '기타': 'fa-circle-dot' };
@@ -68,7 +70,7 @@ async function tasksLoad() {
 async function renderTasks(view) {
   tasksState.view = view === 'decide' ? 'decide' : 'board';
   const main = $('main');
-  const head = tasksState.view === 'decide' ? ['대표 결정함', '승인하면 담당 팀에 바로 알림 · 팀 칸을 누르면 작업보드로'] : ['팀 작업보드', '할 일 → ▶ 시작 → 완료 · 광고 켜기·상세 보강은 자동 완료'];
+  const head = tasksState.view === 'decide' ? ['대표 결정함', '승인하면 담당 팀에 바로 알림 · 팀 칸을 누르면 작업보드로'] : ['팀 작업보드', '▶ 시작 또는 시작과 함께 완료 · 동그라미로 여러 개 골라 한 번에 · 광고 켜기·상세 보강은 자동 완료'];
   main.innerHTML = `<div class="page-head"><div><h1>${head[0]}</h1><p class="sub">${head[1]}</p></div></div><div id="tasks-body"><div class="muted"><i class="fa-solid fa-spinner fa-spin"></i> 불러오는 중</div></div>`;
   try { await tasksLoad(); tasksDraw(); }
   catch (e) { $('tasks-body').innerHTML = `<div class="box err-text">할 일을 불러오지 못했어요: ${escHtml(e.message)}</div>`; }
@@ -197,11 +199,13 @@ function taskRow(t, today, cal, extraChip = '') {
   // 진행 중(started_at): 맨 위 파란 칩 + '완료' 버튼 / 아직이면 '▶ 시작'
   const doing = !!t.started_at;
   const skipBtn = `<button class="btn sm ghost tk-skip-btn" onclick="taskSkipOpen(this)"><i class="fa-solid fa-ban"></i> 미진행</button>`;
+  // 2026-11-11 사용자 "시작·완료 체크 통합": 할 일 = '▶ 시작' · '시작과 함께 완료' / 왼쪽 동그라미 = 여러 개 고르기(아래 묶음 막대로 한 번에)
   const acts = doing
     ? `<button class="btn sm primary" onclick="taskDone('${t.id}', this)"><i class="fa-solid fa-check"></i> 완료</button>${skipBtn}<button class="linkish" onclick="taskStart('${t.id}', this, true)">시작 취소</button>`
-    : `<button class="btn sm ghost" onclick="taskStart('${t.id}', this)"><i class="fa-solid fa-play"></i> 시작</button>${skipBtn}`;
-  return `<div class="tk-row${doing ? ' doing' : ''}" data-id="${t.id}">
-    <button class="tk-check" onclick="taskDone('${t.id}', this)" title="완료로 표시"><i class="fa-solid fa-check"></i></button>
+    : `<button class="btn sm ghost" onclick="taskStart('${t.id}', this)"><i class="fa-solid fa-play"></i> 시작</button><button class="btn sm ghost tk-sd-btn" onclick="taskStartDone('${t.id}', this)"><i class="fa-solid fa-check-double"></i> 시작과 함께 완료</button>${skipBtn}`;
+  const sel = tasksState.sel.has(t.id);
+  return `<div class="tk-row${doing ? ' doing' : ''}${sel ? ' sel' : ''}" data-id="${t.id}">
+    <button class="tk-check pick${sel ? ' on' : ''}" onclick="taskSel('${t.id}', this)" title="골라서 한 번에 처리" aria-pressed="${sel}"><i class="fa-solid fa-check"></i></button>
     <div class="tk-main">
       ${taskHead(t)}
       ${reopenLine(t)}
@@ -355,19 +359,87 @@ function drawBoard(m, d) {
     + (newIds.has(t.id) ? '<span class="tk-new"><i class="fa-solid fa-moon"></i> 쉬는 동안 생김</span>' : (approvedOff.some(x => x.id === t.id) ? '<span class="tk-new"><i class="fa-solid fa-stamp"></i> 쉬는 동안 승인</span>' : ''))
     + (team ? '' : `<span class="tk-team">${escHtml(t.owner)}</span>`);
   const doneRow = t => { const sk = t.status === 'closed' && t.done_how === 'skip'; return `<div class="kb-done${sk ? ' skip' : ''}"><i class="fa-solid ${sk ? 'fa-ban' : t.status === 'closed' ? 'fa-xmark' : t.done_how === 'auto' ? 'fa-robot' : 'fa-check'}"></i><div><b>${escHtml(tkName(t) || '')}</b> ${escHtml(t.title)}${sk ? `<div class="tk-skip-r"><b>미진행</b> ${escHtml(t.skip_reason || '')}${t.skip_until ? ` · ${md2(t.skip_until)}까지 쉼` : ''}</div>` : ''}<div class="muted small">${sk ? escHtml(t.done_by || '') : t.status === 'closed' ? '닫음' : t.done_how === 'auto' ? `자동 확인${t.done_evidence ? ` · ${escHtml(t.done_evidence)}` : ''}` : escHtml(t.done_by || '')} · ${timeLabel(t.done_at)} <button class="linkish" onclick="taskUndo('${t.id}', this)">되돌리기</button></div></div></div>`; };
-  const col = (cls, icon, title, n, body, empty) => `<section class="kb-col ${cls}"><h4><i class="fa-solid ${icon}"></i> ${title} <span class="kb-n">${n}</span></h4>${body || `<div class="muted small kb-empty">${empty}</div>`}</section>`;
+  // 고른 할 일은 지금 보이는 할 일·진행 중 카드 안에서만 유지(필터를 바꾸거나 처리되면 빠짐)
+  const visible = new Set([...todo, ...doing].map(t => t.id));
+  for (const id of [...tasksState.sel]) if (!visible.has(id)) tasksState.sel.delete(id);
+  const allBtn = list => list.length ? `<button class="linkish kb-all" onclick="taskSelAll('${list.map(t => t.id).join(',')}')">${list.every(t => tasksState.sel.has(t.id)) ? '고르기 해제' : '모두 고르기'}</button>` : '';
+  const col = (cls, icon, title, n, body, empty, extra = '') => `<section class="kb-col ${cls}"><h4><i class="fa-solid ${icon}"></i> ${title} <span class="kb-n">${n}</span>${extra}</h4>${body || `<div class="muted small kb-empty">${empty}</div>`}</section>`;
   $('tasks-body').innerHTML = `
     ${leaveStripHtml(m, d)}
     ${m.afterOff && (newIds.size || approvedOff.length || autoOff.length) ? `<div class="tk-afterline"><i class="fa-solid fa-mug-hot"></i> 쉬는 동안 · 새로 생김 <b>${newIds.size}</b> · 대표 승인 <b>${approvedOff.length}</b> · 자동 완료 <b>${autoOff.length}</b></div>` : ''}
     ${teamSummary(m, d, true)}
     ${kindChips(teamWork, kind, 'tasksKind')}
     <div class="kb">
-      ${col('todo', 'fa-inbox', '할 일', todo.length, todo.map(t => taskRow(t, today, cal, chipFor(t))).join(''), kind || team ? '해당하는 할 일이 없어요' : '할 일이 없어요')}
-      ${col('doing', 'fa-person-running', '진행 중', doing.length, doing.map(t => taskRow(t, today, cal, chipFor(t))).join(''), '할 일에서 ▶ 시작을 누르면 여기로 와요')}
+      ${col('todo', 'fa-inbox', '할 일', todo.length, todo.map(t => taskRow(t, today, cal, chipFor(t))).join(''), kind || team ? '해당하는 할 일이 없어요' : '할 일이 없어요', allBtn(todo))}
+      ${col('doing', 'fa-person-running', '진행 중', doing.length, doing.map(t => taskRow(t, today, cal, chipFor(t))).join(''), '할 일에서 ▶ 시작을 누르면 여기로 와요', allBtn(doing))}
       ${col('fin', 'fa-circle-check', '완료 · 7일', fin.length, fin.map(doneRow).join(''), '아직 없어요')}
     </div>
     ${stale.filter(inTeam).length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> 확인 후 닫기 ${stale.filter(inTeam).length}개 <span class="muted small">더는 제안 안 됨 — 했으면 완료, 아니면 닫기</span></summary><div class="box">${stale.filter(inTeam).map(t => `<div class="tk-row"><span class="tk-check"><i class="fa-solid fa-question"></i></span><div class="tk-main">${taskHead(t)}<div class="tk-meta">${kindChip(t)}<span class="tk-team">${escHtml(t.owner)}</span><span class="tk-doneby">${md2(t.stale_since)}부터 제안 없음</span></div><div class="tk-stale-btns"><button class="btn sm ghost" onclick="taskDone('${t.id}', this)"><i class="fa-solid fa-check"></i> 했어요</button><button class="btn sm ghost" onclick="taskClose('${t.id}', this)"><i class="fa-solid fa-xmark"></i> 닫기</button></div></div></div>`).join('')}</div></details>` : ''}
-    ${rules.filter(inTeam).length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> <i class="fa-solid fa-shield-halved" style="color:#0e7490;"></i> 지킬 원칙 ${rules.filter(inTeam).length}개</summary><div class="box">${rules.filter(inTeam).map(t => `<div class="tk-rule">${taskHead(t)}<span class="tk-team">${escHtml(t.owner)}</span>${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}</div>`).join('')}</div></details>` : ''}`;
+    ${rules.filter(inTeam).length ? `<details class="fold"><summary><i class="fa-solid fa-chevron-right"></i> <i class="fa-solid fa-shield-halved" style="color:#0e7490;"></i> 지킬 원칙 ${rules.filter(inTeam).length}개</summary><div class="box">${rules.filter(inTeam).map(t => `<div class="tk-rule">${taskHead(t)}<span class="tk-team">${escHtml(t.owner)}</span>${t.why ? `<div class="tk-why">${escHtml(t.why)}</div>` : ''}</div>`).join('')}</div></details>` : ''}
+    <div id="tk-bulk-slot"></div>`;
+  bulkBar();
+}
+// ── 여러 개 골라 한 번에(2026-11-11 사용자) ──
+function bulkBar() {
+  const slot = $('tk-bulk-slot'); if (!slot) return;
+  const list = tasksState.data?.tasks || [];
+  const picked = [...tasksState.sel].map(id => list.find(t => t.id === id)).filter(Boolean);
+  if (!picked.length) { slot.innerHTML = ''; return; }
+  const ns = picked.filter(t => !t.started_at).length;
+  slot.innerHTML = `<div class="tk-bulk" role="region" aria-label="고른 할 일 한 번에 처리">
+    <div class="tk-bulk-row"><b>${picked.length}개 고름</b>
+      <button class="btn sm ghost" ${ns ? '' : 'disabled title="고른 일이 모두 이미 진행 중이에요"'} onclick="taskBulk('start', this)"><i class="fa-solid fa-play"></i> 한 번에 시작${ns && ns < picked.length ? ` (${ns})` : ''}</button>
+      <button class="btn sm primary" onclick="taskBulk('done', this)"><i class="fa-solid fa-check-double"></i> 한 번에 시작과 함께 완료</button>
+      <button class="btn sm ghost tk-skip-btn" onclick="const f=this.closest('.tk-bulk').querySelector('.tk-skip');f.hidden=!f.hidden;if(!f.hidden)f.querySelector('input').focus()"><i class="fa-solid fa-ban"></i> 한 번에 미진행</button>
+      <button class="linkish" onclick="taskSelClear()">고르기 취소</button></div>
+    <div class="tk-skip" hidden>
+      <div class="tk-skip-h"><i class="fa-solid fa-ban"></i> ${picked.length}개 모두 같은 이유로 닫아요 <span class="muted">시즌 90일 · 재고 14일 · 더 급한 일 7일 · 그 외 30일 쉬었다가 다시 검토 · 판매 급등하면 바로 다시</span></div>
+      <div class="tk-skip-q">${SKIP_QUICK.map(r => `<button type="button" class="kchip" onclick="taskSkipPick(this)">${escHtml(r)}</button>`).join('')}</div>
+      <div class="tk-skip-f"><input type="text" maxlength="200" placeholder="미진행 이유" aria-label="미진행 이유" onkeydown="if(event.key==='Enter'&&!event.isComposing)this.nextElementSibling.click()"><button class="btn sm primary" onclick="taskBulkSkip(this)">${picked.length}개 미진행으로 닫기</button></div>
+    </div>
+  </div>`;
+}
+function taskSel(id, btn) {
+  const s = tasksState.sel, on = !s.has(id);
+  if (on) s.add(id); else s.delete(id);
+  btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on));
+  btn.closest('.tk-row')?.classList.toggle('sel', on);
+  bulkBar();
+}
+function taskSelAll(ids) {
+  const a = ids.split(',').filter(Boolean), all = a.every(id => tasksState.sel.has(id));
+  a.forEach(id => all ? tasksState.sel.delete(id) : tasksState.sel.add(id));
+  tasksDraw();
+}
+function taskSelClear() { tasksState.sel.clear(); tasksDraw(); }
+function taskBulkSkip(btn) {
+  const i = btn.closest('.tk-skip').querySelector('input'), reason = String(i.value || '').trim();
+  if (reason.length < 2) { toast('미진행 이유를 적어 주세요'); i.focus(); return; }
+  taskBulk('skip', btn, reason);
+}
+// 고른 일을 5개씩 나눠 서버에 보냄 — 하나가 실패해도 나머지는 처리하고, 실패한 것은 고른 채로 남긴다
+async function taskBulk(kind, btn, reason = '') {
+  const list = tasksState.data?.tasks || [];
+  const picked = [...tasksState.sel].map(id => list.find(t => t.id === id)).filter(Boolean);
+  const jobs = kind === 'start' ? picked.filter(t => !t.started_at).map(t => ['start', { id: t.id }])
+    : kind === 'done' ? picked.map(t => ['done', t.started_at ? { id: t.id } : { id: t.id, start: true }])
+    : picked.map(t => ['skip', { id: t.id, reason }]);
+  if (!jobs.length) return;
+  const label = { start: '시작', done: '시작과 함께 완료', skip: '미진행' }[kind];
+  if (jobs.length >= 5 && !confirm(`${jobs.length}개를 한 번에 '${label}' 할까요?`)) return;
+  btn.closest('.tk-bulk')?.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  let ok = 0; const failed = [];
+  for (let i = 0; i < jobs.length; i += 5) {
+    const part = jobs.slice(i, i + 5);
+    const res = await Promise.allSettled(part.map(([a, b]) => callFn('agent-tasks', { action: a }, { method: 'POST', body: JSON.stringify(b) })));
+    res.forEach((r, j) => {
+      const id = part[j][1].id;
+      if (r.status === 'fulfilled' && r.value?.task) { const k = list.findIndex(t => t.id === id); if (k >= 0) list[k] = r.value.task; tasksState.sel.delete(id); ok++; }
+      else failed.push(id);
+    });
+  }
+  tasksDraw();
+  toast(`${ok}개 ${kind === 'skip' ? '미진행으로 닫았어요' : label + '했어요'}${failed.length ? ` · ${failed.length}개는 실패해서 고른 채로 남겼어요(새로고침 후 다시)` : ''}`);
 }
 function tasksNavBadge(n) {
   const a = document.querySelector('.nav a[data-key="decide"]'); if (!a) return;
@@ -390,6 +462,7 @@ async function taskCall(action, body, btn, okMsg) {
   catch (e) { btn.disabled = false; toast('저장 실패: ' + e.message); }
 }
 const taskDone = (id, btn) => taskCall('done', { id }, btn, '완료로 표시했어요');
+const taskStartDone = (id, btn) => taskCall('done', { id, start: true }, btn, '시작과 함께 완료했어요');
 const taskStart = (id, btn, undo) => taskCall('start', undo ? { id, undo: true } : { id }, btn, undo ? '시작을 취소했어요' : '진행 중으로 옮겼어요');
 const taskUndo = (id, btn) => taskCall('done', { id, undo: true }, btn, '다시 할 일로 돌렸어요');
 function taskSkipOpen(btn) { const f = btn.closest('.tk-main')?.querySelector('.tk-skip'); if (!f) return; f.hidden = !f.hidden; if (!f.hidden) f.querySelector('input')?.focus(); }

@@ -616,7 +616,8 @@ Deno.serve(async (req) => {
     if (action === "done") {
       if (body.undo) return await patch({ status: "open", done_how: null, done_by: null, done_at: null, done_evidence: null, skip_reason: null, skip_until: null, skip_qty7: null }, "&status=in.(done,closed)");
       // 관리자(대표)는 승인 대기 일도 직접 처리할 수 있다('내가 처리함' — 직접 했으면 승인한 셈). 직원은 승인 필요 없거나 승인된 일만.
-      return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null },
+      // start: true = '시작과 함께 완료'(2026-11-11 사용자) — 시작 안 한 일이면 시작한 사람·때도 같이 남긴다
+      return await patch({ status: "done", done_how: "manual", done_by: String(me?.name ?? ""), done_at: now, done_evidence: null, ...(body.start ? { started_at: now, started_by: String(me?.name ?? "") } : {}) },
         me?.role === "admin" ? "&status=eq.open" : "&status=eq.open&or=(needs_ceo.eq.false,decision.eq.approve)");
     }
     // 진행 중(2026-11-11 사용자 "팀 작업보드 + 진행 중 단계"): 직원이 '시작'을 누르면 started_at·by. 완료할 수 있는 일만(대표 승인 전이면 시작도 안 됨). undo = 시작 취소
