@@ -105,7 +105,9 @@ function ageBadge(t, today, cal0) {
 }
 function taskHead(t) {
   const nm = tkName(t);
-  return `<div class="tk-title">${nm ? `<b class="tk-prod" title="${escHtml(t.product_name)}">${escHtml(nm)}</b>` : ''}<span class="tk-what">${escHtml(t.title)}</span></div>`;
+  // 대표가 방식을 바꾼 일은 제목 = 대표가 정한 방식(처음 제안 문장은 changeLine에)
+  const what = changed(t) && METHOD_LABEL[t.decision_detail.method] && t.decision_detail.method !== 'free' ? METHOD_LABEL[t.decision_detail.method] : t.title;
+  return `<div class="tk-title">${nm ? `<b class="tk-prod" title="${escHtml(t.product_name)}">${escHtml(nm)}</b>` : ''}<span class="tk-what">${escHtml(what)}</span></div>`;
 }
 const kindChip = t => `<span class="tk-kind"><i class="fa-solid ${KIND_ICON[t.kind] || 'fa-circle-dot'}"></i> ${escHtml(t.kind)}</span>`;
 
@@ -133,11 +135,39 @@ function statCells(t) {
 }
 // 추천 한 줄 — 광고 착수만(데이터로 판단 가능한 경우)
 function adviceChip(t) {
-  if (t.kind !== '광고 착수') return '';
+  if (t.kind !== '광고 착수' || changed(t)) return '';
   const h = t.ad_hist; if (!h) return '';
   if (h.proven_off > 0) return `<div class="tk-advice on"><i class="fa-solid fa-power-off"></i> 꺼진 검증 소재 다시 켜기 먼저${h.proven_off_roas != null ? ` · ROAS ${h.proven_off_roas}` : ''}</div>`;
   if (!h.proven && !h.active) return `<div class="tk-advice new"><i class="fa-solid fa-wand-magic-sparkles"></i> 새 소재 필요</div>`;
   return '';
+}
+// 가격·마진(2026-11-12 사용자 "공급가·판매가·마진 금액·마진율도"): 판매가 · 공급가(중국 사입은 실질 원가) · 마진 금액 · 마진율 — 원가는 부가세 포함 기준
+const won = v => `${Math.round(Number(v)).toLocaleString()}원`;
+function priceLine(t) {
+  const p = t.price_info; if (!p || !(p.price > 0)) return '';
+  const costCell = p.cn ? `<span title="중국 사입 실질 원가(부가세 몫 포함)">원가 <b>${p.cost ? won(p.cost) : '—'}</b> <em>중국 사입</em></span>` : `<span title="카페24 공급가(부가세 별도) — 마진은 ×1.1로 계산">공급가 <b>${p.supply > 0 ? won(p.supply) : '미입력'}</b></span>`;
+  const r = p.margin_rate, cls = r == null ? '' : r < 35 ? ' low' : r >= 55 ? ' high' : '';
+  return `<div class="tk-price"><span>판매가 <b>${won(p.price)}</b></span>${costCell}<span class="tk-mg${cls}">마진 <b>${p.margin_won != null ? won(p.margin_won) : '—'}</b>${r != null ? ` <em>${r}%</em>` : ''}</span></div>`;
+}
+// 대표가 바꾼 일(2026-11-12): 처음 제안 대신 대표가 정한 방식을 크게
+const changed = t => !!(t.decision_detail && t.decision_detail.changed);
+function changeLine(t) {
+  if (!changed(t)) return '';
+  const d = t.decision_detail, lab = detailLabel(d) || (d.method === 'free' ? METHOD_LABEL.free : '');
+  return `<div class="tk-chg-line"><i class="fa-solid fa-pen-to-square"></i> <b>대표 변경</b>${lab ? ` · ${escHtml(lab)}` : ''}${t.decided_by ? ` <span class="muted">· ${escHtml(t.decided_by)} ${md2(kstDate(t.decided_at))}</span>` : ''}<div class="muted small">처음 제안: ${escHtml(t.title || d.from_label || '')}</div>${t.decision_note ? `<div class="small">메모: ${escHtml(t.decision_note)}</div>` : ''}</div>`;
+}
+// 변경 칸(대표만): 광고 착수·증액은 방식·하루 예산, 모든 일에 메모 · 보류 · 결정 되돌리기
+function changeForm(t) {
+  if (!isCeo()) return '';
+  const opts = METHOD_OPTS[t.kind], d = t.decision_detail || {};
+  const curM = d.method || (t.reenable ? 'reuse' : '');
+  return `<div class="tk-chg" hidden>
+    <div class="tk-skip-h"><i class="fa-solid fa-pen-to-square"></i> 이 일 바꾸기 <span class="muted">저장하면 담당 팀에 바로 알림 · 에이전트도 다음 보고서부터 반영</span></div>
+    ${opts ? `<div class="tk-dec"><select class="tk-m" aria-label="방식">${opts.map(m => `<option value="${m}"${m === curM ? ' selected' : ''}>${escHtml(METHOD_LABEL[m])}</option>`).join('')}</select>
+      <label><input class="tk-b" type="number" inputmode="decimal" min="0" step="0.5" value="${Number(d.daily_won) > 0 ? Number(d.daily_won) / 10000 : ''}" placeholder="${t.kind === '광고 증액' ? '늘린 뒤 하루' : '하루 예산'}" aria-label="하루 예산(만원)"><em>만원</em></label></div>` : ''}
+    <div class="tk-skip-f"><input class="tk-n" type="text" maxlength="200" placeholder="메모 (선택 — 팀에 보여요)" aria-label="대표 메모" value="${escHtml(changed(t) ? (t.decision_note || '') : '')}"><button class="btn sm primary" onclick="taskChange('${t.id}', this)">변경 저장</button><button class="linkish" onclick="this.closest('.tk-chg').hidden=true">취소</button></div>
+    <div class="tk-chg-more">${t.started_at ? '' : `<button class="linkish" onclick="taskDecide('${t.id}','hold',this)"><i class="fa-solid fa-pause"></i> 보류로</button>`}${t.decision ? `<button class="linkish" onclick="if(confirm('대표 결정을 지울까요? 승인이 필요한 일이면 결정함으로 돌아가요.'))taskDecide('${t.id}','undo',this)"><i class="fa-solid fa-rotate-left"></i> 결정 되돌리기</button>` : ''}</div>
+  </div>`;
 }
 const whyLine = t => t.why ? `<div class="tk-why clamp" title="${escHtml(t.why)}">${escHtml(t.why)}</div>` : '';
 // 상세 보강 권장 방안(2026-11-11 사용자 "'자세히'에서 권장 보강 방식이 보이게"): 제목·근거에 적힌 반품·문의 사유로 고칠 방법을 고른다.
@@ -191,7 +221,7 @@ function creativeBtn(t) {
   const view = c && c.report_id ? `<a class="btn sm ghost" href="#reports/${escHtml(c.report_id)}"><i class="fa-solid fa-bullhorn"></i> 제작안 보기</a>` : '';
   return `${view}<button class="btn sm ghost" onclick="taskCreative(${Number(t.product_no)}, this)" data-name="${escHtml(t.product_name || '')}"><i class="fa-solid fa-wand-magic-sparkles"></i> ${view ? '새 제작안' : '제작안 만들기'}</button>`;
 }
-const freeChip = t => t.reenable ? '<span class="tk-free"><i class="fa-solid fa-power-off"></i> 다시 켜기 · 승인 불필요</span>' : (t.kind === '광고 줄이기' ? '<span class="tk-free"><i class="fa-solid fa-bolt"></i> 승인 불필요</span>' : '');
+const freeChip = t => changed(t) ? '' : t.reenable ? '<span class="tk-free"><i class="fa-solid fa-power-off"></i> 다시 켜기 · 승인 불필요</span>' : (t.kind === '광고 줄이기' ? '<span class="tk-free"><i class="fa-solid fa-bolt"></i> 승인 불필요</span>' : '');
 
 function taskRow(t, today, cal, extraChip = '') {
   const approved = t.decision === 'approve';
@@ -199,7 +229,8 @@ function taskRow(t, today, cal, extraChip = '') {
   const cb = creativeBtn(t);
   // 진행 중(started_at): 맨 위 파란 칩 + '완료' 버튼 / 아직이면 '▶ 시작'
   const doing = !!t.started_at;
-  const skipBtn = `<button class="btn sm ghost tk-skip-btn" onclick="taskSkipOpen(this)"><i class="fa-solid fa-ban"></i> 미진행</button>`;
+  const skipBtn = `<button class="btn sm ghost tk-skip-btn" onclick="taskSkipOpen(this)"><i class="fa-solid fa-ban"></i> 미진행</button>`
+    + (isCeo() ? `<button class="btn sm ghost tk-chg-btn" onclick="taskChgOpen(this)"><i class="fa-solid fa-pen-to-square"></i> 변경</button>` : '');   // 2026-11-12 대표(관리자)만
   // 2026-11-11 사용자 "시작·완료 체크 통합": 할 일 = '▶ 시작' · '시작과 함께 완료' / 왼쪽 동그라미 = 여러 개 고르기(아래 묶음 막대로 한 번에)
   const acts = doing
     ? `<button class="btn sm primary" onclick="taskDone('${t.id}', this)"><i class="fa-solid fa-check"></i> 완료</button>${skipBtn}<button class="linkish" onclick="taskStart('${t.id}', this, true)">시작 취소</button>`
@@ -211,10 +242,11 @@ function taskRow(t, today, cal, extraChip = '') {
       ${taskHead(t)}
       ${reopenLine(t)}
       ${doing ? `<div class="tk-doing"><i class="fa-solid fa-person-running"></i> 진행 중${t.started_by ? ` · ${escHtml(t.started_by)}` : ''} · ${md2(kstDate(t.started_at))}부터</div>` : ''}
-      <div class="tk-meta">${extraChip}${kindChip(t)}${freeChip(t)}${approved ? `<span class="tk-ok"><i class="fa-solid fa-stamp"></i> 승인${dl ? ` · ${escHtml(dl)}` : ''}</span>` : ''}${dueBadge(t, today, cal)}${ageBadge(t, today, cal)}${AUTO_KIND[t.kind] ? '<span class="tk-auto" title="데이터로 확인되면 저절로 완료"><i class="fa-solid fa-robot"></i> 자동 완료</span>' : ''}</div>
-      ${statCells(t)}${adviceChip(t)}${whyLine(t)}
+      <div class="tk-meta">${extraChip}${kindChip(t)}${freeChip(t)}${approved ? `<span class="tk-ok"><i class="fa-solid fa-stamp"></i> ${changed(t) ? '대표 변경' : `승인${dl ? ` · ${escHtml(dl)}` : ''}`}</span>` : ''}${dueBadge(t, today, cal)}${ageBadge(t, today, cal)}${AUTO_KIND[t.kind] ? '<span class="tk-auto" title="데이터로 확인되면 저절로 완료"><i class="fa-solid fa-robot"></i> 자동 완료</span>' : ''}</div>
+      ${changeLine(t)}
+      ${statCells(t)}${priceLine(t)}${adviceChip(t)}${whyLine(t)}
       <div class="tk-links">${acts}${cb}</div>
-      ${skipForm(t)}
+      ${skipForm(t)}${changeForm(t)}
       ${moreBox(t, approved && t.decision_note ? `<div class="muted">대표 메모: ${escHtml(t.decision_note)}</div>` : '')}
     </div>
   </div>`;
@@ -238,7 +270,7 @@ function ceoCard(t, today, cal) {
   return `<div class="tk-ceo${t.stale_since ? ' stale' : ''}" data-id="${t.id}">
     ${taskHead(t)}${reopenLine(t)}
     <div class="tk-meta">${kindChip(t)}${ageBadge(t, today, cal)}${t.stale_since ? '<span class="tk-stale-chip" title="에이전트가 더는 제안하지 않아요 — 필요 없으면 닫기">제안 끝남</span>' : ''}</div>
-    ${statCells(t)}${adviceChip(t)}${whyLine(t)}
+    ${statCells(t)}${priceLine(t)}${adviceChip(t)}${whyLine(t)}
     ${form}
     ${isCeo() ? `<div class="tk-ceo-btns"><button class="btn sm primary" onclick="taskDecide('${t.id}','approve',this)"><i class="fa-solid fa-check"></i> 승인</button><button class="btn sm ghost" onclick="taskDecide('${t.id}','hold',this)"><i class="fa-solid fa-pause"></i> 보류</button>${t.stale_since ? `<button class="btn sm ghost" onclick="taskClose('${t.id}', this, '닫을까요? 필요 없음으로 기록돼요.')"><i class="fa-solid fa-xmark"></i> 닫기</button>` : ''}</div>` : '<div class="muted small">대표 승인 대기</div>'}
     ${moreBox(t, t.decision_note ? `<div class="muted"><i class="fa-solid fa-clock-rotate-left"></i> ${escHtml(t.decision_note)}</div>` : '')}
@@ -466,6 +498,14 @@ const taskDone = (id, btn) => taskCall('done', { id }, btn, '완료로 표시했
 const taskStartDone = (id, btn) => taskCall('done', { id, start: true }, btn, '시작과 함께 완료했어요');
 const taskStart = (id, btn, undo) => taskCall('start', undo ? { id, undo: true } : { id }, btn, undo ? '시작을 취소했어요' : '진행 중으로 옮겼어요');
 const taskUndo = (id, btn) => taskCall('done', { id, undo: true }, btn, '다시 할 일로 돌렸어요');
+function taskChgOpen(btn) { const f = btn.closest('.tk-main')?.querySelector('.tk-chg'); if (!f) return; f.hidden = !f.hidden; if (!f.hidden) (f.querySelector('.tk-m') || f.querySelector('.tk-n'))?.focus(); }
+function taskChange(id, btn) {
+  const f = btn.closest('.tk-chg'), m = f.querySelector('.tk-m'), b = f.querySelector('.tk-b'), n = f.querySelector('.tk-n');
+  const v = String(b?.value || '').trim(), w = v ? Math.round(Number(v) * 10000) : 0;
+  if (v && !(w > 0)) { toast('하루 예산은 숫자(만원)로 적어 주세요'); b.focus(); return; }
+  if (!m && !String(n?.value || '').trim()) { toast('바꿀 내용(메모)을 적어 주세요'); n?.focus(); return; }
+  taskCall('change', { id, method: m ? m.value : '', daily_won: w || null, note: String(n?.value || '').trim() }, btn, r => `바꿨어요${m ? ` — ${METHOD_LABEL[m.value]}` : ''}${r.notify_note ? ` · ${r.notify_note}` : ' · 담당 팀에 알렸어요'}`);
+}
 function taskSkipOpen(btn) { const f = btn.closest('.tk-main')?.querySelector('.tk-skip'); if (!f) return; f.hidden = !f.hidden; if (!f.hidden) f.querySelector('input')?.focus(); }
 function taskSkipPick(b) { const i = b.closest('.tk-skip').querySelector('input'); i.value = b.textContent; i.focus(); }
 function taskSkip(id, btn) {

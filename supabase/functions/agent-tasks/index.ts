@@ -99,17 +99,25 @@ async function latestReports(): Promise<Row[]> {
 //   같은 이름에 번호가 둘 이상이면(재등록 상품 등) 붙이지 않는다(-1) — 엉뚱한 상품으로 합치지 않게
 //   키 두 가지: 판 꼬리표까지 넣은 키(vk — '(기모ver.) 클레르'와 '[Best] (2사이즈) 클레르'를 가름) + 꼬리표 없는 키(같은 핵심명에 번호가 둘이면 안 씀)
 const vk = (name: unknown) => { const k = sq(paKey(String(name ?? ""))); const tg = leadTags(name).sort().join(","); return tg ? `${k}|${tg}` : k; };
-function nameIndex(reports: Row[], rows: Row[]): Map<string, number> {
-  const m = new Map<string, number>();
-  const put = (k: string, n: number) => { const cur = m.get(k); if (cur == null) m.set(k, n); else if (cur !== n) m.set(k, -1); };
-  const add = (name: unknown, no: unknown) => { const k = sq(paKey(String(name ?? ""))); const n = Number(no); if (k.length < 3 || !(n > 0)) return; put(k, n); const v = vk(name); if (v !== k) put(v, n); };
+//   같은 키에 번호가 둘 이상: 이름이 판 꼬리표까지 똑같으면(옛 등록·재등록 — 텀블 워밍 밴딩 팬츠 2527·181) 판매 많은 번호로(2026-11-12 사용자 "중복 요청이 2개 뜬다"),
+//   판이 다르면('[Best] (2사이즈) 클레르'와 '(기모ver.) 클레르'가 꼬리표 없는 키에서 만남) 그 키는 쓰지 않는다
+function nameIndex(reports: Row[], rows: Row[], sold: Map<number, number> = new Map()): Map<string, number> {
+  const cand = new Map<string, Map<number, string>>();   // 키 → 번호 → 판 키(vk)
+  const put = (k: string, n: number, v: string) => { const c = cand.get(k) ?? cand.set(k, new Map()).get(k)!; if (!c.has(n)) c.set(n, v); };
+  const add = (name: unknown, no: unknown) => { const k = sq(paKey(String(name ?? ""))); const n = Number(no); if (k.length < 3 || !(n > 0)) return; const v = vk(name); put(k, n, v); if (v !== k) put(v, n, v); };
   for (const t of rows) add(t.product_name, t.product_no);
   for (const rep of reports) {
     const arr = (v: unknown) => (Array.isArray(v) ? v : []) as Row[];
     for (const a of arr(((rep.report ?? {}) as Row).week_actions)) for (const r of arr(a.product_refs)) add(r.name, r.no);
     for (const p of arr(((rep.data ?? {}) as Row).products)) add(p.name, p.product_no);
   }
-  for (const [k, v] of m) if (v < 0) m.delete(k);
+  const m = new Map<string, number>();
+  for (const [k, c] of cand) {
+    if (c.size === 1) { m.set(k, [...c.keys()][0]); continue; }
+    if (new Set(c.values()).size !== 1) continue;   // 판이 다른 상품끼리 — 고르지 않음
+    const best = [...c.keys()].sort((a, b) => (sold.get(b) ?? -1) - (sold.get(a) ?? -1));
+    if ((sold.get(best[0]) ?? 0) > (sold.get(best[1]) ?? 0)) m.set(k, best[0]);   // 판매로 가를 수 없으면 쓰지 않음
+  }
   return m;
 }
 // 한 문장에 여러 상품의 일이 섞인 제목(예: '우디 나그랑 니트 광고 착수·헤이 나그랑 원피스 광고 다시 켜기')을 상품별로 나눈다(2026-11-10 사용자 지적).
@@ -283,13 +291,14 @@ async function sync(auto: boolean) {
   const cal = await loadTeamCal(addDays(D, -40), addDays(D, 40));
   const lr = await rest(`team_tasks?or=(status.in.(open,held),done_at.gte.${addDays(D, -7)}T00:00:00Z,and(done_how.eq.skip,skip_until.gte.${addDays(D, -7)}))&select=*`);
   const existing: Row[] = lr.ok ? await lr.json() : [];
-  const names = nameIndex(reports, existing);
-  const known = [...new Set([...existing.map((t) => String(t.product_name ?? "")), ...reports.flatMap((r) => (Array.isArray(((r.data ?? {}) as Row).products) ? (((r.data as Row).products) as Row[]).map((p) => String(p.name ?? "")) : []))].filter(Boolean))].map(nameWords).filter((w) => w.length);
-  const items = collectItems(reports, cal, names, known);
-  // 이름이 똑같은 다른 상품 번호(옛 등록·재등록, 예: 텀블 워밍 밴딩 팬츠 2527·181)로 같은 일이 두 줄 생기면 판매가 많은 쪽만 남긴다(2026-11-11)
+  // 같은 이름 다른 번호를 가를 판매량: 보드에 채워 둔 최근 7일 + 보고서의 14일 판매 ÷ 2
   const sold = new Map<number, number>();
   for (const t of existing) { const q = Number(((t.sales_7d ?? {}) as Row).qty_7d); if (Number(t.product_no) > 0 && q >= 0) sold.set(Number(t.product_no), Math.max(sold.get(Number(t.product_no)) ?? 0, q)); }
   for (const r of reports) { const d = (r.data ?? {}) as Row; for (const arr of [d.products, ((d.new_arrivals ?? {}) as Row).matrix]) if (Array.isArray(arr)) for (const p of arr as Row[]) { const no = Number(p.product_no); if (no > 0 && !sold.has(no) && p.qty_14d != null) sold.set(no, Number(p.qty_14d) / 2); } }
+  const names = nameIndex(reports, existing, sold);
+  const known = [...new Set([...existing.map((t) => String(t.product_name ?? "")), ...reports.flatMap((r) => (Array.isArray(((r.data ?? {}) as Row).products) ? (((r.data as Row).products) as Row[]).map((p) => String(p.name ?? "")) : []))].filter(Boolean))].map(nameWords).filter((w) => w.length);
+  const items = collectItems(reports, cal, names, known);
+  // 이름이 똑같은 다른 상품 번호(옛 등록·재등록, 예: 텀블 워밍 밴딩 팬츠 2527·181)로 같은 일이 두 줄 생기면 판매가 많은 쪽만 남긴다(2026-11-11)
   const dupKeys = new Set<string>();
   const byKN = new Map<string, Item[]>();
   for (const it of items.values()) if (it.product_no && it.product_name) { const k = `${it.kind}|${vk(it.product_name)}`; (byKN.get(k) ?? byKN.set(k, []).get(k)!).push(it); }
@@ -324,7 +333,7 @@ async function sync(auto: boolean) {
       const merged = [...it.sources, ...old.filter((o) => !it.sources.some((n) => n.agent === o.agent && n.action_id === o.action_id))].slice(0, 10);
       const patch: Row = { last_seen: it.last_seen > String(cur.last_seen) ? it.last_seen : cur.last_seen, sources: merged, why: it.why || cur.why, title: it.title || cur.title, done_when: it.done_when || cur.done_when, stale_since: null, updated_at: now };
       // 다시 켜기 판정은 한 번 나면 유지(광고를 켜면 ON 수가 바뀌어 판정이 풀리므로) · 승인 필요 없는 일은 결정함에서 바로 팀으로
-      const reen = it.reenable || !!cur.reenable;
+      const reen = ((cur.decision_detail ?? {}) as Row).changed ? !!cur.reenable : (it.reenable || !!cur.reenable);   // 대표가 방식을 바꾼 일은 그대로
       if (reen !== !!cur.reenable) patch.reenable = reen;
       if (!cur.decision) patch.needs_ceo = reen || NO_CEO_KINDS.has(String(cur.kind)) ? false : (it.needs_ceo || !!cur.needs_ceo);
       // 코드가 정한 기한(default)은 출근일 규칙으로 다시 맞춘다 — 에이전트가 정했거나(agent) 대표가 미룬(ceo) 기한은 그대로
@@ -357,7 +366,7 @@ async function sync(auto: boolean) {
   for (const t of tasks) {
     // 이름만 있던 옛 줄인데 이제 같은 상품 번호 줄이 있으면 중복 — 결정 전이면 내린다
     const nk = String(t.task_key).match(/^(.+)\|n:(.+)$/);
-    if (nk && t.status === "open" && !t.decision) { const no = names.get(nk[2]); if (no && items.has(`${nk[1]}|${no}`)) { await drop(t); continue; } }
+    if (nk && t.status === "open" && !t.decision) { const no = names.get(vk(t.product_name)) ?? names.get(nk[2]); if (no && items.has(`${nk[1]}|${no}`)) { await drop(t); continue; } }
     if (dupKeys.has(String(t.task_key)) && t.status === "open" && !t.decision) { await drop(t); continue; }   // 같은 이름의 덜 팔리는 상품 줄
     // 대표 승인 없이 하는 종류(광고 줄이기)는 예전에 승인 대기로 들어온 것도 팀으로
     if (t.status === "open" && !t.decision && t.needs_ceo && NO_CEO_KINDS.has(String(t.kind))) { await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ needs_ceo: false, updated_at: now }) }); t.needs_ceo = false; }
@@ -374,6 +383,27 @@ async function sync(auto: boolean) {
       await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "open", decision: null, decision_note: `지난 보류(${String(t.decided_at).slice(5, 10)}): ${t.decision_note ?? ""}`.slice(0, 200), decided_at: null, decided_by: null, updated_at: now }) });
       stat.reopened++; t.status = "open"; t.decision = null;
     }
+  }
+  // 같은 상품 · 같은 할 일이 여러 줄이면 하나만(2026-11-12 사용자 "텀블 팬츠 꺼진 광고 다시 켜기가 2개 — 불필요한 업무가 추가된다"):
+  //   상품 = 번호(같은 이름 옛 등록은 판매 많은 번호로) 또는 이름, 할 일 = 제목(공백·문장부호 무시). 종류가 달라도('기타'·'광고 착수') 제목이 같으면 같은 일.
+  //   남길 줄 = 대표가 결정했거나 시작한 줄 → 아직 제안 중 → 상품 번호 있는 줄 → '기타'가 아닌 줄 → 최근에 제안된 줄. 나머지는 결정·시작 전일 때만 내린다.
+  {
+    const canon = (t: Row) => { const n = names.get(vk(t.product_name)); const no = Number(t.product_no) > 0 ? (n ?? Number(t.product_no)) : (n ?? null); return no ? `#${no}` : (t.product_name ? `n:${vk(t.product_name)}` : null); };
+    const groups = new Map<string, Row[]>();
+    for (const t of tasks) {
+      if (t.status !== "open") continue;
+      const c = canon(t); const tt = sq(String(t.title ?? "")).replace(/[()[\]·,./~!?'"-]/g, "");
+      if (!c || tt.length < 4) continue;
+      const k = `${c}|${tt}`; (groups.get(k) ?? groups.set(k, []).get(k)!).push(t);
+    }
+    const rank = (t: Row) => [t.decision || t.started_at ? 0 : 1, t.stale_since ? 1 : 0, /\|[an]:/.test(String(t.task_key)) ? 1 : 0, t.kind === "기타" ? 1 : 0];
+    let dup = 0;
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      g.sort((a, b) => { const x = rank(a), y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return String(b.last_seen).localeCompare(String(a.last_seen)); });
+      for (const t of g.slice(1)) if (!t.decision && !t.started_at) { await drop(t); dup++; }
+    }
+    (stat as Row).dup_dropped = dup;
   }
   // 자동 완료 판정
   const checks = tasks.filter((t) => t.status === "open" && AUTO_KINDS.has(String(t.kind)) && Number(t.product_no) > 0);
@@ -401,6 +431,7 @@ async function sync(auto: boolean) {
   // 상품별 최근 7일 판매(2026-11-11 사용자 요청 "일평균 판매량 — 광고 착수 결정에 도움"): 어제까지 꽉 찬 7일 vs 그 앞 7일, 카페24 상품별 집계(summary — 상품 전략 담당과 같은 숫자)
   stat.ad_hist = await fillAdHistory(tasks, reports, now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 200) }));
   stat.sales = await fillSales(tasks.filter((t) => ["open", "held"].includes(String(t.status)) && Number(t.product_no) > 0), now);
+  (stat as Row).price = await fillPrice(tasks.filter((t) => ["open", "held"].includes(String(t.status)) && Number(t.product_no) > 0), now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 200) }));
   // 상세 점검 자동 실행 (아침 cron만)
   if (auto) { stat.detail_runs = await autoDetail(D); stat.notified = await morningNotify(cal); }
   return { ok: true, report_date: D, reports: reports.map((r) => `${r.agent} ${r.report_date}`), items: items.size, ...stat };
@@ -413,6 +444,28 @@ async function qty7Map(): Promise<Map<number, number> | null> {
   const rows = (a as Row | null)?.rows;
   return Array.isArray(rows) ? new Map((rows as Row[]).map((r) => [Number(r.product_no), Number(r.order_qty) || 0])) : null;
 }
+// 상품 판매가·공급가·마진(2026-11-12 사용자 "공급가·판매가·마진 금액·마진율도 — 더 명확한 판단"): 카페24 상품 정보(워크스페이스 productinfo — 상품 전략 담당과 같은 값).
+//   마진 원가 = 공급가 × 1.1(부가세 포함), 중국 사입 상품은 실질 단가 + 수입 부가세 몫(cost_vat) — 워크스페이스·에이전트 marginRate와 같은 식. 마진은 할인 전 판매가 기준.
+async function fillPrice(tasks: Row[], now: string): Promise<Row> {
+  const nos = [...new Set(tasks.map((t) => Number(t.product_no)))];
+  if (!nos.length) return { skipped: "상품 할 일 없음" };
+  const r = await callFn("cafe24-analytics", { action: "productinfo", product_nos: nos.join(",") });
+  const info = new Map(((r.products ?? []) as Row[]).map((p) => [Number(p.product_no), p]));
+  let patched = 0;
+  for (const t of tasks) {
+    const p = info.get(Number(t.product_no)); if (!p) continue;
+    const price = Number(p.price) || 0, supply = Number(p.supply_price) || 0, cn = p.cost_src === "cn" && Number(p.cost_vat) > 0;
+    const cost = cn ? Number(p.cost_vat) : supply * 1.1;
+    const v: Row = { price, supply, cn, cost: cost > 0 ? Math.round(cost) : null, real_cost: cn ? Math.round(Number(p.cn_real_cost) || 0) : null,
+      margin_won: price > 0 && cost > 0 ? Math.round(price - cost) : null, margin_rate: price > 0 && cost > 0 ? Math.round((price - cost) / price * 1000) / 10 : null };
+    const cur = (t.price_info ?? {}) as Row;
+    if (["price", "supply", "cn", "cost", "real_cost", "margin_won", "margin_rate"].every((k) => (cur[k] ?? null) === (v[k] ?? null))) continue;
+    await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ price_info: { ...v, at: seoulToday() }, updated_at: now }) });
+    patched++;
+  }
+  return { products: info.size, patched };
+}
+
 async function fillSales(tasks: Row[], now: string): Promise<Row> {
   if (!tasks.length) return { skipped: "상품 할 일 없음" };
   const y = addDays(seoulToday(), -1);
@@ -655,6 +708,30 @@ Deno.serve(async (req) => {
       const cal = await loadTeamCal(addDays(seoulToday(), -5), addDays(seoulToday(), 40));
       const to = nextWorkday(seoulToday(), cal.offFor(owner));   // 그 팀이 오늘 다음에 처음 출근하는 날(주말·공휴일·팀 전원 휴가 제외)
       return await patch({ due: to, due_source: "ceo" }, "&status=eq.open");
+    }
+    // 변경(2026-11-12 사용자 "대표가 승인한 걸 변경 — 예: 꺼진 광고 다시 켜기 → 소재 공급 필요"): 관리자만. 진행 중·할 일 상태 그대로,
+    //   결정 = 승인으로 다시 쓰고 decision_detail에 changed·처음 방식(from)을 남긴다. 다시 켜기가 아닌 방식이면 reenable을 끈다(제작안 버튼이 보이게).
+    if (action === "change") {
+      if (me?.role !== "admin") return json({ error: "대표(관리자)만 바꿀 수 있어요" }, 403);
+      const cr = await rest(`team_tasks?id=eq.${id}&status=eq.open&select=*`);
+      const cur = cr.ok ? ((await cr.json()) as Row[])[0] : null;
+      if (!cur) return json({ error: CONFLICT }, 409);
+      const m = String(body.method ?? ""), w = body.daily_won == null || body.daily_won === "" ? 0 : Math.round(Number(body.daily_won));
+      if (m && !METHODS[m]) return json({ error: "알 수 없는 방식" }, 400);
+      if (w && !(w > 0 && w <= 50_000_000)) return json({ error: "하루 예산은 1원~5천만원" }, 400);
+      const old = (cur.decision_detail ?? {}) as Row;
+      const fromM = old.changed ? old.from : (old.method ?? (cur.reenable ? "reuse" : null));
+      const fromLabel = old.changed ? old.from_label : (fromM && METHODS[String(fromM)] ? METHODS[String(fromM)] : String(cur.title ?? "").slice(0, 60));
+      const detail: Row = { ...(m ? { method: m } : {}), ...(w ? { daily_won: w } : {}), changed: true, from: fromM ?? null, from_label: fromLabel || null };
+      const note = String(body.note ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+      const b: Row = { decision: "approve", decision_detail: detail, decision_note: note || cur.decision_note || null, decided_by: String(me?.name ?? ""), decided_at: now, notified_at: null };
+      if (m && m !== "reuse" && cur.reenable) b.reenable = false;
+      const row = await upd(b, "&status=eq.open");
+      if (!row) return json({ error: CONFLICT }, 409);
+      if (!isStaffOwner(row.owner)) return json({ ok: true, task: row });
+      const notify = await flushApprovals(String(row.owner)).catch((e) => ({ note: `알림 실패: ${String((e as Error)?.message ?? e).slice(0, 80)}` }));
+      const fresh = await rest(`team_tasks?id=eq.${id}&select=*`);
+      return json({ ok: true, task: (fresh.ok ? ((await fresh.json()) as Row[])[0] : null) ?? row, notify_note: (notify as Row).note ?? "" });
     }
     if (action === "decide") {
       if (me?.role !== "admin") return json({ error: "대표(관리자)만 결정할 수 있어요" }, 403);

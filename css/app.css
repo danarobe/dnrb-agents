@@ -934,3 +934,18 @@ span.tk-check { cursor: default; color: #9ca3af; }
 .tk-bulk .btn.ghost { background: #fff; }
 .tk-bulk .linkish { color: #c7d2fe; }
 .tk-bulk .tk-skip { color: var(--ink, #111827); }
+
+/* 2026-11-12 팀 작업보드: 가격·마진 줄 · 대표 변경 */
+.tk-price { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: .78rem; color: #4b5563; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 5px 9px; }
+.tk-price b { color: #111827; font-weight: 800; }
+.tk-price em { font-style: normal; font-size: .7rem; color: #92400e; background: #fef3c7; border-radius: 6px; padding: 0 5px; }
+.tk-price .tk-mg em { color: #047857; background: #d1fae5; font-weight: 800; }
+.tk-price .tk-mg.low em { color: #b91c1c; background: #fee2e2; }
+.tk-price .tk-mg.high em { color: #065f46; background: #a7f3d0; }
+.tk-chg-line { font-size: .82rem; color: #5b21b6; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 8px; padding: 6px 10px; }
+.tk-chg-line .small { margin-top: 2px; }
+.tk-chg { border: 1px dashed #c4b5fd; background: #faf5ff; border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.tk-chg .tk-dec { margin: 0; }
+.tk-chg[hidden] { display: none; }
+.tk-chg-more { display: flex; gap: 14px; flex-wrap: wrap; font-size: .78rem; }
+.tk-chg-btn { color: #6d28d9; }
