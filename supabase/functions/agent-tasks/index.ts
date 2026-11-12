@@ -78,6 +78,9 @@ const adsInfoFromReports = (reports: Row[]) => {
 // 대표 승인 없이 담당 팀이 바로 하는 광고 일(2026-11-10 사용자 승인): 광고 줄이기 전부, 꺼진 광고를 기존 예산 안에서 다시 켜기.
 //   다시 켜기 = 광고 착수 중 그 상품 ON 광고 0개·꺼진 광고 1개 이상이고, 광고 운영 담당 판단이 '다시 켜기'이거나 제목이 다시 켜기만 말할 때.
 const NO_CEO_KINDS = new Set(["광고 줄이기"]);
+// 광고 예산 늘리기·줄이기는 대표가 직접 한다(2026-11-12 사용자 "증액·감액은 대표가 직접 — 승인·보류 구조는 대표가 대표를 위해 승인하는 불필요한 일").
+//   보드(결정함·팀 작업보드)에 만들지 않는다 — 근거는 광고 운영 담당 보고서(상품별 판단·주의)에서 본다. 이미 있는 줄은 시작·승인 전이면 내린다.
+const CEO_SELF_KINDS = new Set(["광고 증액", "광고 줄이기"]);
 function isReenable(kind: string, no: number | null, rawTitle: string, info: Row | undefined): boolean {
   if (kind !== "광고 착수" || !no || !info) return false;
   if (Number(info.active_ads) !== 0 || info.active_ads == null || !(Number(info.paused_ads) > 0)) return false;
@@ -181,6 +184,7 @@ function collectItems(reports: Row[], cal: TeamCal, names: Map<string, number>, 
       const rawTitle = String(a.title ?? "");
       let kind = TASK_KINDS.includes(String(a.kind)) ? String(a.kind) : guessKind(rawTitle);
       if (kind === "기타" && /광고|소재/.test(rawTitle) && /다시\s*켜|재가동/.test(rawTitle)) kind = "광고 착수";   // 다시 켜기를 '기타'로 쓴 경우(2026-11-11)
+      if (CEO_SELF_KINDS.has(kind)) continue;   // 증액·감액은 대표가 직접(보드에 안 올림)
       const title = cleanTitle(rawTitle);
       if (!title) continue;
       const owner = normOwner(a.owner);   // 옛 보고서의 'CS팀'도 '물류/CS팀'으로
@@ -364,6 +368,7 @@ async function sync(auto: boolean) {
   const tasks: Row[] = lr2.ok ? await lr2.json() : [];
   const drop = async (t: Row) => { await rest(`team_tasks?id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status: "dropped", updated_at: now }) }); stat.dropped++; t.status = "dropped"; };
   for (const t of tasks) {
+    if (CEO_SELF_KINDS.has(String(t.kind)) && !t.started_at && t.decision !== "approve") { await drop(t); continue; }   // 증액·감액 — 대표가 직접
     // 이름만 있던 옛 줄인데 이제 같은 상품 번호 줄이 있으면 중복 — 결정 전이면 내린다
     const nk = String(t.task_key).match(/^(.+)\|n:(.+)$/);
     if (nk && t.status === "open" && !t.decision) { const no = names.get(vk(t.product_name)) ?? names.get(nk[2]); if (no && items.has(`${nk[1]}|${no}`)) { await drop(t); continue; } }

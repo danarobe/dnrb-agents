@@ -151,10 +151,17 @@ function priceLine(t) {
 }
 // 대표가 바꾼 일(2026-11-12): 처음 제안 대신 대표가 정한 방식을 크게
 const changed = t => !!(t.decision_detail && t.decision_detail.changed);
+// 2026-11-12 사용자 "어떤 걸로 바뀌었는지 한눈에": 카드 맨 위 보라 상자 — 원래 제안(취소선) → 바뀐 방식(굵은 칩), 아래에 하루 예산·메모
 function changeLine(t) {
   if (!changed(t)) return '';
-  const d = t.decision_detail, lab = detailLabel(d) || (d.method === 'free' ? METHOD_LABEL.free : '');
-  return `<div class="tk-chg-line"><i class="fa-solid fa-pen-to-square"></i> <b>대표 변경</b>${lab ? ` · ${escHtml(lab)}` : ''}${t.decided_by ? ` <span class="muted">· ${escHtml(t.decided_by)} ${md2(kstDate(t.decided_at))}</span>` : ''}<div class="muted small">처음 제안: ${escHtml(t.title || d.from_label || '')}</div>${t.decision_note ? `<div class="small">메모: ${escHtml(t.decision_note)}</div>` : ''}</div>`;
+  const d = t.decision_detail;
+  const to = d.method && METHOD_LABEL[d.method] ? METHOD_LABEL[d.method] : (t.decision_note ? '메모대로' : '담당 부서 판단');
+  const sub = [Number(d.daily_won) > 0 ? `하루 예산 <b>${manwon(d.daily_won)}</b>` : '', t.decision_note ? `메모 <b>${escHtml(t.decision_note)}</b>` : ''].filter(Boolean).join(' · ');
+  return `<div class="tk-chg-line">
+    <div class="tk-chg-h"><i class="fa-solid fa-pen-to-square"></i> 대표가 바꿨어요${t.decided_by ? ` <span>${escHtml(t.decided_by)} · ${md2(kstDate(t.decided_at))}</span>` : ''}</div>
+    <div class="tk-chg-ft"><s title="에이전트가 처음 제안한 것">${escHtml(t.title || d.from_label || '')}</s><i class="fa-solid fa-arrow-right"></i><b class="tk-chg-to">${escHtml(to)}</b></div>
+    ${sub ? `<div class="tk-chg-sub">${sub}</div>` : ''}
+  </div>`;
 }
 // 변경 칸(대표만): 광고 착수·증액은 방식·하루 예산, 모든 일에 메모 · 보류 · 결정 되돌리기
 function changeForm(t) {
@@ -236,14 +243,14 @@ function taskRow(t, today, cal, extraChip = '') {
     ? `<button class="btn sm primary" onclick="taskDone('${t.id}', this)"><i class="fa-solid fa-check"></i> 완료</button>${skipBtn}<button class="linkish" onclick="taskStart('${t.id}', this, true)">시작 취소</button>`
     : `<button class="btn sm ghost" onclick="taskStart('${t.id}', this)"><i class="fa-solid fa-play"></i> 시작</button><button class="btn sm ghost tk-sd-btn" onclick="taskStartDone('${t.id}', this)"><i class="fa-solid fa-check-double"></i> 시작과 함께 완료</button>${skipBtn}`;
   const sel = tasksState.sel.has(t.id);
-  return `<div class="tk-row${doing ? ' doing' : ''}${sel ? ' sel' : ''}" data-id="${t.id}">
+  return `<div class="tk-row${doing ? ' doing' : ''}${sel ? ' sel' : ''}${changed(t) ? ' chg' : ''}" data-id="${t.id}">
     <button class="tk-check pick${sel ? ' on' : ''}" onclick="taskSel('${t.id}', this)" title="골라서 한 번에 처리" aria-pressed="${sel}"><i class="fa-solid fa-check"></i></button>
     <div class="tk-main">
       ${taskHead(t)}
+      ${changeLine(t)}
       ${reopenLine(t)}
       ${doing ? `<div class="tk-doing"><i class="fa-solid fa-person-running"></i> 진행 중${t.started_by ? ` · ${escHtml(t.started_by)}` : ''} · ${md2(kstDate(t.started_at))}부터</div>` : ''}
       <div class="tk-meta">${extraChip}${kindChip(t)}${freeChip(t)}${approved ? `<span class="tk-ok"><i class="fa-solid fa-stamp"></i> ${changed(t) ? '대표 변경' : `승인${dl ? ` · ${escHtml(dl)}` : ''}`}</span>` : ''}${dueBadge(t, today, cal)}${ageBadge(t, today, cal)}${AUTO_KIND[t.kind] ? '<span class="tk-auto" title="데이터로 확인되면 저절로 완료"><i class="fa-solid fa-robot"></i> 자동 완료</span>' : ''}</div>
-      ${changeLine(t)}
       ${statCells(t)}${priceLine(t)}${adviceChip(t)}${whyLine(t)}
       <div class="tk-links">${acts}${cb}</div>
       ${skipForm(t)}${changeForm(t)}

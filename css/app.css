@@ -942,8 +942,16 @@ span.tk-check { cursor: default; color: #9ca3af; }
 .tk-price .tk-mg em { color: #047857; background: #d1fae5; font-weight: 800; }
 .tk-price .tk-mg.low em { color: #b91c1c; background: #fee2e2; }
 .tk-price .tk-mg.high em { color: #065f46; background: #a7f3d0; }
-.tk-chg-line { font-size: .82rem; color: #5b21b6; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 8px; padding: 6px 10px; }
-.tk-chg-line .small { margin-top: 2px; }
+.tk-chg-line { display: flex; flex-direction: column; gap: 5px; background: #f5f3ff; border: 1px solid #c4b5fd; border-left: 4px solid #7c3aed; border-radius: 8px; padding: 8px 10px; }
+.tk-chg-h { font-size: .74rem; font-weight: 800; color: #6d28d9; }
+.tk-chg-h span { font-weight: 600; color: #6b7280; margin-left: 4px; }
+.tk-chg-ft { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.tk-chg-ft s { font-size: .8rem; color: #6b7280; text-decoration-color: #9ca3af; }
+.tk-chg-ft > i { color: #7c3aed; font-size: .85rem; }
+.tk-chg-to { font-size: .95rem; font-weight: 800; color: #fff; background: #7c3aed; border-radius: 8px; padding: 3px 10px; }
+.tk-chg-sub { font-size: .8rem; color: #4c1d95; }
+.tk-chg-sub b { font-weight: 800; }
+.tk-row.chg { border-color: #c4b5fd; box-shadow: inset 3px 0 0 #7c3aed; }
 .tk-chg { border: 1px dashed #c4b5fd; background: #faf5ff; border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .tk-chg .tk-dec { margin: 0; }
 .tk-chg[hidden] { display: none; }
