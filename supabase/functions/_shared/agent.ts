@@ -427,7 +427,7 @@ export function normOwner(v: unknown): string {
   return OWNERS.find((x) => s.includes(x)) ?? "대표";
 }
 // 팀 할 일 종류 (2026-11-07) — 보드가 같은 일(종류+상품)을 합치고, 광고 착수·줄이기·상세 보강은 데이터로 완료를 자동 확인한다(agent-tasks)
-export const TASK_KINDS = ["광고 착수", "광고 증액", "광고 줄이기", "상세 보강", "노출·기획전", "CS·출고", "재고·소싱", "가격·혜택", "지킬 원칙", "기타"];
+export const TASK_KINDS = ["광고 착수", "광고 소재", "광고 증액", "광고 줄이기", "상세 보강", "노출·기획전", "CS·출고", "재고·소싱", "가격·혜택", "지킬 원칙", "기타"];
 export function reportSchema(opts: { highlights: string; warnings: string; actions: string; extra?: Record<string, unknown>; lean?: boolean; actionSource?: boolean }) {
   const extraProps = opts.extra ?? {};
   const lean = !!opts.lean;
@@ -483,14 +483,14 @@ export function reportSchema(opts: { highlights: string; warnings: string; actio
             kind: { type: "string", description: `할 일 종류 — 다음 중 하나 그대로: ${TASK_KINDS.join(", ")}` },
             done_when: { type: "string", description: "완료 기준 한 줄, 30자 이내 (예: 'ON 광고 1개 이상', '상세 상단에 실측표 추가')" },
             due: { type: "string", description: "기한 YYYY-MM-DD (보통 기준일+1~3일, 행사 종료·한파 같은 마감이 있으면 그 전날)" },
-            needs_ceo: { type: "boolean", description: "새 광고비(광고 착수)·가격·판매 중단처럼 대표 승인이 필요한 일이면 true" },
+            needs_ceo: { type: "boolean", description: "새 광고비(광고 착수)·가격·할인·혜택 변경·돈이 드는 추가 발주·판매 중단처럼 대표 승인이 필요한 일이면 true" },
             ...(opts.actionSource ? { source: pick(COLLEAGUE_TARGETS, "이 할 일을 처음 제안한 담당자 (동료 보고서의 actions·week_actions에서 가져왔으면 그 담당, 내가 낸 것이면 나)") } : {}),
           },
           required: ["id", "title", "why", "owner", "since", "status", "products", "kind", "done_when", "due", "needs_ceo", ...(opts.actionSource ? ["source"] : [])], additionalProperties: false,
         },
         description: opts.actionSource
-          ? "팀 통합 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since·source 그대로)하고, 오늘 동료 보고서들의 actions와 내 제안을 합쳐 같은 일은 하나로(source는 처음 낸 담당). done=true는 뺀다. 중요한 순, 최대 8개"
-          : "이번 주 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since 그대로)하고 오늘 새 제안을 더한다. done=true는 뺀다. 중요한 순, 최대 8개",
+          ? "팀 통합 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since·source 그대로)하고, 오늘 동료 보고서들의 actions와 내 제안을 합쳐 같은 일은 하나로(source는 처음 낸 담당). done=true는 뺀다. 중요한 순, 최대 10개"
+          : "이번 주 할 일. this_week.week_actions_so_far 중 done=false인 것을 유지(id·since 그대로)하고 오늘 새 제안을 더한다. done=true는 뺀다. 중요한 순, 최대 10개",
       },
       colleague_notes: {
         type: "array",
@@ -542,7 +542,7 @@ export const COMMON_RULES = `
 - 모든 판단에는 숫자 근거를 붙입니다.
 - 금액은 '만 원' 단위로 반올림해 읽기 쉽게 씁니다 (12,345,678원 → 1,235만 원). 억 단위면 '1.2억 원'.
 - 확실하지 않은 원인은 "~로 보입니다", "확인 필요"처럼 추측임을 밝힙니다.
-- 액션은 당장 할 수 있는 구체적인 것. 담당(MD/컨텐츠팀 · 물류/CS팀 · 대표)을 정합니다. 광고·상품·상세·소재·가격 일은 MD/컨텐츠팀입니다. 출고·포장·배송·재고 실물·고객 응대는 물류/CS팀입니다. 새 예산이 드는 광고 착수·가격·판매 중단 같은 큰 결정은 week_actions의 needs_ceo를 true로 둡니다(제목에 '대표 확인 후'를 쓰지 않습니다 — 직원 화면의 '대표 결정함'으로 가서 대표가 승인·보류합니다). **광고 예산 늘리기·줄이기(증액·감액·광고 끄기)는 대표가 직접 하므로 week_actions·actions에 넣지 않습니다**(2026-11-12 대표 결정 — 근거는 highlights·warnings와 광고 운영 담당의 상품별 판단 표에 남기면 대표가 봅니다. '위험 상품 증액 금지' 같은 늘 지킬 원칙은 kind '지킬 원칙'으로 둬도 됩니다). **꺼진 광고를 하루 총예산을 늘리지 않고 다시 켜는 일은 needs_ceo false** — 담당 팀이 바로 합니다(2026-11-10 대표 결정). 다시 켜기는 새 착수와 섞지 말고 상품별로 따로, kind는 '광고 착수', 제목은 '꺼진 광고 다시 켜기(기존 예산 안에서)'처럼 씁니다.
+- 액션은 당장 할 수 있는 구체적인 것. 담당(MD/컨텐츠팀 · 물류/CS팀 · 대표)을 정합니다. 광고·상품·상세·소재·가격 일은 MD/컨텐츠팀입니다. 출고·포장·배송·재고 실물·고객 응대는 물류/CS팀입니다. 새 예산이 드는 광고 착수·가격·할인·혜택 변경·돈이 드는 추가 발주(재고 확보)·판매 중단 같은 큰 결정은 week_actions의 needs_ceo를 true로 둡니다(제목에 '대표 확인 후'를 쓰지 않습니다 — 직원 화면의 '대표 결정함'으로 가서 대표가 승인·보류합니다). **광고 예산 늘리기·줄이기(증액·감액·광고 끄기)는 대표가 직접 하므로 week_actions·actions에 넣지 않습니다**(2026-11-12 대표 결정 — 근거는 highlights·warnings와 광고 운영 담당의 상품별 판단 표에 남기면 대표가 봅니다. '위험 상품 증액 금지' 같은 늘 지킬 원칙은 kind '지킬 원칙'으로 둬도 됩니다). **꺼진 광고를 하루 총예산을 늘리지 않고 다시 켜는 일은 needs_ceo false** — 담당 팀이 바로 합니다(2026-11-10 대표 결정). 다시 켜기는 새 착수와 섞지 말고 상품별로 따로, kind는 '광고 착수', 제목은 '꺼진 광고 다시 켜기(기존 예산 안에서)'처럼 씁니다.
 - 데이터가 비어 있거나(null) 수집 오류(errors)가 있으면 그 부분은 모른다고 쓰고, 있는 데이터로만 판단합니다.
 - 상품명은 데이터에 있는 그대로 씁니다. 없는 상품이나 숫자를 만들어내지 않습니다.
 - 응답은 지정된 JSON 형식으로만 씁니다.
@@ -553,6 +553,8 @@ export const COMMON_RULES = `
 - 주의 항목 중 이미 해소된 것은 week_warnings에서 뺍니다.
 - week_actions는 this_week.week_actions_so_far(이번 주 지금까지의 할 일, done = 사람이 완료 체크한 것)에서 done=false인 항목을 id·since 그대로 유지하고 오늘의 새 제안을 더합니다. carried=true인 항목은 대표가 저번 주에서 직접 가져온 것이니 반드시 유지합니다(id·since·title 그대로). **done=true인 항목은 완료된 것이니 반드시 뺍니다.** 지난 일이거나 의미가 없어진 것도 뺍니다. 새 항목의 id는 '기준일YYYYMMDD-순번'. 중요한 순으로 최대 6개.
 - week_actions 한 항목 = **상품 1개 × 할 일 1개**가 원칙입니다(직원이 하나씩 끝내고 체크할 수 있게). 여러 상품에 서로 다른 일을 하면 항목을 나눕니다. 같은 일을 여러 상품에 할 때만 products에 여러 개(최대 4). title에는 상품명을 빼고 할 일만 씁니다(예: '상세 상단에 실측표·기장 안내 추가'). kind·done_when·due·needs_ceo를 꼭 채웁니다. 늘 지킬 원칙(예: '순반품률 위험 상품 증액 금지')은 kind '지킬 원칙'.
+- **고치기와 키우기를 함께**(2026-11-12 대표 지적 "보고서 내용에 비해 팀에 할당되는 일이 너무 적다"): week_actions를 문제 고치기(상세 보강·CS·반품 대응)로만 채우지 말고 **매출을 키우는 일**(밀기 상품·급증 상품·트렌드 키워드·날씨·여러 상품의 공통 흐름(예: 기모·퍼·하프코트)을 살린 광고 소재·노출·기획전)을 함께 넣습니다 — 데이터 근거가 있으면 키우기 일이 최소 절반. 다른 담당이 이미 낸 같은 고치기 일(team_board.open·colleagues의 할 일)은 그 담당이 유지하니 되풀이하지 말고, 그 자리는 내 전문의 새 일로 씁니다. 보고서 본문에 쓴 실행 제안(밀기 결론·트렌드 제안·날씨 계획·집중 상품 확대 방안)은 사람이 할 일이면 week_actions에도 옮깁니다 — 보드에는 week_actions만 올라갑니다.
+- **kind '광고 소재'** = 새 광고 소재 만들기·추가·교체(촬영·편집·제작안 — MD/컨텐츠팀, 기존 예산 안이라 needs_ceo false). 제목 예: '기모 보온 테마 광고 소재 추가(폭닥·패딩바지급 강조)', 'ROAS 낮은 소재 교체 — 리뷰 소구로'. 광고 소재 담당에게 넘기는 요청(handoffs)이 있으면 같은 상품의 '광고 소재' 할 일도 적습니다(사람이 제작안을 돌리고 촬영해야 진행됨). 새 광고비를 쓰는 첫 집행은 '광고 착수'.
 - **누가 언제 일하나**: 직원(MD/컨텐츠팀·물류/CS팀)은 토·일·공휴일에 쉬고, 대표는 주말에도 대부분 봅니다. calendar.team_full_leave_next_10은 팀 전원이 휴가라 그 팀이 쉬는 날입니다 — 그 팀 일의 기한은 그 날을 피합니다(실제 마감이 그날이면 그대로). team_partial_leave_next_10은 일부만 휴가인 날(사람 수)이라 일을 너무 몰지 않습니다. this_week.team_board.calendar(read_day = 이 보고서를 읽는 날, staff_off_days_next_10 = 직원이 쉬는 날)를 보고 due를 정합니다: 실제 마감(행사·할인 종료, 한파 등)이 없는 직원 할 일은 **직원 출근일**로, 마감이 쉬는 날에 있으면 그 날짜를 그대로 씁니다(보드가 쉬기 전날 직원에게 먼저 알리고, 주말엔 대표에게 올립니다). 쉬는 날을 기한으로 일부러 고르지 않습니다. 대표 할 일은 쉬는 날도 기한이 될 수 있습니다. days_open은 직원 일이면 출근일 기준이라 주말이 끼어도 늘지 않습니다.
 - this_week.week_actions_so_far의 from_board=true 항목은 보드에 남아 있는 미완료(사람이 아직 안 끝냄 — 주가 바뀌어 이어받은 것 포함)입니다. 데이터상 여전히 필요하면 id·since 그대로 유지하고, 필요 없어졌으면 빼도 됩니다(보드가 '에이전트가 더는 제안하지 않음 · 확인 후 닫기'로 남겨 사람이 닫습니다).
 - this_week.team_board = 직원들이 보는 '오늘 할 일' 보드의 지금 상태입니다. open(진행 중, days_open = 처음 나온 뒤 며칠째) / done_7d(최근 7일에 끝난 일 — '데이터로 자동 확인'은 광고가 켜졌거나 상세가 바뀐 것을 코드가 확인한 것) / held(대표가 보류, ceo_note = 보류 이유). 승인된 일의 ceo_method·ceo_daily_won은 대표가 승인할 때 정한 방식·하루 예산(원)이니 그 안에서 제안합니다(예: 하루 3만원 테스트면 1~3일차 판정도 그 예산 기준). reenable=true는 기존 예산 안에서 다시 켜는 일(승인 없이 진행). in_progress=true는 직원이 '시작'을 눌러 진행 중인 일 — 막힌 일로 다그치지 말고 결과를 데이터로 확인합니다. team_board.skipping은 담당 팀이 '미진행'으로 닫은 일(skip_reason = 이유, until = 이 날부터 다시 제안 가능 — 시즌 90일·재고 14일·더 급한 일 7일·그 외 30일)입니다. until 전에는 같은 일을 제안하지 않습니다. 단 그 상품 판매가 미진행한 날 이후 크게 늘었거나(최근 7일 하루 평균이 2배↑) 이유가 풀렸다는 숫자(재입고, 기온 등)가 있으면 그 숫자를 근거로 다시 제안합니다 — 보드가 판매 급등을 확인하면 다시 올리고, 아니면 until까지 기다립니다. until이 지나면 데이터를 다시 보고 필요할 때만 제안합니다.

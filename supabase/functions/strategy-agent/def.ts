@@ -360,6 +360,23 @@ async function collect(D: string) {
       codi: codiOf(t.no),
     };
   });
+  // 급증 공통 흐름(2026-11-12 대표 "기모 상품이 공통으로 올라왔는데 기모 활용 소재 같은 일이 안 나온다"): 상품명 속 소재·특징 단어로 묶어
+  //   '함께 오른 상품'(7일 5개↑ · 직전 7일의 1.5배+3개↑)이 3개 이상이고 그 상품들이 합쳐 30개↑ 늘어난 테마만, 늘어난 수 큰 순 4개.
+  //   (오래 팔던 같은 테마 상품이 조금 줄면 테마 합계가 덮이므로 합계가 아니라 '함께 오른 상품'으로 본다 — 기모 실측)
+  const THEMES: [string, RegExp][] = [
+    ["기모", /기모/], ["퍼(fur)", /퍼\s*(자켓|재킷|코트|후드|베스트|집업|머플러|가디건)|에코\s*퍼|페이크\s*퍼/], ["울·캐시미어", /울\s?\d|메리노|캐시미어|[(,]울|울[,)]/],
+    ["코듀로이", /코듀로이|골덴/], ["패딩·다운", /패딩|덕다운|구스/], ["플리스·뽀글", /플리스|후리스|양털|뽀글|부클/],
+    ["보온 표현(웜·워밍·폭닥·포근)", /(^|[\s(,])웜|워밍|폭닥|포근|따뜻|블랭킷/], ["코트", /코트/], ["니트", /니트/], ["벨벳", /벨벳/], ["데님", /데님/],
+  ];
+  const surge_themes = THEMES.map(([theme, re]) => {
+    const ps = rows7.map((r) => ({ no: Number(r.product_no), q7: num(r.order_qty), qp: num(mPrev.get(Number(r.product_no))?.order_qty) }))
+      .filter((p) => p.q7 >= 3 && re.test(nameOf(p.no)));
+    const up = ps.filter((p) => p.q7 >= 5 && p.q7 >= p.qp * 1.5 + 3);
+    const q7 = ps.reduce((a, p) => a + p.q7, 0), qp = ps.reduce((a, p) => a + p.qp, 0);
+    const u7 = up.reduce((a, p) => a + p.q7, 0), up7 = up.reduce((a, p) => a + p.qp, 0);
+    return { theme, rising: up.length, rising_qty_7d: u7, rising_qty_prev7d: up7, products: ps.length, qty_7d: q7, qty_prev7d: qp,
+      top: up.sort((a, b) => (b.q7 - b.qp) - (a.q7 - a.qp)).slice(0, 6).map((p) => ({ product_no: p.no, name: nameOf(p.no), qty_7d: p.q7, qty_prev7d: p.qp })) };
+  }).filter((t) => t.rising >= 3 && t.rising_qty_7d - t.rising_qty_prev7d >= 30).sort((a, b) => (b.rising_qty_7d - b.rising_qty_prev7d) - (a.rising_qty_7d - a.rising_qty_prev7d)).slice(0, 4);
   // 최근 7일 판매된 상품 전체: 평균 마진율(판매수량 가중, 워크스페이스 홈 타일과 같은 식) · 구매 전환율(주문 ÷ 조회)
   let mW = 0, mQ = 0, mN = 0, sViews = 0, sOrders = 0, sQty = 0;
   for (const r of rows7) {
@@ -425,6 +442,7 @@ async function collect(D: string) {
     rules: {
       matrix: `신상품(NEW ARRIVALS ${newNos.length}개) 중 등록 ${MIN_AGE_DAYS}일↑·14일 조회 ${MIN_VIEWS}↑인 ${eligible.length}개의 중앙값(조회 ${Math.round(medViews)}, 주문율 ${medRate}%) 기준 4분면`,
       margin: "마진율 = (판매가 − 공급가×1.1) ÷ 판매가. 낮으면 밀어도 남는 게 적음",
+      themes: "surge_themes = 이번 주 여러 상품이 함께 오른 공통 흐름 — 상품명의 소재·특징 단어(기모·퍼·울·코듀로이·보온 표현 등)로 묶음. rising = 7일 5개↑·직전 7일의 1.5배+3개↑인 상품 수, rising_qty_* = 그 상품들의 판매 합(직전 → 이번), products·qty_* = 테마 전체(7일 3개↑ 판 상품). top = 함께 오른 상품(늘어난 수 순)",
       surge: "surge_top10 = 판매량 급증 TOP10(최근 7일 vs 직전 7일, 이번 주 10개↑). ad_spend_7d·ad_roas_7d = 그 상품에 붙은 광고의 최근 7일 Meta 지출·ROAS(null = 광고 정보 없음/모름). sold_7d = 최근 7일 판매 상품 전체의 평균 마진율·구매 전환율",
       codi: codiKnown ? "codi = 코디 상품 점검. 그 상품이 잘 팔리는 상품(codi.parents)의 상품 페이지에 '코디 상품(추가구성)'으로 걸려 있으면 부모 페이지에서 함께 담긴 주문이 섞여 조회 대비 주문율이 높게 나온다. codi.share = 이 상품의 14일 주문 중 부모와 같은 주문에 들어간 비율(%). codi가 null이면 상위 40 판매 상품의 코디 상품이 아님" : "⚠ 코디 상품 점검 수집 실패 — 주문율이 높은 상품은 코디 구매가 섞였을 수 있다고만 쓸 것",
       ads: "focus의 active_ads = 지금 ON인 광고 수, ad_spend_14d·ad_purchases_14d·ad_roas_14d = 그 광고 전부의 최근 14일 합(null = 광고 정보 모름). top_ads = 14일 지출 상위 3개(since_start 누적, last14 14일). 빈도(frequency) 3 이상이면 같은 사람에게 반복 노출 = 소재 피로",
@@ -437,7 +455,7 @@ async function collect(D: string) {
     new_arrivals: { count: newNos.length, eligible: eligible.length, median_views_14d: Math.round(medViews), median_rate_14d: medRate, matrix: matrix.map((p) => ({ ...p, codi: codiOf(p.product_no) })) },
     codi_known: codiKnown,
     focus,
-    surge_top10, sold_7d,
+    surge_top10, surge_themes, sold_7d,
     top10: top10.map((t) => ({ rank: t.rank, product_no: t.no, name: nameOf(t.no), qty_14d: num(m14.get(t.no)?.order_qty), rate_14d: num(m14.get(t.no)?.rate), active_ads: adCountOf(t.no) })),
     trending: trending.map((t) => ({ product_no: t.no, name: nameOf(t.no), qty_7d: t.qty7, qty_prev7d: t.prevQty })),
     benefits_active: num(ben?.active_count),
@@ -537,6 +555,7 @@ const SYSTEM = `당신은 온라인 쇼핑몰 '다나로브(DNRB)'의 상품 전
 - verdicts: 오늘의 결론 3~5개. 각각 kind(밀기 = 힘을 실을 상품 / 보류 = 확대를 멈추거나 미룰 상품 / 점검 = 상세·가격·소재를 손볼 상품 / 시즌 = 날씨·시즌에 따른 카테고리 배치 / 소싱 = 없는 상품의 소싱 검토) + product(상품명은 데이터 그대로, 카테고리면 '니트·가디건'처럼 짧게) + reason(근거 숫자 하나를 넣어 25자 이내. 예: "마진 67.6% · 광고 8개 test 중", "반품 15.4% · 차콜 28%").
 - summary는 **딱 1줄**(45자 이내) — 오늘 전체 흐름 한 문장. 상품 나열 금지.
 - 급증 상품을 나열하는 문장은 쓰지 않습니다 — 화면 맨 위에 surge_top10 표(판매량 변화·광고 수·7일 광고비·ROAS·주문율)가 그대로 보입니다. 대신 surge_top10의 광고비·ROAS·주문율을 근거로 '밀기/보류/점검' 결론을 냅니다(예: 급증인데 광고 0개 → 밀기·광고 착수, 급증인데 ROAS 1 미만 → 점검).
+- surge_themes(급증 공통 흐름)가 있으면 테마마다 week_actions에 키우기 할 일을 넣습니다: ① kind '광고 소재' — '○○ 테마 광고 소재 추가(테마 소구: 예 기모 → 보온·폭닥)', products = 그 테마 top 중 순반품률 위험이 아닌 상품 최대 4개(광고 ROAS 1 미만이면 '소재 교체'로), why에 함께 오른 상품 수와 합계(예: '기모 상품 4개가 함께 상승, 직전 7일 3 → 이번 7일 129개') ② 필요하면 kind '노출·기획전' — '○○ 테마 메인 묶음·기획전'. 같은 테마 일이 team_board.open에 이미 있으면 유지만 합니다. 테마는 verdicts의 '시즌' 칩이나 trend_actions와 이어서 씁니다.
 - sold_7d(최근 7일 판매 상품 전체의 평균 마진율·구매 전환율)는 화면 타일에 보입니다. 결론에서 "평균 마진(n%)보다 높은/낮은 상품"처럼 비교 기준으로 씁니다.
 ${COMMON_RULES}`;
 

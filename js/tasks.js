@@ -30,8 +30,8 @@
 ────────────────────────────────────────── */
 const tasksState = { data: null, team: '', kind: '', ceoKind: '', sel: new Set() };   // sel = 보드에서 고른 할 일(한 번에 처리)
 const TEAMS = ['MD/컨텐츠팀', '물류/CS팀', '대표'];   // 2026-11-10 'CS팀' → '물류/CS팀', 같은 날 광고팀·상품팀 → 'MD/컨텐츠팀'(역할 통합)
-const AUTO_KIND = { '광고 착수': 'ON 광고가 늘면', '광고 줄이기': 'ON 광고가 줄면', '상세 보강': '상세 이미지가 바뀌면' };
-const KIND_ICON = { '광고 착수': 'fa-play', '광고 증액': 'fa-arrow-trend-up', '광고 줄이기': 'fa-arrow-trend-down', '상세 보강': 'fa-file-image', '노출·기획전': 'fa-store', 'CS·출고': 'fa-truck', '재고·소싱': 'fa-boxes-stacked', '가격·혜택': 'fa-tag', '지킬 원칙': 'fa-shield-halved', '기타': 'fa-circle-dot' };
+const AUTO_KIND = { '광고 착수': 'ON 광고가 늘면', '광고 소재': '새 광고가 켜지면', '광고 줄이기': 'ON 광고가 줄면', '상세 보강': '상세 이미지가 바뀌면' };
+const KIND_ICON = { '광고 착수': 'fa-play', '광고 소재': 'fa-clapperboard', '광고 증액': 'fa-arrow-trend-up', '광고 줄이기': 'fa-arrow-trend-down', '상세 보강': 'fa-file-image', '노출·기획전': 'fa-store', 'CS·출고': 'fa-truck', '재고·소싱': 'fa-boxes-stacked', '가격·혜택': 'fa-tag', '지킬 원칙': 'fa-shield-halved', '기타': 'fa-circle-dot' };
 const KIND_ORDER = Object.keys(KIND_ICON);
 const kindRank = k => { const i = KIND_ORDER.indexOf(k); return i < 0 ? 99 : i; };
 // 승인할 때 고르는 방식 (서버 agent-tasks METHODS와 같은 코드)
@@ -223,7 +223,7 @@ function moreBox(t, extra = '') {
   return `<details class="tk-more${isDetail ? ' reco' : ''}"><summary>${isDetail ? '자세히&권장방안' : '자세히'}</summary>${parts.join('')}</details>`;
 }
 function creativeBtn(t) {
-  if (t.kind !== '광고 착수' || !t.product_no || t.reenable) return '';
+  if (!['광고 착수', '광고 소재'].includes(t.kind) || !t.product_no || t.reenable) return '';
   const c = (tasksState.data?.creative || {})[t.product_no];
   const view = c && c.report_id ? `<a class="btn sm ghost" href="#reports/${escHtml(c.report_id)}"><i class="fa-solid fa-bullhorn"></i> 제작안 보기</a>` : '';
   return `${view}<button class="btn sm ghost" onclick="taskCreative(${Number(t.product_no)}, this)" data-name="${escHtml(t.product_name || '')}"><i class="fa-solid fa-wand-magic-sparkles"></i> ${view ? '새 제작안' : '제작안 만들기'}</button>`;

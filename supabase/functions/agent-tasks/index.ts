@@ -24,7 +24,7 @@ import { addDays, addWorkdays, AGENT_LABELS, leadTags, normOwner, callFn, canUse
 import { paGroups, paKey, paNorm, PaProd, paPickBest, paVerTok } from "../strategy-agent/def.ts";
 
 const SOURCES = ["returns", "strategy", "ads", "sales"];   // 같은 일이 여럿이면 앞 담당(원래 제안자)의 문장을 쓴다 — 요약은 옮겨 적은 것이라 마지막
-const AUTO_KINDS = new Set(["광고 착수", "광고 줄이기", "상세 보강"]);
+const AUTO_KINDS = new Set(["광고 착수", "광고 소재", "광고 줄이기", "상세 보강"]);
 const sq = (s: unknown) => String(s ?? "").normalize("NFC").replace(/\s+/g, "");
 const kstDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" });
 const CEO_RE = /\s*[(,·]?\s*(?:예산은\s*)?대표\s*(?:확인|승인|결정)\s*(?:후|필요)?\s*\)?/g;
@@ -35,6 +35,7 @@ const cleanTitle = (t: unknown) => {
 };
 function guessKind(t: string): string {   // 옛 보고서(종류 칸이 없던 때)용
   if (/금지|유지$|보류 유지|보류$|하지 않/.test(t) && !/착수|켜기|보강|점검/.test(t)) return "지킬 원칙";
+  if (/소재/.test(t) && /추가|교체|제작|만들|새 소재|촬영/.test(t)) return "광고 소재";
   if (/광고|소재|test|테스트/.test(t) && /착수|켜기|다시 켜|시작|첫 소재/.test(t)) return "광고 착수";
   if (/메인|기획전|배치|진열/.test(t)) return "노출·기획전";
   if (/상세|실측|사이즈 안내|기장|사진|컷/.test(t)) return "상세 보강";
@@ -86,7 +87,7 @@ function isReenable(kind: string, no: number | null, rawTitle: string, info: Row
   if (Number(info.active_ads) !== 0 || info.active_ads == null || !(Number(info.paused_ads) > 0)) return false;
   return info.verdict === "다시 켜기" || (/다시\s*켜|재가동/.test(rawTitle) && !/착수|시작|첫\s*소재|새\s*소재/.test(rawTitle));
 }
-const DONE_WHEN: Record<string, string> = { "광고 착수": "그 상품 ON 광고가 늘면 자동 완료", "광고 줄이기": "그 상품 ON 광고가 줄면 자동 완료", "상세 보강": "상세 이미지가 바뀌면 자동 완료" };
+const DONE_WHEN: Record<string, string> = { "광고 착수": "그 상품 ON 광고가 늘면 자동 완료", "광고 소재": "그 상품에 새 광고가 켜지면(ON 광고가 늘면) 자동 완료", "광고 줄이기": "그 상품 ON 광고가 줄면 자동 완료", "상세 보강": "상세 이미지가 바뀌면 자동 완료" };
 
 type Item = { key: string; kind: string; title: string; owner: string; why: string; done_when: string; due: string; due_source: string; needs_ceo: boolean; reenable: boolean; product_no: number | null; product_name: string | null; sources: Row[]; first_seen: string; last_seen: string };
 
@@ -184,6 +185,7 @@ function collectItems(reports: Row[], cal: TeamCal, names: Map<string, number>, 
       const rawTitle = String(a.title ?? "");
       let kind = TASK_KINDS.includes(String(a.kind)) ? String(a.kind) : guessKind(rawTitle);
       if (kind === "기타" && /광고|소재/.test(rawTitle) && /다시\s*켜|재가동/.test(rawTitle)) kind = "광고 착수";   // 다시 켜기를 '기타'로 쓴 경우(2026-11-11)
+      if (kind === "기타" && /소재/.test(rawTitle) && /추가|교체|제작|만들|촬영/.test(rawTitle)) kind = "광고 소재";   // 소재 일을 '기타'로 쓴 경우
       if (CEO_SELF_KINDS.has(kind)) continue;   // 증액·감액은 대표가 직접(보드에 안 올림)
       const title = cleanTitle(rawTitle);
       if (!title) continue;
@@ -215,6 +217,20 @@ function collectItems(reports: Row[], cal: TeamCal, names: Map<string, number>, 
         if (base.first_seen < cur.first_seen) cur.first_seen = base.first_seen;
         if (base.last_seen > cur.last_seen) cur.last_seen = base.last_seen;
       }
+    }
+  }
+  // 광고 소재 담당에게 넘긴 요청 = 사람이 제작안을 돌리고 촬영해야 진행되는 일 → '광고 소재' 할 일로(2026-11-12 대표 "보고서에 비해 할당되는 게 너무 적다").
+  //   같은 상품에 광고 착수 할 일이 있으면 그 카드에 이미 '제작안 만들기'가 있으므로 따로 만들지 않는다.
+  for (const rep of reports) {
+    const agent = String(rep.agent), D = String(rep.report_date);
+    for (const h of ((((rep.report ?? {}) as Row).handoffs ?? []) as Row[])) {
+      const no = Number(h.product_no);
+      if (String(h.to ?? "") !== "광고 소재 담당" || !(no > 0) || items.has(`광고 착수|${no}`)) continue;
+      const key = `광고 소재|${no}`, src = { agent, report_date: D, action_id: `handoff:${no}`, why: String(h.why ?? "").slice(0, 160) };
+      const cur = items.get(key);
+      if (cur) { if (!cur.sources.some((s) => s.agent === agent && s.action_id === src.action_id)) cur.sources.push(src); continue; }
+      items.set(key, { key, kind: "광고 소재", title: "새 광고 소재 만들기(제작안 → 촬영·편집)", owner: "MD/컨텐츠팀", why: String(h.why ?? ""), done_when: DONE_WHEN["광고 소재"],
+        due: addWorkdays(D, 3, cal.offFor("MD/컨텐츠팀")), due_source: "default", needs_ceo: false, reenable: false, product_no: no, product_name: String(h.product ?? "") || null, sources: [src], first_seen: D, last_seen: D });
     }
   }
   return items;
@@ -420,7 +436,7 @@ async function sync(auto: boolean) {
     if (String(t.kind).startsWith("광고") && adCount) {
       const n = adCount(no);
       if (bl.active_ads == null) nb.active_ads = n;
-      else if (t.kind === "광고 착수" && n > Number(bl.active_ads)) evidence = `ON 광고 ${bl.active_ads}개 → ${n}개`;
+      else if ((t.kind === "광고 착수" || t.kind === "광고 소재") && n > Number(bl.active_ads)) evidence = `ON 광고 ${bl.active_ads}개 → ${n}개`;
       else if (t.kind === "광고 줄이기" && n < Number(bl.active_ads)) evidence = `ON 광고 ${bl.active_ads}개 → ${n}개`;
       nb.active_ads_now = n;
     }
